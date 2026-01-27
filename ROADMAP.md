@@ -1,199 +1,143 @@
-# PokerDUD — Project 1 (Server) 7-Day Roadmap
+# PokerDUD — Project 1 (Server) 11-Day Roadmap (Student-friendly)
 
-**Timebox:** 1 week  
+**Timebox:** 11 days (assume limited weekday time due to quizzes/assignments)
 **Goal:** reliably demo **two hands of Five-Card Draw** with **accounts + betting + hand ranking** via CLI.
 
-Repo structure:
-
-- `server/` = Project 1 focus
-- `common/` = shared types (cards/ranking/etc.)
-- `client/` = ignore for Project 1 (Phase 2 later)
+Repo focus:
+- `server/` = Project 1
+- `common/` = cards/ranking shared types
+- `client/` = ignore for Project 1
 
 ---
 
 ## Minimal workflow (keep it light)
+- Every work item is an Issue (Task/Bug template)
+- Fields: Epic + Owner + Size + Type_
+- One PR closes one issue (`Closes #123`)
+- Max 1–2 In Progress per person
+- Blocked items must link what they’re blocked by
 
-We use GitHub Projects for visibility, not bureaucracy.
-
-Rules:
-
-1. Every work item is an **Issue** (Task/Bug template).
-2. Each Issue has: **Epic + Owner + Size + Type\_**.
-3. One PR closes one Issue (`Closes #123`).
-4. Keep WIP small: **max 1–2 In Progress per person**.
-5. Blocked items must say **Blocked by:** and link the dependency.
-
-Definition of Done (DoD):
-
-- [ ] Acceptance criteria met
-- [ ] `cargo test` passes (at least ranking tests)
-- [ ] PR merged, issue closed
+Definition of Done:
+- Acceptance criteria met
+- `cargo test` passes (ranking tests at minimum)
+- PR merged, issue closed
 
 ---
 
-## Critical path (don’t deviate)
+# The schedule (11 days)
 
-If it doesn’t directly support the demo, it’s optional.
+## Day 1 (60–90 min): Align + lock minimal interfaces
+Outcome: team can work in parallel without merge chaos.
+- Agree house rules: ante, min/max bet, raise policy, starting chips policy
+- Agree persistence format: JSON file
+- Agree module boundaries + minimal APIs (ranking/accounts/game/cli)
+- Create the initial issues together (don’t over-split)
 
-**Must-have for marks / demo:**
-
-- CLI (mandatory)
-- Accounts (create/login + balance + persistence)
-- Betting (pass/bet/call/raise/fold + limits)
-- Draw phase (discard/draw)
-- Hand ranking + 1st-level tie-break + split pot
-- Table rules: 2–5 players, join/leave between hands, dealer rotation
-- Stats updates after hands
-
----
-
-# 7-Day plan (day-by-day)
-
-## Day 1 — Align + lock interfaces + create issues (2–3 hrs total)
-
-**Outcome:** everyone can work in parallel with minimal merge pain.
-
-1. 30-min team sync (requirements)
-
-- Agree house rules: ante, min/max bet, raise policy, starting chip behavior.
-- Decide persistence: JSON file.
-
-2. 45-min interface lock (minimal APIs)
-
-- Ranking API signature in `common/`
-- Account + storage API in `server/`
-- Game state machine skeleton in `server/`
-
-3. 45-min “create issues together”
-
-- Create only the issues needed for the demo (avoid extras).
-- Assign Owner + Size.
-
-**End of Day 1 deliverable**
-
-- Skeleton modules created
-- CI optional (nice-to-have, don’t block)
-- Everyone has 2–4 issues owned
+Deliverable:
+- A short “Rules” section in README
+- Skeleton modules exist (empty ok)
 
 ---
 
-## Day 2 — Foundations: ranking + accounts + CLI shell
+## Days 2–3 (1–2 hrs/day): Foundations in parallel
+Goal: unblock everything early.
+- Ranking + tests (common/)
+- Accounts + persistence (server/)
+- CLI shell (server/)
+- Game state skeleton (server/)
 
-**Parallel focus (high leverage):**
-
-- Person A: game state skeleton (table/hand phases stubbed)
-- Person B: hand ranking + tests (start here)
-- Person C: accounts + persistence + CLI menus (start here)
-
-**End of Day 2 deliverable**
-
-- `common::cards` exists (Card/Suit/Rank)
-- Ranking passes unit tests for at least 3–4 hand categories
-- CLI can create/login/deposit/withdraw and persists data
+Deliverable by end of Day 3:
+- CLI can create/login/deposit/withdraw and persists accounts
+- Ranking detects several categories with tests
+- Game skeleton compiles with stubs (phases exist even if TODO)
 
 ---
 
-## Day 3 — One full hand loop (first playable vertical slice)
-
-**Goal:** play 1 complete hand end-to-end (even if UI is rough).
-
+## Day 4 (2–3 hrs): Vertical slice — 1 full hand runs (rough UI ok)
+Goal: one playable hand end-to-end through CLI.
 Order:
+- ante + pot + deal 5
+- betting round 1
+- draw phase
+- betting round 2
+- showdown + payout + persist
 
-- Deal 5 cards
-- Ante + pot
-- Betting round 1 (basic actions)
-- Draw phase (discard/draw)
-- Betting round 2
-- Showdown + payout using ranking
-- Update balances + persist
-
-**End of Day 3 deliverable**
-
-- You can play 1 full hand through CLI without crashing.
+Deliverable:
+- One complete hand without crashing.
 
 ---
 
-## Day 4 — Make betting + rules correct (demo correctness day)
+## Day 5 (1–2 hrs): Correctness day — enforce rules & turn order
+Goal: make “it runs” become “it’s correct enough to demo”.
+- dealer rotation
+- action order and draw order (left of dealer)
+- min/max bet & raise/call rules
+- fold logic and “win by everyone folding”
+- join/leave only between hands
 
-**Goal:** match expected behaviors (not just “it runs”).
-
-Checklist:
-
-- Enforce min/max bet and valid raise/call logic
-- Fold logic correct (winner by everyone folding)
-- Dealer rotation correct
-- Draw order: left of dealer draws first
-- Join/leave only between hands
-
-**End of Day 4 deliverable**
-
+Deliverable:
 - One-hand gameplay is consistent and rule-correct.
 
 ---
 
-## Day 5 — Implement the “two-hand marking demo” path
+## Day 6 (1–2 hrs): Expand ranking coverage + tie/split pot
+Goal: protect marks.
+- finish evaluator coverage for all categories
+- tie-breaker first-level
+- split pot logic integrated into payout
 
-**Goal:** reliably reproduce the two-hand scenario.
-
-Add/verify:
-
-- “All pass first betting round” path
-- Raise after draw path
-- Fold after raise path
-- Opt out between hands
-- Stats updated (games played, pots won, folds)
-
-**End of Day 5 deliverable**
-
-- Two-hand demo works when you follow a written script.
+Deliverable:
+- Evaluator tests cover all categories (or very close).
 
 ---
 
-## Day 6 — Stabilize + polish + README + error handling
+## Days 7–8 (weekend block): Marking-demo mode (two hands reliably)
+Goal: reliably reproduce the marking guide scenario.
+- “All pass first round” path
+- “raise after draw then fold” path
+- opt-out between hands
+- stats update (games played, pots won, folds)
+- output readability (TA-friendly)
 
-**Goal:** eliminate silly mark losses.
+Deliverable by end of Day 8:
+- Two-hand demo works following a written script.
 
-Checklist:
+---
 
+## Day 9 (60–90 min): Stabilize + input validation sweep
+Goal: eliminate silly failures.
+- no panics on normal invalid input
+- re-prompt on bad input
+- clean errors for invalid actions (bet out of turn, too large, etc.)
+
+Deliverable:
+- Smooth demo even with minor input mistakes.
+
+---
+
+## Day 10 (60–90 min): README + fresh-clone rehearsal
+Goal: “TA can run it”.
 - README: build/run/demo steps
-- Ranking tests complete for all categories (or most, if time)
-- Input validation (no panics on normal bad input)
-- `cargo fmt` clean
-- Smoke test on fresh clone
+- mention persistence file location + how to reset
+- run on a fresh clone / clean build to ensure no hidden dependencies
 
-**End of Day 6 deliverable**
-
-- “Submission-ready” build that a TA can run quickly.
+Deliverable:
+- Fresh clone → run → demo works.
 
 ---
 
-## Day 7 — Final rehearsal + bugfix-only
+## Day 11 (30–60 min): Final rehearsal + bugfix-only freeze
+Goal: confidence.
+- run demo 2–3 times
+- bugfix only
+- tag final commit if you want
 
-**Goal:** demo rehearsal and freeze.
-
-Plan:
-
-- Run the full demo 2–3 times
-- Fix only critical bugs
-- Tag a release / final commit
-- Ensure license + repo structure intact
-
-**End of Day 7 deliverable**
-
-- Confident live demo.
-
----
-
-## Ownership split (recommended)
-
-- **Person A (Game/State Machine):** table + phases + betting engine
-- **Person B (Ranking):** evaluation + tie-break + tests
-- **Person C (Accounts/CLI):** accounts + persistence + CLI demo path
+Deliverable:
+- submission-ready.
 
 ---
 
 ## Guardrails
-
-- If something is taking too long: **simplify UI**, not the core requirements.
-- Never block the whole team on “perfect design.”
-- Target a working vertical slice by **Day 3**.
+- If time is tight: simplify CLI UI, NOT core requirements.
+- Always protect the vertical slice first.
+- Weekend is for “two-hand demo + polish”, not new features.
