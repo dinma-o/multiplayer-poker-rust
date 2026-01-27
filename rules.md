@@ -46,17 +46,17 @@ The rules align with standard Five-Card Draw conventions while making explicit c
 
 ### 4.1 Antes
 
-- Each active player must post a **fixed ante** before cards are dealt
+- Each active player must post a **fixed ante** of 1 chip before cards are dealt
 - The ante amount is defined by the table configuration
 - Antes contribute directly to the pot
 
 ### 4.2 Betting Structure
 
-- Betting is **fixed-limit**
+- Initial bet is a **fixed-limit** of 5 chips
 - A betting round consists of:
   - Bet / Call / Raise / Fold
 - Maximum of **one bet and one raise** per betting round
-- All bets and raises must be made in fixed increments
+- All bets and raises must be made in fixed increments of 5 chips
 
 ---
 
