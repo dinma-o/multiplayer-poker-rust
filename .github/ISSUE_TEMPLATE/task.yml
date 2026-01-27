@@ -1,0 +1,55 @@
+name: Task
+description: A concrete piece of work with clear acceptance criteria
+title: "[Task] "
+labels: []
+body:
+  - type: dropdown
+    id: type
+    attributes:
+      label: Type_
+      options:
+        - Feature
+        - Bug
+        - Chore
+        - Docs
+        - Test
+    validations:
+      required: true
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What is this task and why are we doing it?
+      placeholder: Implement X so that Y works for the demo scenario.
+    validations:
+      required: true
+
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance Criteria
+      description: Checkboxes that define “done”
+      value: |
+        - [ ] ...
+        - [ ] ...
+        - [ ] ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: dependencies
+    attributes:
+      label: Dependencies / Blockers
+      description: Link issues/PRs that must be done first
+      placeholder: "Blocked by: #__"
+    validations:
+      required: false
+
+  - type: textarea
+    id: notes
+    attributes:
+      label: Notes / References
+      description: Any design notes, links, or rubric references
+    validations:
+      required: false
