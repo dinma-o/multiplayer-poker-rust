@@ -87,7 +87,7 @@ The rules align with standard Five-Card Draw conventions while making explicit c
 - Discards are replaced from the deck
 - Draw order begins with the player **to the left of the dealer**
 - Cards are dealt face down
-- A player who stands pat draws **zero cards**
+- A player who stands draws **zero cards**
 
 ---
 
