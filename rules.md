@@ -2,7 +2,8 @@
 
 This document defines the **house rules** for Five-Card Draw Poker as implemented by the Poker Playing System. These rules are designed to be deterministic, unambiguous, and suitable for both human play and server-side enforcement.
 
-The rules align with standard Five-Card Draw conventions while making explicit choices where poker rules commonly vary. These clarifications are intentional and required for correct gameplay, testing, and grading.
+Where values are numeric (ante, min/max bet, etc.), the **single source of truth** is:
+`common/src/constants.rs` under `five_card_draw`.
 
 ---
 
@@ -25,7 +26,18 @@ The rules align with standard Five-Card Draw conventions while making explicit c
   - Pots won
   - Folds
 - Chips are finite and deducted immediately when wagered
-- A player with insufficient chips to ante **may not participate** in the hand
+
+### 2.1 Starting Stack
+
+- Each player starts with **INITIAL_CHIPS** (default: **200**) at the beginning of a new table/game.
+
+### 2.2 Table Eligibility and Elimination
+
+To keep gameplay simple and avoid side pots / all-in logic:
+
+- **Minimum participation requirement:** A player must have at least the **ANTE_AMOUNT** to be dealt into a hand.
+- If a player has **insufficient chips to post the ante**, they **do not participate** in that hand and are **removed from the table** (eliminated).
+- Players may only be removed **between hands** (i.e., before antes are collected and cards are dealt).
 
 ---
 
@@ -46,17 +58,41 @@ The rules align with standard Five-Card Draw conventions while making explicit c
 
 ### 4.1 Antes
 
-- Each active player must post a **fixed ante** of 1 chip before cards are dealt
-- The ante amount is defined by the table configuration
+- Each active player must post a **fixed ante** of **ANTE_AMOUNT** (default: **5 chips**) before cards are dealt
 - Antes contribute directly to the pot
 
-### 4.2 Betting Structure
+### 4.2 Betting Structure (Spread-Limit in 5s, No All-In)
 
-- Initial bet is a **fixed-limit** of 5 chips
-- A betting round consists of:
-  - Bet / Call / Raise / Fold
-- Maximum of **one bet and one raise** per betting round
-- All bets and raises must be made in fixed increments of 5 chips
+Bet sizing is **in increments of BET_INCREMENT** (default: **5 chips**) with a **maximum** per betting round.
+
+- A betting round consists of actions: **Check / Bet / Call / Raise / Fold**
+- **All bet/raise amounts must be multiples of BET_INCREMENT**
+- **Max raises per betting round:** **MAX_RAISES_PER_ROUND** (default: **1**, table-wide)
+
+#### Bet Amount Rules
+- If no bet exists yet in the round:
+  - A player may **check**, or
+  - **bet** an amount `B` where:
+    - `MIN_BET_PER_ROUND ≤ B ≤ MAX_BET_PER_ROUND`
+    - `B` is a multiple of `BET_INCREMENT`
+
+#### Call Amount Rules
+- If a bet exists:
+  - A player may **call** by matching the current bet amount (paying the difference between their contribution this round and the current bet).
+
+#### Raise-To Rules (Raise Sizing)
+- If a bet exists and a raise is still available this round:
+  - A player may **raise-to** an amount `R` where:
+    - `R > current_bet`
+    - `R` is a multiple of `RAISE_INCREMENT` (default: same as `BET_INCREMENT`)
+    - `R ≤ MAX_RAISE_TO_AMOUNT` (default: same as `MAX_BET_PER_ROUND`)
+- Example (with defaults):
+  - Current bet = 5 → legal raise-to values include 10, 15, 20, 25 (since max is 25)
+
+#### Insufficient Chips Rule (No All-In)
+- **All-in is not allowed.**
+- If a player is required to put chips in the pot (e.g., to **call** or **raise-to**) but does **not** have enough chips to pay the **full required amount**, they **must fold**.
+- A player may not make a partial call or partial raise.
 
 ---
 
@@ -71,13 +107,8 @@ The rules align with standard Five-Card Draw conventions while making explicit c
 ## 6. First Betting Round
 
 - The first betting round begins with the player **to the left of the dealer**
-- If all players check/pass, the betting round ends
-- A player may:
-  - Check (if no bet exists)
-  - Bet
-  - Call
-  - Raise (if allowed)
-  - Fold
+- If all active players check, the betting round ends
+- If at any time all but one player folds, the remaining player wins the pot immediately
 
 ---
 
@@ -86,7 +117,7 @@ The rules align with standard Five-Card Draw conventions while making explicit c
 - Players may discard **0 to 3 cards**
 - Discards are replaced from the deck
 - Draw order begins with the player **to the left of the dealer**
-- Cards are dealt face down
+- Replacement cards are dealt face down
 - A player who stands draws **zero cards**
 
 ---
@@ -125,11 +156,12 @@ The rules align with standard Five-Card Draw conventions while making explicit c
 
 ## 11. Tie-Breaking Rules
 
-- Only **one level of tie-breaking** is applied
-  - Example: highest pair, then highest kicker
-- If hands remain tied after first-level comparison:
+- Hands are compared using standard poker tie-breaking:
+  - Compare the primary made hand (e.g., pair rank, trips rank, etc.)
+  - If still tied, compare remaining kickers in descending order as needed
+- If hands remain tied after full comparison:
   - The pot is **split evenly**
-  - Any remainder chip is discarded (house keeps odd chip)
+  - Any remainder chip is discarded (house keeps odd chip) to keep determinism
 
 ---
 
@@ -146,7 +178,7 @@ Winnings are credited immediately to the player’s account.
 
 ## 13. Invalid Actions and Enforcement
 
-- Invalid actions (e.g., betting out of turn, exceeding limits) are rejected
+- Invalid actions (e.g., betting out of turn, exceeding limits, drawing too many cards) are rejected
 - The dealer enforces all rules strictly
 - The system assumes **no player collusion**
 
@@ -167,5 +199,4 @@ Winnings are credited immediately to the player’s account.
 
 ---
 
-*End of RULES.md*
-
+*End of Five-Card Draw House Rules*
