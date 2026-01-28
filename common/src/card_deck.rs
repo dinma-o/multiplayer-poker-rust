@@ -100,6 +100,11 @@ impl Deck {
         let mut rng = rng();
         self.cards.shuffle(&mut rng);
     }
+
+    pub fn add_back(&mut self, card: Card) {
+        self.cards.push(card);
+        self.shuffle();
+    }
 }
 
 
@@ -108,6 +113,25 @@ mod tests {
     use super::*;
     use std::collections::HashSet;
 
+    // Card tests
+    #[test]
+    fn create_card() {
+        let card = Card::new(Rank::Ace, Suit::Spades);
+        assert_eq!(card.rank(), Rank::Ace);
+        assert_eq!(card.suit(), Suit::Spades);
+    }
+
+    #[test]
+    fn card_equality() {
+        let card1 = Card::new(Rank::Ten, Suit::Hearts);
+        let card2 = Card::new(Rank::Ten, Suit::Hearts);
+        let card3 = Card::new(Rank::Jack, Suit::Hearts);
+
+        assert_eq!(card1, card2);
+        assert_ne!(card1, card3);
+    }
+
+    // Deck tests
     #[test]
     fn new_deck_has_52_cards() {
         let deck = Deck::new();
@@ -140,5 +164,24 @@ mod tests {
         let mut deck = Deck::new();
         deck.shuffle();
         assert_eq!(deck.size(), 52);
+    }
+
+    #[test]
+    fn add_back_increases_size() {
+        let mut deck = Deck::new();
+        let card = deck.deal_card().unwrap();
+        assert_eq!(deck.size(), 51);
+        deck.add_back(card);
+        assert_eq!(deck.size(), 52);
+    }
+
+    #[test]
+    fn add_back_shuffles_deck() {
+        let mut deck = Deck::new();
+        let original_order: Vec<Card> = deck.cards.clone();
+        let card = deck.deal_card().unwrap();
+        deck.add_back(card);
+        let new_order: Vec<Card> = deck.cards.clone();
+        assert_ne!(original_order, new_order, "Deck was not shuffled after adding back a card");
     }
 }
