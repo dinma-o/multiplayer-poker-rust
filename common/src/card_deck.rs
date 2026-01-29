@@ -1,4 +1,5 @@
 use rand::{ seq::SliceRandom, thread_rng };
+use std::fmt;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Suit {
@@ -65,8 +66,10 @@ impl Card {
     pub fn suit(&self) -> Suit {
         self.suit
     }
-
-    pub fn display(&self) -> String {
+}
+    
+impl fmt::Display for Card {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let rank_str = match self.rank {
             Rank::Two => "2",
             Rank::Three => "3",
@@ -90,8 +93,9 @@ impl Card {
             Suit::Spades => "♠",
         };
 
-        format!("{}{}", rank_str, suit_str)
+        write!(f, "{}{}", rank_str, suit_str)
     }
+
 }
 
 #[derive(Debug)]
