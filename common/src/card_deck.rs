@@ -14,20 +14,21 @@ impl Suit {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[repr(u8)]
 pub enum Rank {
-    Two,
-    Three,
-    Four,
-    Five,
-    Six,
-    Seven,
-    Eight,
-    Nine,
-    Ten,
-    Jack,
-    Queen,
-    King,
-    Ace,
+    Two = 2,
+    Three = 3,
+    Four = 4,
+    Five = 5,
+    Six = 6,
+    Seven = 7,
+    Eight = 8,
+    Nine = 9,
+    Ten = 10,
+    Jack = 11,
+    Queen = 12,
+    King = 13,
+    Ace = 14,
 }
 
 impl Rank {
@@ -67,7 +68,7 @@ impl Card {
         self.suit
     }
 }
-    
+
 impl fmt::Display for Card {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let rank_str = match self.rank {
@@ -95,7 +96,6 @@ impl fmt::Display for Card {
 
         write!(f, "{}{}", rank_str, suit_str)
     }
-
 }
 
 #[derive(Debug)]
