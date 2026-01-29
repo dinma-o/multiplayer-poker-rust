@@ -12,6 +12,11 @@ impl<const N: usize> Hand<N> {
     }
 
     pub fn draw_from_deck(deck: &mut Deck) -> Option<Self> {
+        // Confirm enough cards in deck
+        if deck.size() < N {
+            return None;
+        }
+
         let mut v = Vec::with_capacity(N);
         for _ in 0..N {
             v.push(deck.deal_card()?);
@@ -40,6 +45,11 @@ impl<const N: usize> Hand<N> {
                 if !seen.insert(idx) {
                     panic!("Duplicate index in hand replacement");
                 }
+            }
+
+            // confirm enough cards in deck
+            if deck.size() < indices.len() {
+                return None;
             }
         }
 
@@ -120,15 +130,14 @@ mod tests {
 
     #[test]
     fn draw_from_deck_returns_none_if_not_enough_cards() {
-        // Use a small hand size for the test
         type BigHand = Hand<60>;
 
         let mut deck = Deck::new();
+        let before = deck.size();
+
         let hand = BigHand::draw_from_deck(&mut deck);
         assert!(hand.is_none());
-        // Deck has been partially popped in current implementation of draw_from_deck()
-        // because it draws sequentially until it fails.
-        // If you later want "no partial draw", change draw_from_deck to pre-check size.
+        assert_eq!(deck.size(), before, "Deck size should not change on failed draw");
     }
 
     #[test]
@@ -223,6 +232,17 @@ mod tests {
         let mut hand = FiveCardHand::draw_from_deck(&mut deck).unwrap();
 
         let _ = hand.replace_from_deck(&[2, 2], &mut deck);
+    }
+
+    #[test]
+    fn replace_from_deck_returns_none_if_not_enough_cards() {
+        type BigHand = Hand<50>;
+        let mut deck = Deck::new();
+        let mut hand = BigHand::draw_from_deck(&mut deck).unwrap();
+
+        // only 2 cards should be in deck right now, so try to replace 3
+        let result = hand.replace_from_deck(&[0, 1, 2], &mut deck);
+        assert!(result.is_none());
     }
 
     #[test]
