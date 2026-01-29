@@ -1,4 +1,4 @@
-use std::hash::{ Hash };
+use rand::{ seq::SliceRandom, thread_rng };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Suit {
@@ -70,6 +70,7 @@ impl Card {
 #[derive(Debug)]
 pub struct Deck {
     cards: Vec<Card>,
+    discarded: Vec<Card>,
 }
 
 impl Deck {
@@ -82,7 +83,13 @@ impl Deck {
             }
         }
 
-        Deck { cards }
+        Deck { cards, discarded: Vec::new() }
+    }
+
+    pub fn new_shuffled() -> Self {
+        let mut d = Self::new();
+        d.shuffle();
+        d
     }
 
     pub fn size(&self) -> usize {
@@ -94,24 +101,36 @@ impl Deck {
     }
 
     pub fn shuffle(&mut self) {
-        use rand::seq::SliceRandom;
-        use rand::rng;
-
-        let mut rng = rng();
-        self.cards.shuffle(&mut rng);
+        use rand::thread_rng;
+        let mut rng = thread_rng();
+        self.shuffle_with_rng(&mut rng);
     }
 
-    pub fn add_back(&mut self, card: Card) {
-        self.cards.push(card);
+    pub fn shuffle_with_rng<R: rand::Rng + ?Sized>(&mut self, rng: &mut R) {
+        self.cards.shuffle(rng);
+    }
+
+    pub fn discard(&mut self, card: Card) {
+        self.discarded.push(card);
+    }
+
+    pub fn discarded_size(&self) -> usize {
+        self.discarded.len()
+    }
+
+    pub fn reset_from_discarded(&mut self) {
+        self.cards.append(&mut self.discarded);
         self.shuffle();
     }
 }
-
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::collections::HashSet;
+
+    use rand::rngs::StdRng;
+    use rand::{ SeedableRng };
 
     // Card tests
     #[test]
@@ -167,21 +186,31 @@ mod tests {
     }
 
     #[test]
-    fn add_back_increases_size() {
+    fn shuffle_preserves_cards() {
         let mut deck = Deck::new();
-        let card = deck.deal_card().unwrap();
-        assert_eq!(deck.size(), 51);
-        deck.add_back(card);
+        let before: HashSet<Card> = deck.cards.iter().copied().collect();
+
+        deck.shuffle();
+
+        let after: HashSet<Card> = deck.cards.iter().copied().collect();
+        assert_eq!(before, after);
         assert_eq!(deck.size(), 52);
     }
 
     #[test]
-    fn add_back_shuffles_deck() {
-        let mut deck = Deck::new();
-        let original_order: Vec<Card> = deck.cards.clone();
-        let card = deck.deal_card().unwrap();
-        deck.add_back(card);
-        let new_order: Vec<Card> = deck.cards.clone();
-        assert_ne!(original_order, new_order, "Deck was not shuffled after adding back a card");
+    fn shuffle_with_rng_is_deterministic() {
+        let mut deck1 = Deck::new();
+        let mut deck2 = Deck::new();
+
+        let mut rng1 = StdRng::seed_from_u64(42);
+        let mut rng2 = StdRng::seed_from_u64(42);
+
+        deck1.shuffle_with_rng(&mut rng1);
+        deck2.shuffle_with_rng(&mut rng2);
+
+        let cards1: Vec<Card> = deck1.cards.iter().cloned().collect();
+        let cards2: Vec<Card> = deck2.cards.iter().cloned().collect();
+
+        assert_eq!(cards1, cards2, "Two decks shuffled with the same RNG seed differ");
     }
 }
