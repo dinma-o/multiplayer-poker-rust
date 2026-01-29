@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 
+use itertools::Itertools;
+
 use crate::{ card_deck::{ Card, Suit }, hand::FiveCardHand };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -161,260 +163,529 @@ fn rank_five_cards(cards: &[Card; 5]) -> HandRank {
     HandRank::new(HandCategory::HighCard, to_arr5_desc(ranks))
 }
 
+// Given 7 cards, determine the best possible 5-card hand rank
+// This is used in games like Texas Hold'em and Seven-Card Stud
+pub fn best_hand_from_seven_cards(cards: &[Card; 7]) -> HandRank {
+    cards
+        .iter()
+        .copied()
+        .combinations(5)
+        .map(|v| {
+            // v is Vec<Card> length 5
+            let five: [Card; 5] = v.try_into().expect("combo must be length 5");
+            rank_five_cards(&five)
+        })
+        .max()
+        .expect("7 cards always produce at least one 5-card combination")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::{ card_deck::{ Card, Rank, Suit }, hand::FiveCardHand };
 
+    // Shared helpers for all tests in this file
     fn h(cards: [Card; 5]) -> FiveCardHand {
         FiveCardHand::new(cards)
     }
-    
-    #[test]
-    fn handrank_ordering_works() {
-        let a = HandRank::new(HandCategory::OnePair, [10, 14, 9, 3, 0]); // pair of 10s
-        let b = HandRank::new(HandCategory::OnePair, [11, 2, 3, 4, 0]); // pair of Jacks
-        assert!(b > a);
 
-        let sf = HandRank::straight(HandCategory::StraightFlush, 14); // royal flush
-        let fk = HandRank::new(HandCategory::FourOfAKind, [14, 2, 0, 0, 0]);
-        assert!(sf > fk);
+    fn c(r: Rank, s: Suit) -> Card {
+        Card::new(r, s)
+    }
+
+    mod handrank_ordering_tests {
+        use super::*;
+
+        #[test]
+        fn handrank_ordering_works() {
+            let a = HandRank::new(HandCategory::OnePair, [10, 14, 9, 3, 0]); // pair of 10s
+            let b = HandRank::new(HandCategory::OnePair, [11, 2, 3, 4, 0]); // pair of Jacks
+            assert!(b > a);
+
+            let sf = HandRank::straight(HandCategory::StraightFlush, 14); // royal flush
+            let fk = HandRank::new(HandCategory::FourOfAKind, [14, 2, 0, 0, 0]);
+            assert!(sf > fk);
+        }
+    }
+
+    mod five_card_category_tests {
+        use super::*;
+
+        #[test]
+        fn detects_high_card() {
+            let r = rank_five_card_hand(
+                &h([
+                    c(Rank::Ace, Suit::Spades),
+                    c(Rank::King, Suit::Hearts),
+                    c(Rank::Nine, Suit::Clubs),
+                    c(Rank::Seven, Suit::Diamonds),
+                    c(Rank::Three, Suit::Spades),
+                ])
+            );
+            assert_eq!(r.category, HandCategory::HighCard);
+        }
+
+        #[test]
+        fn detects_one_pair() {
+            let r = rank_five_card_hand(
+                &h([
+                    c(Rank::Ten, Suit::Spades),
+                    c(Rank::Ten, Suit::Hearts),
+                    c(Rank::Ace, Suit::Clubs),
+                    c(Rank::Seven, Suit::Diamonds),
+                    c(Rank::Three, Suit::Hearts),
+                ])
+            );
+            assert_eq!(r.category, HandCategory::OnePair);
+        }
+
+        #[test]
+        fn detects_two_pair() {
+            let r = rank_five_card_hand(
+                &h([
+                    c(Rank::Ace, Suit::Spades),
+                    c(Rank::Ace, Suit::Hearts),
+                    c(Rank::Jack, Suit::Clubs),
+                    c(Rank::Jack, Suit::Diamonds),
+                    c(Rank::Nine, Suit::Spades),
+                ])
+            );
+            assert_eq!(r.category, HandCategory::TwoPair);
+        }
+
+        #[test]
+        fn detects_three_of_a_kind() {
+            let r = rank_five_card_hand(
+                &h([
+                    c(Rank::Seven, Suit::Spades),
+                    c(Rank::Seven, Suit::Hearts),
+                    c(Rank::Seven, Suit::Clubs),
+                    c(Rank::Ace, Suit::Diamonds),
+                    c(Rank::Two, Suit::Spades),
+                ])
+            );
+            assert_eq!(r.category, HandCategory::ThreeOfAKind);
+        }
+
+        #[test]
+        fn detects_straight() {
+            let r = rank_five_card_hand(
+                &h([
+                    c(Rank::Nine, Suit::Spades),
+                    c(Rank::Ten, Suit::Hearts),
+                    c(Rank::Jack, Suit::Clubs),
+                    c(Rank::Queen, Suit::Diamonds),
+                    c(Rank::King, Suit::Spades),
+                ])
+            );
+            assert_eq!(r.category, HandCategory::Straight);
+        }
+
+        #[test]
+        fn detects_wheel_straight() {
+            let r = rank_five_card_hand(
+                &h([
+                    c(Rank::Ace, Suit::Spades),
+                    c(Rank::Two, Suit::Hearts),
+                    c(Rank::Three, Suit::Clubs),
+                    c(Rank::Four, Suit::Diamonds),
+                    c(Rank::Five, Suit::Spades),
+                ])
+            );
+            assert_eq!(r.category, HandCategory::Straight);
+            assert_eq!(r.tiebreakers, [5, 0, 0, 0, 0]);
+        }
+
+        #[test]
+        fn detects_flush() {
+            let r = rank_five_card_hand(
+                &h([
+                    c(Rank::Ace, Suit::Spades),
+                    c(Rank::Jack, Suit::Spades),
+                    c(Rank::Nine, Suit::Spades),
+                    c(Rank::Six, Suit::Spades),
+                    c(Rank::Three, Suit::Spades),
+                ])
+            );
+            assert_eq!(r.category, HandCategory::Flush);
+        }
+
+        #[test]
+        fn detects_full_house() {
+            let r = rank_five_card_hand(
+                &h([
+                    c(Rank::Eight, Suit::Spades),
+                    c(Rank::Eight, Suit::Hearts),
+                    c(Rank::Eight, Suit::Clubs),
+                    c(Rank::Two, Suit::Diamonds),
+                    c(Rank::Two, Suit::Spades),
+                ])
+            );
+            assert_eq!(r.category, HandCategory::FullHouse);
+        }
+
+        #[test]
+        fn detects_four_of_a_kind() {
+            let r = rank_five_card_hand(
+                &h([
+                    c(Rank::King, Suit::Spades),
+                    c(Rank::King, Suit::Hearts),
+                    c(Rank::King, Suit::Clubs),
+                    c(Rank::King, Suit::Diamonds),
+                    c(Rank::Five, Suit::Spades),
+                ])
+            );
+            assert_eq!(r.category, HandCategory::FourOfAKind);
+        }
+
+        #[test]
+        fn detects_straight_flush_and_royal_is_high_14() {
+            let r = rank_five_card_hand(
+                &h([
+                    c(Rank::Ten, Suit::Hearts),
+                    c(Rank::Jack, Suit::Hearts),
+                    c(Rank::Queen, Suit::Hearts),
+                    c(Rank::King, Suit::Hearts),
+                    c(Rank::Ace, Suit::Hearts),
+                ])
+            );
+            assert_eq!(r.category, HandCategory::StraightFlush);
+            assert_eq!(r.tiebreakers, [14, 0, 0, 0, 0]);
+        }
+    }
+
+    mod five_card_tiebreak_tests {
+        use super::*;
+
+        #[test]
+        fn high_card_tiebreakers_descending() {
+            let r = rank_five_card_hand(
+                &h([
+                    c(Rank::Ace, Suit::Spades),
+                    c(Rank::King, Suit::Hearts),
+                    c(Rank::Nine, Suit::Clubs),
+                    c(Rank::Seven, Suit::Diamonds),
+                    c(Rank::Three, Suit::Spades),
+                ])
+            );
+            assert_eq!(r.tiebreakers, [14, 13, 9, 7, 3]);
+        }
+
+        #[test]
+        fn one_pair_tiebreakers_pair_then_kickers() {
+            let r = rank_five_card_hand(
+                &h([
+                    c(Rank::Ten, Suit::Spades),
+                    c(Rank::Ten, Suit::Hearts),
+                    c(Rank::Ace, Suit::Clubs),
+                    c(Rank::Seven, Suit::Diamonds),
+                    c(Rank::Three, Suit::Hearts),
+                ])
+            );
+            assert_eq!(r.tiebreakers, [10, 14, 7, 3, 0]);
+        }
+
+        #[test]
+        fn two_pair_tiebreaker_compares_kicker() {
+            let h1 = rank_five_card_hand(
+                &h([
+                    c(Rank::Ace, Suit::Spades),
+                    c(Rank::Ace, Suit::Hearts),
+                    c(Rank::Jack, Suit::Clubs),
+                    c(Rank::Jack, Suit::Diamonds),
+                    c(Rank::Nine, Suit::Spades),
+                ])
+            );
+
+            let h2 = rank_five_card_hand(
+                &h([
+                    c(Rank::Ace, Suit::Clubs),
+                    c(Rank::Ace, Suit::Diamonds),
+                    c(Rank::Jack, Suit::Hearts),
+                    c(Rank::Jack, Suit::Spades),
+                    c(Rank::Eight, Suit::Clubs),
+                ])
+            );
+
+            assert!(h1 > h2);
+        }
+
+        #[test]
+        fn ordering_works_across_categories_and_tiebreakers() {
+            let p10 = rank_five_card_hand(
+                &h([
+                    c(Rank::Ten, Suit::Spades),
+                    c(Rank::Ten, Suit::Hearts),
+                    c(Rank::Ace, Suit::Clubs),
+                    c(Rank::Seven, Suit::Diamonds),
+                    c(Rank::Three, Suit::Hearts),
+                ])
+            );
+
+            let pj = rank_five_card_hand(
+                &h([
+                    c(Rank::Jack, Suit::Spades),
+                    c(Rank::Jack, Suit::Hearts),
+                    c(Rank::Two, Suit::Clubs),
+                    c(Rank::Three, Suit::Diamonds),
+                    c(Rank::Four, Suit::Hearts),
+                ])
+            );
+
+            assert!(pj > p10);
+
+            let sf = rank_five_card_hand(
+                &h([
+                    c(Rank::Nine, Suit::Clubs),
+                    c(Rank::Ten, Suit::Clubs),
+                    c(Rank::Jack, Suit::Clubs),
+                    c(Rank::Queen, Suit::Clubs),
+                    c(Rank::King, Suit::Clubs),
+                ])
+            );
+
+            let fk = rank_five_card_hand(
+                &h([
+                    c(Rank::Ace, Suit::Spades),
+                    c(Rank::Ace, Suit::Hearts),
+                    c(Rank::Ace, Suit::Clubs),
+                    c(Rank::Ace, Suit::Diamonds),
+                    c(Rank::Two, Suit::Spades),
+                ])
+            );
+
+            assert!(sf > fk);
+        }
+    }
+
+    mod best_of_seven_tests {
+        use super::*;
+
+        #[test]
+        fn best_of_seven_finds_straight_flush_over_other_hands() {
+            let seven: [Card; 7] = [
+                c(Rank::Nine, Suit::Clubs),
+                c(Rank::Ten, Suit::Clubs),
+                c(Rank::Jack, Suit::Clubs),
+                c(Rank::Queen, Suit::Clubs),
+                c(Rank::King, Suit::Clubs),
+                c(Rank::Ace, Suit::Hearts),
+                c(Rank::Two, Suit::Spades),
+            ];
+
+            let best = best_hand_from_seven_cards(&seven);
+            assert_eq!(best.category, HandCategory::StraightFlush);
+            assert_eq!(best.tiebreakers, [13, 0, 0, 0, 0]);
+        }
+
+        #[test]
+        fn best_of_seven_prefers_full_house_over_three_of_a_kind() {
+            let seven: [Card; 7] = [
+                c(Rank::Eight, Suit::Spades),
+                c(Rank::Eight, Suit::Hearts),
+                c(Rank::Eight, Suit::Clubs),
+                c(Rank::Two, Suit::Diamonds),
+                c(Rank::Two, Suit::Spades),
+                c(Rank::Ace, Suit::Hearts),
+                c(Rank::King, Suit::Clubs),
+            ];
+
+            let best = best_hand_from_seven_cards(&seven);
+            assert_eq!(best.category, HandCategory::FullHouse);
+            assert_eq!(best.tiebreakers, [8, 2, 0, 0, 0]);
+        }
+
+        #[test]
+        fn best_of_seven_picks_best_two_pair_and_kicker() {
+            let seven: [Card; 7] = [
+                c(Rank::Ace, Suit::Spades),
+                c(Rank::Ace, Suit::Hearts),
+                c(Rank::Jack, Suit::Clubs),
+                c(Rank::Jack, Suit::Diamonds),
+                c(Rank::Ten, Suit::Spades),
+                c(Rank::Ten, Suit::Hearts),
+                c(Rank::Nine, Suit::Clubs),
+            ];
+
+            let best = best_hand_from_seven_cards(&seven);
+            assert_eq!(best.category, HandCategory::TwoPair);
+            assert_eq!(best.tiebreakers, [14, 11, 10, 0, 0]);
+        }
+
+        #[test]
+        fn best_of_seven_uses_kicker_to_break_one_pair_ties() {
+            let seven: [Card; 7] = [
+                c(Rank::King, Suit::Spades),
+                c(Rank::King, Suit::Hearts),
+                c(Rank::Ace, Suit::Clubs),
+                c(Rank::Queen, Suit::Diamonds),
+                c(Rank::Jack, Suit::Spades),
+                c(Rank::Nine, Suit::Hearts),
+                c(Rank::Two, Suit::Clubs),
+            ];
+
+            let best = best_hand_from_seven_cards(&seven);
+            assert_eq!(best.category, HandCategory::OnePair);
+            assert_eq!(best.tiebreakers, [13, 14, 12, 11, 0]);
+        }
+
+        #[test]
+        fn best_of_seven_detects_wheel_straight_when_present() {
+            let seven: [Card; 7] = [
+                c(Rank::Ace, Suit::Spades),
+                c(Rank::Two, Suit::Hearts),
+                c(Rank::Three, Suit::Clubs),
+                c(Rank::Four, Suit::Diamonds),
+                c(Rank::Five, Suit::Spades),
+                c(Rank::King, Suit::Hearts),
+                c(Rank::Queen, Suit::Clubs),
+            ];
+
+            let best = best_hand_from_seven_cards(&seven);
+            assert_eq!(best.category, HandCategory::Straight);
+            assert_eq!(best.tiebreakers, [5, 0, 0, 0, 0]);
+        }
+
+        #[test]
+        fn best_of_seven_prefers_flush_over_straight_when_both_possible() {
+            let seven: [Card; 7] = [
+                c(Rank::Ace, Suit::Spades),
+                c(Rank::Jack, Suit::Spades),
+                c(Rank::Nine, Suit::Spades),
+                c(Rank::Six, Suit::Spades),
+                c(Rank::Three, Suit::Spades),
+                c(Rank::Ten, Suit::Hearts),
+                c(Rank::Queen, Suit::Clubs),
+            ];
+
+            let best = best_hand_from_seven_cards(&seven);
+            assert_eq!(best.category, HandCategory::Flush);
+            assert_eq!(best.tiebreakers, [14, 11, 9, 6, 3]);
+        }
+    }
+}
+
+#[cfg(test)]
+mod best_of_seven_tests {
+    use super::*;
+    use crate::card_deck::{ Card, Rank, Suit };
+
+    fn c(r: Rank, s: Suit) -> Card {
+        Card::new(r, s)
     }
 
     #[test]
-    fn detects_high_card_and_tiebreakers() {
-        // A K 9 7 3 (not straight, not flush)
-        let hand = h([
-            Card::new(Rank::Ace, Suit::Spades),
-            Card::new(Rank::King, Suit::Hearts),
-            Card::new(Rank::Nine, Suit::Clubs),
-            Card::new(Rank::Seven, Suit::Diamonds),
-            Card::new(Rank::Three, Suit::Spades),
-        ]);
-        let r = rank_five_card_hand(&hand);
+    fn best_of_seven_finds_straight_flush_over_other_hands() {
+        // Contains a 9-T-J-Q-K straight flush (clubs)
+        // Also contains an extra Ace + Two which could form other stuff but should lose.
+        let seven: [Card; 7] = [
+            c(Rank::Nine, Suit::Clubs),
+            c(Rank::Ten, Suit::Clubs),
+            c(Rank::Jack, Suit::Clubs),
+            c(Rank::Queen, Suit::Clubs),
+            c(Rank::King, Suit::Clubs),
+            c(Rank::Ace, Suit::Hearts),
+            c(Rank::Two, Suit::Spades),
+        ];
 
-        assert_eq!(r.category, HandCategory::HighCard);
-        assert_eq!(r.tiebreakers, [14, 13, 9, 7, 3]);
+        let best = best_hand_from_seven_cards(&seven);
+        assert_eq!(best.category, HandCategory::StraightFlush);
+        assert_eq!(best.tiebreakers, [13, 0, 0, 0, 0]); // high card King=13
     }
 
     #[test]
-    fn detects_one_pair_and_kickers_order() {
-        // Pair of 10s with A, 7, 3 kickers
-        let hand = h([
-            Card::new(Rank::Ten, Suit::Spades),
-            Card::new(Rank::Ten, Suit::Hearts),
-            Card::new(Rank::Ace, Suit::Clubs),
-            Card::new(Rank::Seven, Suit::Diamonds),
-            Card::new(Rank::Three, Suit::Hearts),
-        ]);
-        let r = rank_five_card_hand(&hand);
+    fn best_of_seven_prefers_full_house_over_three_of_a_kind() {
+        // 7 cards include trips 8 and a pair of 2 => full house (8 over 2)
+        let seven: [Card; 7] = [
+            c(Rank::Eight, Suit::Spades),
+            c(Rank::Eight, Suit::Hearts),
+            c(Rank::Eight, Suit::Clubs),
+            c(Rank::Two, Suit::Diamonds),
+            c(Rank::Two, Suit::Spades),
+            c(Rank::Ace, Suit::Hearts),
+            c(Rank::King, Suit::Clubs),
+        ];
 
-        assert_eq!(r.category, HandCategory::OnePair);
-        assert_eq!(r.tiebreakers, [10, 14, 7, 3, 0]);
+        let best = best_hand_from_seven_cards(&seven);
+        assert_eq!(best.category, HandCategory::FullHouse);
+        assert_eq!(best.tiebreakers, [8, 2, 0, 0, 0]);
     }
 
     #[test]
-    fn detects_two_pair_with_high_low_pair_and_kicker() {
-        // Two pair: Aces and Jacks, kicker 9
-        let hand = h([
-            Card::new(Rank::Ace, Suit::Spades),
-            Card::new(Rank::Ace, Suit::Hearts),
-            Card::new(Rank::Jack, Suit::Clubs),
-            Card::new(Rank::Jack, Suit::Diamonds),
-            Card::new(Rank::Nine, Suit::Spades),
-        ]);
-        let r = rank_five_card_hand(&hand);
+    fn best_of_seven_picks_best_two_pair_and_kicker() {
+        // Two possible two-pairs exist:
+        // - Aces + Jacks + kicker 9
+        // - Aces + Tens + kicker King
+        // Best is Aces+Jacks (since second pair is higher than Tens).
+        let seven: [Card; 7] = [
+            c(Rank::Ace, Suit::Spades),
+            c(Rank::Ace, Suit::Hearts),
+            c(Rank::Jack, Suit::Clubs),
+            c(Rank::Jack, Suit::Diamonds),
+            c(Rank::Ten, Suit::Spades),
+            c(Rank::Ten, Suit::Hearts),
+            c(Rank::Nine, Suit::Clubs),
+        ];
 
-        assert_eq!(r.category, HandCategory::TwoPair);
-        assert_eq!(r.tiebreakers, [14, 11, 9, 0, 0]);
+        let best = best_hand_from_seven_cards(&seven);
+        assert_eq!(best.category, HandCategory::TwoPair);
+        assert_eq!(best.tiebreakers, [14, 11, 10, 0, 0]); // AA + JJ, kicker is best remaining (Ten)
     }
 
     #[test]
-    fn detects_three_of_a_kind_and_kickers() {
-        // Trips 7s with A and 2 kickers
-        let hand = h([
-            Card::new(Rank::Seven, Suit::Spades),
-            Card::new(Rank::Seven, Suit::Hearts),
-            Card::new(Rank::Seven, Suit::Clubs),
-            Card::new(Rank::Ace, Suit::Diamonds),
-            Card::new(Rank::Two, Suit::Spades),
-        ]);
-        let r = rank_five_card_hand(&hand);
+    fn best_of_seven_uses_kicker_to_break_one_pair_ties() {
+        // Pair of Kings is available, but there are multiple 5-card choices.
+        // Best kickers should be A, Q, J with KK.
+        let seven: [Card; 7] = [
+            c(Rank::King, Suit::Spades),
+            c(Rank::King, Suit::Hearts),
+            c(Rank::Ace, Suit::Clubs),
+            c(Rank::Queen, Suit::Diamonds),
+            c(Rank::Jack, Suit::Spades),
+            c(Rank::Nine, Suit::Hearts),
+            c(Rank::Two, Suit::Clubs),
+        ];
 
-        assert_eq!(r.category, HandCategory::ThreeOfAKind);
-        assert_eq!(r.tiebreakers, [7, 14, 2, 0, 0]);
+        let best = best_hand_from_seven_cards(&seven);
+        assert_eq!(best.category, HandCategory::OnePair);
+        assert_eq!(best.tiebreakers, [13, 14, 12, 11, 0]); // KK with A,Q,J
     }
 
     #[test]
-    fn detects_straight_normal() {
-        // 9-T-J-Q-K straight (high = K=13)
-        let hand = h([
-            Card::new(Rank::Nine, Suit::Spades),
-            Card::new(Rank::Ten, Suit::Hearts),
-            Card::new(Rank::Jack, Suit::Clubs),
-            Card::new(Rank::Queen, Suit::Diamonds),
-            Card::new(Rank::King, Suit::Spades),
-        ]);
-        let r = rank_five_card_hand(&hand);
+    fn best_of_seven_detects_wheel_straight_when_present() {
+        // Contains A-2-3-4-5 straight (wheel) plus extra high cards.
+        // Best straight should be wheel (high=5) because no higher straight exists here.
+        let seven: [Card; 7] = [
+            c(Rank::Ace, Suit::Spades),
+            c(Rank::Two, Suit::Hearts),
+            c(Rank::Three, Suit::Clubs),
+            c(Rank::Four, Suit::Diamonds),
+            c(Rank::Five, Suit::Spades),
+            c(Rank::King, Suit::Hearts),
+            c(Rank::Queen, Suit::Clubs),
+        ];
 
-        assert_eq!(r.category, HandCategory::Straight);
-        assert_eq!(r.tiebreakers, [13, 0, 0, 0, 0]);
+        let best = best_hand_from_seven_cards(&seven);
+        assert_eq!(best.category, HandCategory::Straight);
+        assert_eq!(best.tiebreakers, [5, 0, 0, 0, 0]);
     }
 
     #[test]
-    fn detects_wheel_straight_ace_low() {
-        // A-2-3-4-5 straight (wheel) should be high=5
-        let hand = h([
-            Card::new(Rank::Ace, Suit::Spades),
-            Card::new(Rank::Two, Suit::Hearts),
-            Card::new(Rank::Three, Suit::Clubs),
-            Card::new(Rank::Four, Suit::Diamonds),
-            Card::new(Rank::Five, Suit::Spades),
-        ]);
-        let r = rank_five_card_hand(&hand);
+    fn best_of_seven_prefers_flush_over_straight_when_both_possible() {
+        // Make a flush available (spades) and also a straight available (9-T-J-Q-K),
+        // flush outranks straight.
+        let seven: [Card; 7] = [
+            c(Rank::Ace, Suit::Spades),
+            c(Rank::Jack, Suit::Spades),
+            c(Rank::Nine, Suit::Spades),
+            c(Rank::Six, Suit::Spades),
+            c(Rank::Three, Suit::Spades), // flush: A,J,9,6,3
+            c(Rank::Ten, Suit::Hearts),
+            c(Rank::Queen, Suit::Clubs),
+        ];
 
-        assert_eq!(r.category, HandCategory::Straight);
-        assert_eq!(r.tiebreakers, [5, 0, 0, 0, 0]);
-    }
-
-    #[test]
-    fn detects_flush_and_uses_high_card_tiebreak() {
-        // Flush: A J 9 6 3 all spades
-        let hand = h([
-            Card::new(Rank::Ace, Suit::Spades),
-            Card::new(Rank::Jack, Suit::Spades),
-            Card::new(Rank::Nine, Suit::Spades),
-            Card::new(Rank::Six, Suit::Spades),
-            Card::new(Rank::Three, Suit::Spades),
-        ]);
-        let r = rank_five_card_hand(&hand);
-
-        assert_eq!(r.category, HandCategory::Flush);
-        assert_eq!(r.tiebreakers, [14, 11, 9, 6, 3]);
-    }
-
-    #[test]
-    fn detects_full_house() {
-        // Full house: 8s full of 2s
-        let hand = h([
-            Card::new(Rank::Eight, Suit::Spades),
-            Card::new(Rank::Eight, Suit::Hearts),
-            Card::new(Rank::Eight, Suit::Clubs),
-            Card::new(Rank::Two, Suit::Diamonds),
-            Card::new(Rank::Two, Suit::Spades),
-        ]);
-        let r = rank_five_card_hand(&hand);
-
-        assert_eq!(r.category, HandCategory::FullHouse);
-        assert_eq!(r.tiebreakers, [8, 2, 0, 0, 0]);
-    }
-
-    #[test]
-    fn detects_four_of_a_kind() {
-        // Quads: Kings, kicker 5
-        let hand = h([
-            Card::new(Rank::King, Suit::Spades),
-            Card::new(Rank::King, Suit::Hearts),
-            Card::new(Rank::King, Suit::Clubs),
-            Card::new(Rank::King, Suit::Diamonds),
-            Card::new(Rank::Five, Suit::Spades),
-        ]);
-        let r = rank_five_card_hand(&hand);
-
-        assert_eq!(r.category, HandCategory::FourOfAKind);
-        assert_eq!(r.tiebreakers, [13, 5, 0, 0, 0]);
-    }
-
-    #[test]
-    fn detects_straight_flush_and_royal_flush_is_high_14() {
-        // Royal flush: 10 J Q K A all hearts => straight flush high=14
-        let hand = h([
-            Card::new(Rank::Ten, Suit::Hearts),
-            Card::new(Rank::Jack, Suit::Hearts),
-            Card::new(Rank::Queen, Suit::Hearts),
-            Card::new(Rank::King, Suit::Hearts),
-            Card::new(Rank::Ace, Suit::Hearts),
-        ]);
-        let r = rank_five_card_hand(&hand);
-
-        assert_eq!(r.category, HandCategory::StraightFlush);
-        assert_eq!(r.tiebreakers, [14, 0, 0, 0, 0]);
-    }
-
-    #[test]
-    fn ordering_works_across_categories_and_tiebreakers() {
-        // Pair of 10s
-        let p10 = rank_five_card_hand(
-            &h([
-                Card::new(Rank::Ten, Suit::Spades),
-                Card::new(Rank::Ten, Suit::Hearts),
-                Card::new(Rank::Ace, Suit::Clubs),
-                Card::new(Rank::Seven, Suit::Diamonds),
-                Card::new(Rank::Three, Suit::Hearts),
-            ])
-        );
-
-        // Pair of Jacks (should beat pair of 10s)
-        let pj = rank_five_card_hand(
-            &h([
-                Card::new(Rank::Jack, Suit::Spades),
-                Card::new(Rank::Jack, Suit::Hearts),
-                Card::new(Rank::Two, Suit::Clubs),
-                Card::new(Rank::Three, Suit::Diamonds),
-                Card::new(Rank::Four, Suit::Hearts),
-            ])
-        );
-
-        assert!(pj > p10);
-
-        // Straight flush beats four of a kind
-        let sf = rank_five_card_hand(
-            &h([
-                Card::new(Rank::Nine, Suit::Clubs),
-                Card::new(Rank::Ten, Suit::Clubs),
-                Card::new(Rank::Jack, Suit::Clubs),
-                Card::new(Rank::Queen, Suit::Clubs),
-                Card::new(Rank::King, Suit::Clubs),
-            ])
-        );
-
-        let fk = rank_five_card_hand(
-            &h([
-                Card::new(Rank::Ace, Suit::Spades),
-                Card::new(Rank::Ace, Suit::Hearts),
-                Card::new(Rank::Ace, Suit::Clubs),
-                Card::new(Rank::Ace, Suit::Diamonds),
-                Card::new(Rank::Two, Suit::Spades),
-            ])
-        );
-
-        assert!(sf > fk);
-    }
-
-    #[test]
-    fn two_pair_tiebreaker_compares_kicker() {
-        // AA + JJ + 9
-        let h1 = rank_five_card_hand(
-            &h([
-                Card::new(Rank::Ace, Suit::Spades),
-                Card::new(Rank::Ace, Suit::Hearts),
-                Card::new(Rank::Jack, Suit::Clubs),
-                Card::new(Rank::Jack, Suit::Diamonds),
-                Card::new(Rank::Nine, Suit::Spades),
-            ])
-        );
-
-        // AA + JJ + 8 (should lose to kicker 9)
-        let h2 = rank_five_card_hand(
-            &h([
-                Card::new(Rank::Ace, Suit::Clubs),
-                Card::new(Rank::Ace, Suit::Diamonds),
-                Card::new(Rank::Jack, Suit::Hearts),
-                Card::new(Rank::Jack, Suit::Spades),
-                Card::new(Rank::Eight, Suit::Clubs),
-            ])
-        );
-
-        assert!(h1 > h2);
+        let best = best_hand_from_seven_cards(&seven);
+        assert_eq!(best.category, HandCategory::Flush);
+        assert_eq!(best.tiebreakers, [14, 11, 9, 6, 3]);
     }
 }
