@@ -1,5 +1,7 @@
 mod accounts;
 
+mod account_store;
+
 use accounts::Account;
 
 fn main() {
