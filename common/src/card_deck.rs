@@ -7,12 +7,7 @@ pub enum Suit {
 }
 
 impl Suit {
-    pub const ALL: [Suit; 4] = [
-        Suit::Hearts,
-        Suit::Diamonds,
-        Suit::Clubs,
-        Suit::Spades,
-    ];
+    pub const ALL: [Suit; 4] = [Suit::Hearts, Suit::Diamonds, Suit::Clubs, Suit::Spades];
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
