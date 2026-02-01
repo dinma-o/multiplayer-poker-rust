@@ -131,6 +131,11 @@ impl AccountStore {
         Ok(())
     }
 
+    /// Explicit save hook for shutdown paths.
+    pub fn flush(&self) -> Result<(), AccountError> {
+        self.save()
+    }
+
     /// Creates a new account with a unique name and generated ID.
     ///
     /// Fails if the name already exists or the PIN format is invalid.
@@ -242,12 +247,59 @@ impl AccountStore {
         self.save()?;
         Ok(updated)
     }
+
+    /// Records that a game was played and persists.
+    pub fn record_game_played(&mut self, name: &str) -> Result<Account, AccountError> {
+        let updated = {
+            let account = self
+                .accounts
+                .iter_mut()
+                .find(|a| a.name == name)
+                .ok_or(AccountError::AccountNotFound)?;
+
+            account.record_game_played();
+            account.clone()
+        };
+
+        self.save()?;
+        Ok(updated)
+    }
+
+    /// Records that a pot was won and persists.
+    pub fn record_pot_won(&mut self, name: &str) -> Result<Account, AccountError> {
+        let updated = {
+            let account = self
+                .accounts
+                .iter_mut()
+                .find(|a| a.name == name)
+                .ok_or(AccountError::AccountNotFound)?;
+
+            account.record_pot_won();
+            account.clone()
+        };
+
+        self.save()?;
+        Ok(updated)
+    }
+
+    /// Records that a fold occurred and persists.
+    pub fn record_fold(&mut self, name: &str) -> Result<Account, AccountError> {
+        let updated = {
+            let account = self
+                .accounts
+                .iter_mut()
+                .find(|a| a.name == name)
+                .ok_or(AccountError::AccountNotFound)?;
+
+            account.record_fold();
+            account.clone()
+        };
+
+        self.save()?;
+        Ok(updated)
+    }
 }
 
-/// Validates PIN format.
-///
-/// Current rule: exactly four numeric digits.
-/// This is intentionally isolated to make policy changes easy.
 fn is_valid_pin(pin: &str) -> bool {
     pin.len() == 4 && pin.chars().all(|c| c.is_ascii_digit())
 }
@@ -385,5 +437,33 @@ mod tests {
 
         let ok = store.deposit("alice", 10).unwrap();
         assert_eq!(ok.balance, 40);
+    }
+
+    #[test]
+    fn restart_preserves_balance_and_stats() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("accounts.json");
+
+        {
+            let mut store = AccountStore::load(&path).unwrap();
+            store.create_account("alice", "1234", 100).unwrap();
+
+            store.deposit("alice", 50).unwrap(); // balance 150
+            store.withdraw("alice", 20).unwrap(); // balance 130
+
+            store.record_game_played("alice").unwrap();
+            store.record_pot_won("alice").unwrap();
+            store.record_fold("alice").unwrap();
+
+            store.flush().unwrap();
+        }
+
+        let store2 = AccountStore::load(&path).unwrap();
+        let alice = store2.login("alice", "1234").unwrap();
+
+        assert_eq!(alice.balance, 130);
+        assert_eq!(alice.stats.games_played, 1);
+        assert_eq!(alice.stats.pots_won, 1);
+        assert_eq!(alice.stats.folds, 1);
     }
 }
