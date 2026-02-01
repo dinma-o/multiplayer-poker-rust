@@ -5,12 +5,14 @@
 //! - Loading and saving accounts to persistent storage
 //! - Creating new accounts with uniqueness guarantees
 //! - Authenticating accounts via name + PIN
+//! - Deposit/withdraw with validation and persistence
 //!
 //! This module does NOT handle UI, CLI input, or game logic. It is intended
 //! to be called by higher-level application layers.
 
 use crate::accounts::{Account, AccountId};
 use serde::{Deserialize, Serialize};
+use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -29,7 +31,28 @@ pub enum AccountError {
     Io(std::io::Error),
     /// JSON serialization or deserialization error.
     Json(serde_json::Error),
+    /// Amount must be positive and within safe bounds.
+    InvalidAmount,
+    /// Withdraw would make balance negative.
+    InsufficientFunds,
 }
+
+impl fmt::Display for AccountError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            AccountError::NameTaken => write!(f, "account name already exists"),
+            AccountError::InvalidPinFormat => write!(f, "invalid PIN format"),
+            AccountError::AccountNotFound => write!(f, "account not found"),
+            AccountError::InvalidPin => write!(f, "invalid PIN"),
+            AccountError::InvalidAmount => write!(f, "invalid amount"),
+            AccountError::InsufficientFunds => write!(f, "insufficient funds"),
+            AccountError::Io(e) => write!(f, "I/O error: {e}"),
+            AccountError::Json(e) => write!(f, "JSON error: {e}"),
+        }
+    }
+}
+
+impl std::error::Error for AccountError {}
 
 impl From<std::io::Error> for AccountError {
     fn from(e: std::io::Error) -> Self {
@@ -163,6 +186,62 @@ impl AccountStore {
     pub fn list_accounts(&self) -> &[Account] {
         &self.accounts
     }
+
+    /// Deposits a positive amount into the account balance and persists the update.
+    pub fn deposit(&mut self, name: &str, amount: i64) -> Result<Account, AccountError> {
+        if amount <= 0 {
+            return Err(AccountError::InvalidAmount);
+        }
+        // mutate in a short scope, clone result, then save
+        let updated = {
+            let account = self
+                .accounts
+                .iter_mut()
+                .find(|a| a.name == name)
+                .ok_or(AccountError::AccountNotFound)?;
+
+            account.balance = account
+                .balance
+                .checked_add(amount)
+                .ok_or(AccountError::InvalidAmount)?;
+
+            account.clone()
+        }; // <- mutable borrow ends here
+
+        self.save()?;
+        Ok(updated)
+    }
+
+    /// Withdraws a positive amount from the account balance if sufficient funds exist.
+    ///
+    /// This operation will not allow the balance to become negative.
+    pub fn withdraw(&mut self, name: &str, amount: i64) -> Result<Account, AccountError> {
+        if amount <= 0 {
+            return Err(AccountError::InvalidAmount);
+        }
+
+        let updated = {
+            let account = self
+                .accounts
+                .iter_mut()
+                .find(|a| a.name == name)
+                .ok_or(AccountError::AccountNotFound)?;
+
+            if amount > account.balance {
+                return Err(AccountError::InsufficientFunds);
+            }
+
+            account.balance = account
+                .balance
+                .checked_sub(amount)
+                .ok_or(AccountError::InvalidAmount)?;
+
+            account.clone()
+        }; // <- mutable borrow ends here
+
+        self.save()?;
+        Ok(updated)
+    }
 }
 
 /// Validates PIN format.
@@ -238,5 +317,73 @@ mod tests {
         let store2 = AccountStore::load(&path).unwrap();
         let logged_in = store2.login("alice", "1234").unwrap();
         assert_eq!(logged_in.balance, 100);
+    }
+    #[test]
+    fn deposit_increases_balance() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("accounts.json");
+
+        let mut store = AccountStore::load(&path).unwrap();
+        store.create_account("alice", "1234", 100).unwrap();
+
+        let updated = store.deposit("alice", 50).unwrap();
+        assert_eq!(updated.balance, 150);
+    }
+
+    #[test]
+    fn withdraw_decreases_balance() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("accounts.json");
+
+        let mut store = AccountStore::load(&path).unwrap();
+        store.create_account("alice", "1234", 100).unwrap();
+
+        let updated = store.withdraw("alice", 40).unwrap();
+        assert_eq!(updated.balance, 60);
+    }
+
+    #[test]
+    fn withdraw_cannot_go_negative() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("accounts.json");
+
+        let mut store = AccountStore::load(&path).unwrap();
+        store.create_account("alice", "1234", 30).unwrap();
+
+        let err = store.withdraw("alice", 31).unwrap_err();
+        assert!(matches!(err, AccountError::InsufficientFunds));
+    }
+
+    #[test]
+    fn reject_invalid_amounts() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("accounts.json");
+
+        let mut store = AccountStore::load(&path).unwrap();
+        store.create_account("alice", "1234", 30).unwrap();
+
+        assert!(matches!(
+            store.deposit("alice", 0).unwrap_err(),
+            AccountError::InvalidAmount
+        ));
+        assert!(matches!(
+            store.withdraw("alice", -5).unwrap_err(),
+            AccountError::InvalidAmount
+        ));
+    }
+
+    #[test]
+    fn error_then_success_has_no_stale_error_state() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("accounts.json");
+
+        let mut store = AccountStore::load(&path).unwrap();
+        store.create_account("alice", "1234", 30).unwrap();
+
+        let err = store.withdraw("alice", 999).unwrap_err();
+        assert!(matches!(err, AccountError::InsufficientFunds));
+
+        let ok = store.deposit("alice", 10).unwrap();
+        assert_eq!(ok.balance, 40);
     }
 }
