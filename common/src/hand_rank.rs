@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-
 use itertools::Itertools;
 
 use crate::{ card_deck::{ Card, Suit }, hand::FiveCardHand };
@@ -177,6 +176,30 @@ pub fn best_hand_from_seven_cards(cards: &[Card; 7]) -> HandRank {
         })
         .max()
         .expect("7 cards always produce at least one 5-card combination")
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ShowDownResult {
+    pub winner_indices: Vec<usize>, // indices of winning hands (can be multiple for ties)
+    pub winning_rank: HandRank,
+}
+
+pub fn determine_showdown_winner(ranked_hands: &[(usize, HandRank)]) -> ShowDownResult {
+    let max_rank = ranked_hands
+        .iter()
+        .max_by(|a, b| a.1.cmp(&b.1))
+        .expect("at least one hand must be present")
+        .1;
+
+    let winner_indices: Vec<usize> = ranked_hands
+        .iter()
+        .filter_map(|&(idx, ref rank)| if rank == &max_rank { Some(idx) } else { None })
+        .collect();
+
+    ShowDownResult {
+        winner_indices,
+        winning_rank: max_rank,
+    }
 }
 
 #[cfg(test)]
@@ -563,129 +586,76 @@ mod tests {
             assert_eq!(best.tiebreakers, [14, 11, 9, 6, 3]);
         }
     }
-}
 
-#[cfg(test)]
-mod best_of_seven_tests {
-    use super::*;
-    use crate::card_deck::{ Card, Rank, Suit };
+    mod showdown_winner_tests {
+        use super::*;
 
-    fn c(r: Rank, s: Suit) -> Card {
-        Card::new(r, s)
-    }
+        #[test]
+        fn determines_winner_correctly() {
+            let hands = vec![
+                (0, rank_five_card_hand(
+                    &h([
+                        c(Rank::Ten, Suit::Spades),
+                        c(Rank::Ten, Suit::Hearts),
+                        c(Rank::Ace, Suit::Clubs),
+                        c(Rank::Seven, Suit::Diamonds),
+                        c(Rank::Three, Suit::Hearts),
+                    ])
+                )), // One Pair
 
-    #[test]
-    fn best_of_seven_finds_straight_flush_over_other_hands() {
-        // Contains a 9-T-J-Q-K straight flush (clubs)
-        // Also contains an extra Ace + Two which could form other stuff but should lose.
-        let seven: [Card; 7] = [
-            c(Rank::Nine, Suit::Clubs),
-            c(Rank::Ten, Suit::Clubs),
-            c(Rank::Jack, Suit::Clubs),
-            c(Rank::Queen, Suit::Clubs),
-            c(Rank::King, Suit::Clubs),
-            c(Rank::Ace, Suit::Hearts),
-            c(Rank::Two, Suit::Spades),
-        ];
+                (1, rank_five_card_hand(
+                    &h([
+                        c(Rank::Jack, Suit::Spades),
+                        c(Rank::Jack, Suit::Hearts),
+                        c(Rank::Two, Suit::Clubs),
+                        c(Rank::Three, Suit::Diamonds),
+                        c(Rank::Four, Suit::Hearts),
+                    ])
+                )), // One Pair
 
-        let best = best_hand_from_seven_cards(&seven);
-        assert_eq!(best.category, HandCategory::StraightFlush);
-        assert_eq!(best.tiebreakers, [13, 0, 0, 0, 0]); // high card King=13
-    }
+                (2, rank_five_card_hand(
+                    &h([
+                        c(Rank::Nine, Suit::Clubs),
+                        c(Rank::Ten, Suit::Clubs),
+                        c(Rank::Jack, Suit::Clubs),
+                        c(Rank::Queen, Suit::Clubs),
+                        c(Rank::King, Suit::Clubs),
+                    ])
+                )), // Straight Flush
+            ];
 
-    #[test]
-    fn best_of_seven_prefers_full_house_over_three_of_a_kind() {
-        // 7 cards include trips 8 and a pair of 2 => full house (8 over 2)
-        let seven: [Card; 7] = [
-            c(Rank::Eight, Suit::Spades),
-            c(Rank::Eight, Suit::Hearts),
-            c(Rank::Eight, Suit::Clubs),
-            c(Rank::Two, Suit::Diamonds),
-            c(Rank::Two, Suit::Spades),
-            c(Rank::Ace, Suit::Hearts),
-            c(Rank::King, Suit::Clubs),
-        ];
+            let result = determine_showdown_winner(&hands);
+            assert_eq!(result.winner_indices, vec![2]);
+            assert_eq!(result.winning_rank.category, HandCategory::StraightFlush);
+        }
+        
+        #[test]
+        fn determines_tie_correctly() {
+            let hands = vec![
+                (0, rank_five_card_hand(
+                    &h([
+                        c(Rank::Ace, Suit::Spades),
+                        c(Rank::Ace, Suit::Hearts),
+                        c(Rank::Jack, Suit::Clubs),
+                        c(Rank::Jack, Suit::Diamonds),
+                        c(Rank::Nine, Suit::Spades),
+                    ])
+                )), // Two Pair
 
-        let best = best_hand_from_seven_cards(&seven);
-        assert_eq!(best.category, HandCategory::FullHouse);
-        assert_eq!(best.tiebreakers, [8, 2, 0, 0, 0]);
-    }
+                (1, rank_five_card_hand(
+                    &h([
+                        c(Rank::Ace, Suit::Clubs),
+                        c(Rank::Ace, Suit::Diamonds),
+                        c(Rank::Jack, Suit::Hearts),
+                        c(Rank::Jack, Suit::Spades),
+                        c(Rank::Nine, Suit::Clubs),
+                    ])
+                )), // Two Pair
+            ];
 
-    #[test]
-    fn best_of_seven_picks_best_two_pair_and_kicker() {
-        // Two possible two-pairs exist:
-        // - Aces + Jacks + kicker 9
-        // - Aces + Tens + kicker King
-        // Best is Aces+Jacks (since second pair is higher than Tens).
-        let seven: [Card; 7] = [
-            c(Rank::Ace, Suit::Spades),
-            c(Rank::Ace, Suit::Hearts),
-            c(Rank::Jack, Suit::Clubs),
-            c(Rank::Jack, Suit::Diamonds),
-            c(Rank::Ten, Suit::Spades),
-            c(Rank::Ten, Suit::Hearts),
-            c(Rank::Nine, Suit::Clubs),
-        ];
-
-        let best = best_hand_from_seven_cards(&seven);
-        assert_eq!(best.category, HandCategory::TwoPair);
-        assert_eq!(best.tiebreakers, [14, 11, 10, 0, 0]); // AA + JJ, kicker is best remaining (Ten)
-    }
-
-    #[test]
-    fn best_of_seven_uses_kicker_to_break_one_pair_ties() {
-        // Pair of Kings is available, but there are multiple 5-card choices.
-        // Best kickers should be A, Q, J with KK.
-        let seven: [Card; 7] = [
-            c(Rank::King, Suit::Spades),
-            c(Rank::King, Suit::Hearts),
-            c(Rank::Ace, Suit::Clubs),
-            c(Rank::Queen, Suit::Diamonds),
-            c(Rank::Jack, Suit::Spades),
-            c(Rank::Nine, Suit::Hearts),
-            c(Rank::Two, Suit::Clubs),
-        ];
-
-        let best = best_hand_from_seven_cards(&seven);
-        assert_eq!(best.category, HandCategory::OnePair);
-        assert_eq!(best.tiebreakers, [13, 14, 12, 11, 0]); // KK with A,Q,J
-    }
-
-    #[test]
-    fn best_of_seven_detects_wheel_straight_when_present() {
-        // Contains A-2-3-4-5 straight (wheel) plus extra high cards.
-        // Best straight should be wheel (high=5) because no higher straight exists here.
-        let seven: [Card; 7] = [
-            c(Rank::Ace, Suit::Spades),
-            c(Rank::Two, Suit::Hearts),
-            c(Rank::Three, Suit::Clubs),
-            c(Rank::Four, Suit::Diamonds),
-            c(Rank::Five, Suit::Spades),
-            c(Rank::King, Suit::Hearts),
-            c(Rank::Queen, Suit::Clubs),
-        ];
-
-        let best = best_hand_from_seven_cards(&seven);
-        assert_eq!(best.category, HandCategory::Straight);
-        assert_eq!(best.tiebreakers, [5, 0, 0, 0, 0]);
-    }
-
-    #[test]
-    fn best_of_seven_prefers_flush_over_straight_when_both_possible() {
-        // Make a flush available (spades) and also a straight available (9-T-J-Q-K),
-        // flush outranks straight.
-        let seven: [Card; 7] = [
-            c(Rank::Ace, Suit::Spades),
-            c(Rank::Jack, Suit::Spades),
-            c(Rank::Nine, Suit::Spades),
-            c(Rank::Six, Suit::Spades),
-            c(Rank::Three, Suit::Spades), // flush: A,J,9,6,3
-            c(Rank::Ten, Suit::Hearts),
-            c(Rank::Queen, Suit::Clubs),
-        ];
-
-        let best = best_hand_from_seven_cards(&seven);
-        assert_eq!(best.category, HandCategory::Flush);
-        assert_eq!(best.tiebreakers, [14, 11, 9, 6, 3]);
+            let result = determine_showdown_winner(&hands);
+            assert_eq!(result.winner_indices, vec![0, 1]);
+            assert_eq!(result.winning_rank.category, HandCategory::TwoPair);
+        }
     }
 }
