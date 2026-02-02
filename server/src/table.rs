@@ -1,12 +1,15 @@
 std::collections::HashMap;
 use crate::game_state_machines::five_card_draw_poker::FiveCardDrawPokerStateMachine;
 use crate::player::Player;
+
+#[derive(Debug, Clone)]
 pub struct FiveCardTable {
-    game_state_machine: FiveCardDrawPokerStateMachine,
+    game_state_machine: PokerStateMachine,
     dealer_manager: DealerManager,
     player_ids_in_game: Vec<usize>,
     player_lookup: HashMap<usize, PlayerAtTable>,
 }
+#[derive(Debug, Clone)]
 pub struct PlayerAtTable {
     player_id: usize,
     player: Player,
@@ -17,13 +20,13 @@ pub struct PlayerAtTable {
     is_dealer: bool,
     is_all_in: bool,
 }
-
+#[derive(Debug, PartialEq, Eq)]
 pub enum JoinError {
     PlayerAlreadyAtTable,
     TableFull,
     RoundInProgress,
 }
-
+#[derive(Debug, PartialEq, Eq)]
 pub enum LeaveError {
     PlayerNotAtTable,
     RoundInProgress,
@@ -32,7 +35,7 @@ pub enum LeaveError {
 impl FiveCardTable {
     pub fn new(ante_amount: u32) -> Self {
         FiveCardTable {
-            game_state_machine: FiveCardDrawPokerStateMachine::new(ante_amount),
+            game_state_machine: PokerStateMachine::new(ante_amount),
             dealer_manager: DealerManager::new(),
             player_ids_in_game: Vec::new(),
             player_lookup: HashMap::new(),
@@ -46,7 +49,7 @@ impl FiveCardTable {
         if self.player_ids_in_game.len() > 5 {
             return Err(JoinError::TableFull);
         }
-        if let FiveCardDrawPokerGameState::WaitingForPlayers = self.game_state_machine.get_current_state() {
+        if let PokerGameState::WaitingForPlayers = self.game_state_machine.get_current_state() {
             self.player_ids_in_game.push(player_id);
             self.player_lookup.insert(player_id, PlayerAtTable {
                 player_id,

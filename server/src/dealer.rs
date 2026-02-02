@@ -1,3 +1,4 @@
+#[derive(Debug)]
 pub struct DealerManager {
     dealer_position: usize,
 }

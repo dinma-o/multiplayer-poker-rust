@@ -1,4 +1,5 @@
 // Define the various states of a Five Card Draw Poker game.
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum PokerGameState {
     WaitingForPlayers,
     DealingCards,
@@ -8,6 +9,7 @@ pub enum PokerGameState {
     Showdown,
     Payout,
 }
+#[derive(Debug, Clone)]
 pub struct PokerStateMachine {
     poker_states: Vec<PokerGameState>,
     current_state_index: usize,
@@ -19,9 +21,9 @@ pub struct PokerStateMachine {
 }
 
 
-pub impl FiveCardDrawPokerStateMachine {
+pub impl PokerStateMachine {
     pub fn new(ante_amount: u32) -> Self {
-        FiveCardDrawPokerStateMachine {
+        PokerStateMachine {
             poker_states: vec![
                 PokerGameState::WaitingForPlayers,
                 PokerGameState::DealingCards,
@@ -39,11 +41,11 @@ pub impl FiveCardDrawPokerStateMachine {
             hand_size: 5,
         }
     }
-    pub fn get_current_state(&self) -> &FiveCardDrawPokerGameState {
-        &self.current_state
+    pub fn get_current_state(&self) -> &PokerGameState {
+        &self.poker_states[self.current_state_index]
     }
-    pub fn set_current_state(&mut self, state: FiveCardDrawPokerGameState) {
-        self.current_state = state;
+    pub fn set_current_state(&mut self, state: PokerGameState) {
+        self.current_state_index = self.poker_states.iter().position(|&s| s == state).unwrap_or(0);
     }
     pub fn get_pot_size(&self) -> u32 {
         self.pot_size
