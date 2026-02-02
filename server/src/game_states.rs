@@ -1,5 +1,5 @@
 // Define the various states of a Five Card Draw Poker game.
-pub enum FiveCardDrawPokerGameState {
+pub enum PokerGameState {
     WaitingForPlayers,
     DealingCards,
     BettingRound1,
@@ -9,7 +9,8 @@ pub enum FiveCardDrawPokerGameState {
     Payout,
 }
 pub struct PokerStateMachine {
-    current_state: FiveCardDrawPokerGameState,
+    poker_states: Vec<PokerGameState>,
+    current_state_index: usize,
     pot_size: u32,
     current_bet: u32,
     players_in_round: u32,
@@ -21,7 +22,16 @@ pub struct PokerStateMachine {
 pub impl FiveCardDrawPokerStateMachine {
     pub fn new(ante_amount: u32) -> Self {
         FiveCardDrawPokerStateMachine {
-            current_state: FiveCardDrawPokerGameState::WaitingForPlayers,
+            poker_states: vec![
+                PokerGameState::WaitingForPlayers,
+                PokerGameState::DealingCards,
+                PokerGameState::BettingRound1,
+                PokerGameState::DrawPhase,
+                PokerGameState::BettingRound2,
+                PokerGameState::Showdown,
+                PokerGameState::Payout,
+            ],
+            current_state_index: 0,
             pot_size: 0,
             current_bet: 0,
             players_in_round: 0,
@@ -67,6 +77,13 @@ pub impl FiveCardDrawPokerStateMachine {
     }
     pub fn set_hand_size(&mut self, size: u8) {
         self.hand_size = size;
+    }
+    pub fn advance_state(&mut self) {
+        if self.current_state_index < self.poker_states.len() - 1 {
+            self.current_state_index += 1;
+        } else {
+            self.current_state_index = 0; // Loop back to the beginning
+        }
     }
 
     pub fn reset_round(&mut self) {
