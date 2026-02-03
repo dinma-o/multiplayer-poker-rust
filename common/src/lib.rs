@@ -1,6 +1,6 @@
 mod card_deck;
-mod constants;
+pub mod constants;
 mod customer;
 mod player;
-mod hand;
+pub mod hand;
 mod hand_rank;

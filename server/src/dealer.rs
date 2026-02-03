@@ -1,4 +1,4 @@
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DealerManager {
     dealer_position: usize,
 }
@@ -8,8 +8,14 @@ impl DealerManager {
         DealerManager { dealer_position: 0 }
     }
 
-    pub fn rotate_dealer(&mut self, total_players: usize) {
-        self.dealer_position = (self.dealer_position + 1) % total_players;
+    pub fn advance_dealer(&mut self, seats: &Vec<Option<usize>>) {
+        let total_seats = seats.len();
+        for _ in 0..total_seats {
+            self.dealer_position = (self.dealer_position + 1) % total_seats;
+            if seats[self.dealer_position].is_some() {
+                return;
+            }
+        }   
     }
 
     pub fn get_dealer_position(&self) -> usize {
@@ -24,15 +30,29 @@ impl DealerManager {
         self.dealer_position = 0;
     }
 
-    pub fn is_dealer(&self, player_position: usize) -> bool {
+    pub fn is_dealer_seat(&self, player_position: usize) -> bool {
         self.dealer_position == player_position
     }
 
-    pub fn get_action_order(&self, total_players: usize) -> Vec<usize> {
+    pub fn get_action_order(&self, seats: &Vec<Option<usize>>) -> Vec<usize> {
         let mut order = Vec::new();
-        for i in 1..=total_players {
-            order.push((self.dealer_position + i) % total_players);
+        let total_seats = seats.len();
+        let mut index = (self.dealer_position + 1) % total_seats;
+
+        while order.len() < seats.iter().filter(|s| s.is_some()).count() {
+            if let Some(player_id) = seats[index] {
+                order.push(player_id);
+            }
+            index = (index + 1) % total_seats;
         }
         order
     }
+
+    pub fn ensure_dealer_in_seats(&mut self, seats: &Vec<Option<usize>>) {
+        if seats[self.dealer_position].is_some() {
+            return;
+        }
+        self.advance_dealer(seats);
+    }
+
 }

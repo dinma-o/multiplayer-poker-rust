@@ -1,96 +1,78 @@
+use std::collections::HashMap;
+use common::hand::{self, Hand};
 // Define the various states of a Five Card Draw Poker game.
+
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub enum PokerGameState {
+pub enum HandStep {
     WaitingForPlayers,
-    DealingCards,
+    CollectForcedBets,        // ante or blinds later
+    DealPrivate,              // draw5/hole cards/stud down cards
+    DealCommunity,            // hold'em later
     BettingRound1,
-    DrawPhase,
+    DrawPhase,                // draw5 only (no-op for others)
     BettingRound2,
     Showdown,
     Payout,
 }
+
 #[derive(Debug, Clone)]
 pub struct PokerStateMachine {
-    poker_states: Vec<PokerGameState>,
-    current_state_index: usize,
+    plan: Vec<HandStep>,
+    current_index: usize,
+}
+
+#[derive(Debug, Clone)]
+pub struct HandState<const HAND_SIZE: usize> {
+    player_hands: HashMap<usize, Hand<HAND_SIZE>>, // Map of player ID to their hand of cards
+    player_fold_status: HashMap<usize, bool>, // Map of player ID to their fold status
     pot_size: u32,
     current_bet: u32,
     players_in_round: u32,
     ante_amount: u32,
-    hand_size: u8,
 }
 
-
-pub impl PokerStateMachine {
-    pub fn new(ante_amount: u32) -> Self {
+impl PokerStateMachine {
+    pub fn new(new_plan: Vec<HandStep>) -> Self {
         PokerStateMachine {
-            poker_states: vec![
-                PokerGameState::WaitingForPlayers,
-                PokerGameState::DealingCards,
-                PokerGameState::BettingRound1,
-                PokerGameState::DrawPhase,
-                PokerGameState::BettingRound2,
-                PokerGameState::Showdown,
-                PokerGameState::Payout,
-            ],
-            current_state_index: 0,
+            plan: new_plan,
+            current_index: 0,
+        }
+    }
+    pub fn reset(&mut self) {
+        self.current_index = 0;
+    }
+    pub fn get_current_state(&self) -> &HandStep {
+        &self.plan[self.current_index]
+    }
+    pub fn advance_state(&mut self) {
+        self.current_index = (self.current_index + 1) % self.plan.len();
+    }    
+}
+
+impl<const HandSize: usize> HandState<HandSize> {
+    pub fn new(ante_amount: u32) -> Self {
+        HandState {
+            player_hands: HashMap::new(),
+            player_fold_status: HashMap::new(),
             pot_size: 0,
             current_bet: 0,
             players_in_round: 0,
             ante_amount,
-            hand_size: 5,
-        }
-    }
-    pub fn get_current_state(&self) -> &PokerGameState {
-        &self.poker_states[self.current_state_index]
-    }
-    pub fn set_current_state(&mut self, state: PokerGameState) {
-        self.current_state_index = self.poker_states.iter().position(|&s| s == state).unwrap_or(0);
-    }
-    pub fn get_pot_size(&self) -> u32 {
-        self.pot_size
-    }
-    pub fn set_pot_size(&mut self, amount: u32) {
-        self.pot_size = amount;
-    }
-    pub fn add_to_pot(&mut self, amount: u32) {
-        self.pot_size += amount;
-    }
-    pub fn get_current_bet(&self) -> u32 {
-        self.current_bet
-    }
-    pub fn set_current_bet(&mut self, amount: u32) {
-        self.current_bet = amount;
-    }
-    pub fn get_players_in_round(&self) -> u32 {
-        self.players_in_round
-    }
-    pub fn set_players_in_round(&mut self, count: u32) {
-        self.players_in_round = count;
-    }
-    pub fn get_ante_amount(&self) -> u32 {
-        self.ante_amount
-    }
-    pub fn set_ante_amount(&mut self, amount: u32) {
-        self.ante_amount = amount;
-    }
-    pub fn get_hand_size(&self) -> u8 {
-        self.hand_size
-    }
-    pub fn set_hand_size(&mut self, size: u8) {
-        self.hand_size = size;
-    }
-    pub fn advance_state(&mut self) {
-        if self.current_state_index < self.poker_states.len() - 1 {
-            self.current_state_index += 1;
-        } else {
-            self.current_state_index = 0; // Loop back to the beginning
         }
     }
 
-    pub fn reset_round(&mut self) {
+    pub fn reset(&mut self) {
         self.pot_size = 0;
         self.current_bet = 0;
+        self.players_in_round = 0;
+    }
+
+    pub fn add_to_pot(&mut self, amount: u32) {
+        self.pot_size += amount;
+    }
+
+    pub fn set_current_bet(&mut self, amount: u32) {
+        self.current_bet = amount;
     }
 }
 
