@@ -1,6 +1,11 @@
+
 mod accounts;
 
 mod account_store;
+mod table;
+mod dealer;
+mod game_states;
+mod variants;
 
 use accounts::Account;
 use std::fs;
