@@ -79,3 +79,52 @@ impl<const HandSize: usize> HandState<HandSize> {
 // Define the various states of Seven Card Stud Poker game.
 
 // Define the various states of a Texas Hold'em Poker game.
+
+// Tests for the state machine and hand state can be added here.
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_poker_state_machine() {
+        let plan = vec![
+            HandStep::WaitingForPlayers,
+            HandStep::CollectForcedBets,
+            HandStep::DealPrivate,
+            HandStep::BettingRound1,
+            HandStep::DrawPhase,
+            HandStep::BettingRound2,
+            HandStep::Showdown,
+            HandStep::Payout,
+        ];
+        let mut fsm = PokerStateMachine::new(plan);
+
+        assert_eq!(*fsm.get_current_state(), HandStep::WaitingForPlayers);
+        fsm.advance_state();
+        assert_eq!(*fsm.get_current_state(), HandStep::CollectForcedBets);
+        fsm.advance_state();
+        assert_eq!(*fsm.get_current_state(), HandStep::DealPrivate);
+    }
+
+    #[test]
+    fn test_hand_state() {
+        let mut hand_state: HandState<5> = HandState::new(10);
+        hand_state.add_to_pot(50);
+        assert_eq!(hand_state.pot_size, 50);
+        hand_state.set_current_bet(20);
+        assert_eq!(hand_state.current_bet, 20);
+        hand_state.reset();
+        assert_eq!(hand_state.pot_size, 0);
+        assert_eq!(hand_state.current_bet, 0);
+    }
+
+    #[test]
+    fn test_hand_state_fold_status() {
+        let mut hand_state: HandState<5> = HandState::new(10);
+        hand_state.player_fold_status.insert(1, false);
+        hand_state.player_fold_status.insert(2, true);
+
+        assert_eq!(*hand_state.player_fold_status.get(&1).unwrap(), false);
+        assert_eq!(*hand_state.player_fold_status.get(&2).unwrap(), true);
+    }
+}

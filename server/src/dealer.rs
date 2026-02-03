@@ -56,3 +56,113 @@ impl DealerManager {
     }
 
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_advance_dealer() {
+        let mut dealer_manager = DealerManager::new();
+        let seats = vec![Some(1), None, Some(2), Some(3), None];
+
+        assert_eq!(dealer_manager.get_dealer_position(), 0);
+
+        dealer_manager.advance_dealer(&seats);
+        assert_eq!(dealer_manager.get_dealer_position(), 2);
+
+        dealer_manager.advance_dealer(&seats);
+        assert_eq!(dealer_manager.get_dealer_position(), 3);
+
+        dealer_manager.advance_dealer(&seats);
+        assert_eq!(dealer_manager.get_dealer_position(), 0);
+    }
+
+    #[test]
+    fn test_get_action_order() {
+        let mut dealer_manager = DealerManager::new();
+        let seats = vec![Some(1), None, Some(2), Some(3), None];
+
+        dealer_manager.set_dealer_position(0);
+        let order = dealer_manager.get_action_order(&seats);
+        assert_eq!(order, vec![2, 3, 1]);
+
+        dealer_manager.set_dealer_position(2);
+        let order = dealer_manager.get_action_order(&seats);
+        assert_eq!(order, vec![3, 1, 2]);
+
+        dealer_manager.set_dealer_position(3);
+        let order = dealer_manager.get_action_order(&seats);
+        assert_eq!(order, vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn test_ensure_dealer_in_seats() {
+        let mut dealer_manager = DealerManager::new();
+        let seats = vec![Some(1), None, Some(2), Some(3), None];
+
+        dealer_manager.set_dealer_position(1);
+        dealer_manager.ensure_dealer_in_seats(&seats);
+        assert_eq!(dealer_manager.get_dealer_position(), 2);
+
+        dealer_manager.set_dealer_position(4);
+        dealer_manager.ensure_dealer_in_seats(&seats);
+        assert_eq!(dealer_manager.get_dealer_position(), 0);
+    }
+
+    #[test]
+    fn test_is_dealer_seat() {
+        let mut dealer_manager = DealerManager::new();
+        dealer_manager.set_dealer_position(2);
+
+        assert!(dealer_manager.is_dealer_seat(2));
+        assert!(!dealer_manager.is_dealer_seat(0));
+        assert!(!dealer_manager.is_dealer_seat(1));
+        assert!(!dealer_manager.is_dealer_seat(3));
+    }
+
+    #[test]
+    fn test_reset_dealer() {
+        let mut dealer_manager = DealerManager::new();
+        dealer_manager.set_dealer_position(3);
+        dealer_manager.reset_dealer();
+        assert_eq!(dealer_manager.get_dealer_position(), 0);
+    }
+
+    #[test]
+    fn test_new_dealer_manager() {
+        let dealer_manager = DealerManager::new();
+        assert_eq!(dealer_manager.get_dealer_position(), 0);
+    }
+
+    #[test]
+    fn test_set_dealer_position() {
+        let mut dealer_manager = DealerManager::new();
+        dealer_manager.set_dealer_position(4);
+        assert_eq!(dealer_manager.get_dealer_position(), 4);
+    }
+    fn test_advance_dealer_all_seats_empty() {
+        let mut dealer_manager = DealerManager::new();
+        let seats = vec![None, None, None];
+
+        dealer_manager.advance_dealer(&seats);
+        assert_eq!(dealer_manager.get_dealer_position(), 0);
+    }
+    fn test_get_action_order_no_players() {
+        let dealer_manager = DealerManager::new();
+        let seats = vec![None, None, None];
+
+        let order = dealer_manager.get_action_order(&seats);
+        assert!(order.is_empty());
+    }
+
+    #[test]
+    fn test_ensure_dealer_in_seats_all_empty() {
+        let mut dealer_manager = DealerManager::new();
+        let seats = vec![None, None, None];
+
+        dealer_manager.set_dealer_position(1);
+        dealer_manager.ensure_dealer_in_seats(&seats);
+        assert_eq!(dealer_manager.get_dealer_position(), 1);
+    }
+}

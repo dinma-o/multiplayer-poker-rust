@@ -15,12 +15,12 @@ pub struct FiveCardTable {
     pending_leave_requests: Vec<usize>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PlayerAtTable {
-    player_id: usize,
-    times_folded: u32,
-    pots_won: u32,
-    rounds_played: u32,
+    pub player_id: usize,
+    pub times_folded: u32,
+    pub pots_won: u32,
+    pub rounds_played: u32,
 }
 #[derive(Debug, PartialEq, Eq)]
 pub enum JoinError {
@@ -52,6 +52,7 @@ impl FiveCardTable {
             return Err(JoinError::PlayerAlreadyAtTable);
         }
         if self.player_lookup.len() >= self.seats.len() {
+            self.pending_join_requests.push(player_id);
             return Err(JoinError::TableFull);
         }
         if let HandStep::WaitingForPlayers = self.game_state_machine.get_current_state() {
@@ -103,44 +104,64 @@ impl FiveCardTable {
     }
 }
 
-// #[cfg(test)]
-// mod tests {
-//     use super::*;
-//     use crate::player::Player;
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-//     #[test]
-//     fn test_join_and_leave_table() {
-//         let mut table = FiveCardTable::new(10);
-//         let player = Player::new("Alice".to_string(), 1000);
+    #[test]
+    fn test_join_and_leave_table() {
+        let mut table = FiveCardTable::new();
+        assert_eq!(table.join_table(1), Ok(()));
+        assert_eq!(table.join_table(1), Err(JoinError::PlayerAlreadyAtTable));
+        assert_eq!(table.leave_table(1), Ok(PlayerAtTable {
+            player_id: 1,
+            times_folded: 0,
+            pots_won: 0,
+            rounds_played: 0,
+        }));
+        assert_eq!(table.leave_table(1), Err(LeaveError::PlayerNotAtTable));
+    }
 
-//         // Test joining the table
-//         assert_eq!(table.join_table(1, player.clone()), Ok(()));
-//         assert_eq!(table.player_ids_in_game.len(), 1);
+    #[test]
+    fn test_table_full() {
+        let mut table = FiveCardTable::new();
+        for player_id in 1..=5 {
+            assert_eq!(table.join_table(player_id), Ok(()));
+        }
+        assert_eq!(table.join_table(6), Err(JoinError::TableFull));
+    }
 
-//         // Test joining the same player again
-//         assert_eq!(table.join_table(1, player.clone()), Err(JoinError::PlayerAlreadyAtTable));
+    #[test]
+    fn test_pending_requests() {
+        let mut table = FiveCardTable::new();
+        for player_id in 1..=5 {
+            assert_eq!(table.join_table(player_id), Ok(()));
+        }
+        assert_eq!(table.join_table(6), Err(JoinError::TableFull));
+        assert_eq!(table.leave_table(1), Ok(PlayerAtTable {
+            player_id: 1,
+            times_folded: 0,
+            pots_won: 0,
+            rounds_played: 0,
+        }));
+        assert_eq!(table.join_table(7), Ok(()));
+    }
 
-//         // Test leaving the table
-//         assert_eq!(table.leave_table(1), Ok(()));
-//         assert_eq!(table.player_ids_in_game.len(), 0);
-
-//         // Test leaving a non-existent player
-//         assert_eq!(table.leave_table(1), Err(LeaveError::PlayerNotAtTable));
-//     }
-
-//     #[test]
-//     fn test_table_full() {
-//         let mut table = FiveCardTable::new(10);
-//         let player = Player::new("Alice".to_string(), 1000);
-
-//         // Join 6 players to the table (max is 5)
-//         for i in 1..=6 {
-//             let player = Player::new(format!("Player{}", i), 1000);
-//             if i == 6 {
-//                 assert_eq!(table.join_table(i, player), Err(JoinError::TableFull));
-//             } else {
-//                 assert_eq!(table.join_table(i, player), Ok(()));
-//             }
-//         }
-//     }
-// }
+    #[test]
+    fn test_apply_pending_requests() {
+        let mut table = FiveCardTable::new();
+        for player_id in 1..=5 {
+            assert_eq!(table.join_table(player_id), Ok(()));
+        }
+        assert_eq!(table.join_table(6), Err(JoinError::TableFull));
+        assert_eq!(table.leave_table(1), Ok(PlayerAtTable {
+            player_id: 1,
+            times_folded: 0,
+            pots_won: 0,
+            rounds_played: 0,
+        }));
+        table.apply_pending_requests();
+        assert!(table.player_lookup.contains_key(&6));
+        assert!(!table.player_lookup.contains_key(&1));
+    }
+}
