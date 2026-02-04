@@ -6,6 +6,7 @@ mod table;
 mod dealer;
 mod game_states;
 mod variants;
+mod engine;
 
 use accounts::Account;
 use std::fs;
