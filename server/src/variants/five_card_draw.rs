@@ -1,5 +1,6 @@
 // variants/five_card_draw.rs
-use crate::game_states::HandStep;
+
+use common::protocol::HandStep;
 
 pub fn five_card_draw_plan() -> Vec<HandStep> {
     vec![

@@ -1,19 +1,6 @@
 use std::collections::HashMap;
-use common::hand::{self, Hand};
+use common::{ hand::{ Hand }, protocol::{ HandStep, PlayerId } };
 // Define the various states of a Five Card Draw Poker game.
-
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub enum HandStep {
-    WaitingForPlayers,
-    CollectForcedBets,        // ante or blinds later
-    DealPrivate,              // draw5/hole cards/stud down cards
-    DealCommunity,            // hold'em later
-    BettingRound1,
-    DrawPhase,                // draw5 only (no-op for others)
-    BettingRound2,
-    Showdown,
-    Payout,
-}
 
 #[derive(Debug, Clone)]
 pub struct PokerStateMachine {
@@ -23,8 +10,8 @@ pub struct PokerStateMachine {
 
 #[derive(Debug, Clone)]
 pub struct HandState<const HAND_SIZE: usize> {
-    player_hands: HashMap<usize, Hand<HAND_SIZE>>, // Map of player ID to their hand of cards
-    player_fold_status: HashMap<usize, bool>, // Map of player ID to their fold status
+    player_hands: HashMap<PlayerId, Hand<HAND_SIZE>>, // Map of player ID to their hand of cards
+    player_fold_status: HashMap<PlayerId, bool>, // Map of player ID to their fold status
     pot_size: u32,
     current_bet: u32,
     players_in_round: u32,
@@ -46,7 +33,7 @@ impl PokerStateMachine {
     }
     pub fn advance_state(&mut self) {
         self.current_index = (self.current_index + 1) % self.plan.len();
-    }    
+    }
 }
 
 impl<const HandSize: usize> HandState<HandSize> {
@@ -95,7 +82,7 @@ mod tests {
             HandStep::DrawPhase,
             HandStep::BettingRound2,
             HandStep::Showdown,
-            HandStep::Payout,
+            HandStep::Payout
         ];
         let mut fsm = PokerStateMachine::new(plan);
 

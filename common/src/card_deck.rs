@@ -1,4 +1,4 @@
-use rand::{ seq::SliceRandom, thread_rng };
+use rand::{ seq::SliceRandom };
 use std::fmt;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]

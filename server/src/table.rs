@@ -1,23 +1,24 @@
 use std::collections::HashMap;
-use crate::game_states::{PokerStateMachine, HandStep, HandState};
+use crate::game_states::{PokerStateMachine, HandState};
 use crate::dealer::DealerManager;
 use crate::variants::{self};
 use common::constants::five_card_draw as five_card_draw_constants;
+use common::protocol::{HandStep, PlayerId};
 
 #[derive(Debug, Clone)]
 pub struct FiveCardTable {
     game_state_machine: PokerStateMachine,
     hand_state: HandState<5>,
     dealer_manager: DealerManager,
-    seats: Vec<Option<usize>>,
-    player_lookup: HashMap<usize, PlayerAtTable>,
-    pending_join_requests: Vec<usize>,
-    pending_leave_requests: Vec<usize>,
+    seats: Vec<Option<PlayerId>>,
+    player_lookup: HashMap<PlayerId, PlayerAtTable>,
+    pending_join_requests: Vec<PlayerId>,
+    pending_leave_requests: Vec<PlayerId>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PlayerAtTable {
-    pub player_id: usize,
+    pub player_id: PlayerId,
     pub times_folded: u32,
     pub pots_won: u32,
     pub rounds_played: u32,
@@ -47,7 +48,7 @@ impl FiveCardTable {
         }
     }
 
-    pub fn join_table(&mut self, player_id: usize) -> Result<(), JoinError> {
+    pub fn join_table(&mut self, player_id: PlayerId) -> Result<(), JoinError> {
         if self.player_lookup.contains_key(&player_id) {
             return Err(JoinError::PlayerAlreadyAtTable);
         }
@@ -72,7 +73,7 @@ impl FiveCardTable {
         }
     }
 
-    pub fn leave_table(&mut self, player_id: usize) -> Result<PlayerAtTable, LeaveError> {
+    pub fn leave_table(&mut self, player_id: PlayerId) -> Result<PlayerAtTable, LeaveError> {
         if !self.player_lookup.contains_key(&player_id) {
             return Err(LeaveError::PlayerNotAtTable);
         }
