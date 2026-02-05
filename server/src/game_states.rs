@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{ HashMap, HashSet };
 use common::{ hand::{ Hand }, protocol::{ HandStep, PlayerId } };
 // Define the various states of a Five Card Draw Poker game.
 
@@ -9,6 +9,47 @@ pub struct PokerStateMachine {
 }
 
 #[derive(Debug, Clone)]
+pub struct BettingRoundState {
+    pub order: Vec<PlayerId>, // fixed action order
+    pub to_act_idx: usize, // index into order
+    pub contrib: HashMap<PlayerId, u32>, // chips contributed this round
+    pub pending: HashSet<PlayerId>, // players yet to act this round
+    pub raises_used: u32, // number of raises used this round
+}
+
+impl BettingRoundState {
+    pub fn new(order: Vec<PlayerId>) -> Self {
+        let mut contrib = HashMap::new();
+        for &pid in &order {
+            contrib.insert(pid, 0);
+        }
+        let pending = order.iter().cloned().collect();
+        Self { order, to_act_idx: 0, contrib, pending, raises_used: 0 }
+    }
+
+    pub fn current_player(&self) -> PlayerId {
+        self.order[self.to_act_idx]
+    }
+
+    pub fn contrib_of(&self, pid: PlayerId) -> u32 {
+        *self.contrib.get(&pid).unwrap_or(&0)
+    }
+
+    pub fn set_contrib(&mut self, pid: PlayerId, amount: u32) {
+        self.contrib.insert(pid, amount);
+    }
+
+    pub fn mark_done(&mut self, pid: PlayerId) {
+        self.pending.remove(&pid);
+    }
+
+    pub fn reset_pending_except(&mut self, active: &[PlayerId], actor: PlayerId) {
+        self.pending = active.iter().cloned().collect();
+        self.pending.remove(&actor);
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct HandState<const HAND_SIZE: usize> {
     player_hands: HashMap<PlayerId, Hand<HAND_SIZE>>, // Map of player ID to their hand of cards
     player_fold_status: HashMap<PlayerId, bool>, // Map of player ID to their fold status
@@ -16,6 +57,7 @@ pub struct HandState<const HAND_SIZE: usize> {
     current_bet: u32,
     players_in_round: u32,
     ante_amount: u32,
+    betting: Option<BettingRoundState>,
 }
 
 impl PokerStateMachine {
@@ -45,6 +87,7 @@ impl<const HandSize: usize> HandState<HandSize> {
             current_bet: 0,
             players_in_round: 0,
             ante_amount,
+            betting: None,
         }
     }
 
@@ -54,12 +97,55 @@ impl<const HandSize: usize> HandState<HandSize> {
         self.players_in_round = 0;
     }
 
+    pub fn reset_for_new_deal(&mut self) {
+        self.player_hands.clear();
+        self.player_fold_status.clear();
+        self.reset();
+    }
+
     pub fn add_to_pot(&mut self, amount: u32) {
         self.pot_size += amount;
     }
 
     pub fn set_current_bet(&mut self, amount: u32) {
         self.current_bet = amount;
+    }
+
+    pub fn current_bet(&self) -> u32 {
+        self.current_bet
+    }
+
+    pub fn pot_size(&self) -> u32 {
+        self.pot_size
+    }
+
+    pub fn set_player_hand(&mut self, player_id: PlayerId, hand: Hand<HandSize>) {
+        self.player_hands.insert(player_id, hand);
+    }
+
+    pub fn set_player_fold_status(&mut self, player_id: PlayerId, has_folded: bool) {
+        self.player_fold_status.insert(player_id, has_folded);
+    }
+
+    pub fn has_player_folded(&self, player_id: &PlayerId) -> bool {
+        *self.player_fold_status.get(player_id).unwrap_or(&false)
+    }
+
+    pub fn start_betting_round(&mut self, order: Vec<PlayerId>) {
+        self.current_bet = 0;
+        self.betting = Some(BettingRoundState::new(order.clone()));
+        self.players_in_round = order.len() as u32;
+    }
+
+    pub fn betting(&self) -> Option<&BettingRoundState> {
+        self.betting.as_ref()
+    }
+    pub fn betting_mut(&mut self) -> Option<&mut BettingRoundState> {
+        self.betting.as_mut()
+    }
+
+    pub fn end_betting_round(&mut self) {
+        self.betting = None;
     }
 }
 

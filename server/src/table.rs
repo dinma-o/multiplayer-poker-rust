@@ -14,6 +14,7 @@ pub struct FiveCardTable {
     player_lookup: HashMap<PlayerId, PlayerAtTable>,
     pending_join_requests: Vec<PlayerId>,
     pending_leave_requests: Vec<PlayerId>,
+    pub hand_size: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -47,6 +48,7 @@ impl FiveCardTable {
             player_lookup: HashMap::new(),
             pending_join_requests: Vec::new(),
             pending_leave_requests: Vec::new(),
+            hand_size: 5,
         }
     }
 
@@ -103,6 +105,7 @@ impl FiveCardTable {
             Err(LeaveError::RoundInProgress)
         }
     }
+
     pub fn apply_pending_requests(&mut self) {
         if *self.game_state_machine.get_current_state() != HandStep::WaitingForPlayers {
             return;
@@ -121,11 +124,12 @@ impl FiveCardTable {
         }
     }
 
-    pub fn seated_players(&self) -> impl Iterator<Item = (usize, PlayerId)> + '_ {
+    pub fn seated_players(&self) -> Vec<(usize, PlayerId)> {
         self.seats
             .iter()
             .enumerate()
             .filter_map(|(seat, player_id)| player_id.clone().map(|id| (seat, id)))
+            .collect()
     }
 
     pub fn current_step(&self) -> HandStep {
@@ -134,6 +138,31 @@ impl FiveCardTable {
 
     pub fn advance_table_state(&mut self) {
         self.game_state_machine.advance_state();
+    }
+
+    pub fn hand_state(&self) -> &HandState<5> {
+        &self.hand_state
+    }
+
+    pub fn hand_state_mut(&mut self) -> &mut HandState<5> {
+        &mut self.hand_state
+    }
+
+    pub fn action_order(&self) -> Vec<PlayerId> {
+        let seat_ids: Vec<Option<PlayerId>> = self
+            .seated_players()
+            .iter()
+            .map(|(_, pid)| Some(pid.clone()))
+            .collect();
+
+        self.dealer_manager.get_action_order(&seat_ids)
+    }
+
+    pub fn is_active_player(&self, player_id: PlayerId) -> bool {
+        self
+            .seated_players()
+            .iter()
+            .any(|(_, pid)| *pid == player_id) && !self.hand_state().has_player_folded(&player_id)
     }
 }
 
@@ -162,7 +191,7 @@ mod tests {
     fn test_table_full() {
         let mut table = FiveCardTable::new();
         for player_id in 1..=5 {
-            assert_eq!(table.join_table(player_id), Ok( (player_id - 1) as usize ));
+            assert_eq!(table.join_table(player_id), Ok((player_id - 1) as usize));
         }
         assert_eq!(table.join_table(6), Err(JoinError::TableFull));
     }
@@ -171,7 +200,7 @@ mod tests {
     fn test_pending_requests() {
         let mut table = FiveCardTable::new();
         for player_id in 1..=5 {
-            assert_eq!(table.join_table(player_id), Ok( (player_id - 1) as usize ));
+            assert_eq!(table.join_table(player_id), Ok((player_id - 1) as usize));
         }
         assert_eq!(table.join_table(6), Err(JoinError::TableFull));
         assert_eq!(
@@ -190,7 +219,7 @@ mod tests {
     fn test_apply_pending_requests() {
         let mut table = FiveCardTable::new();
         for player_id in 1..=5 {
-            assert_eq!(table.join_table(player_id), Ok( (player_id - 1) as usize ));
+            assert_eq!(table.join_table(player_id), Ok((player_id - 1) as usize));
         }
         assert_eq!(table.join_table(6), Err(JoinError::TableFull));
         assert_eq!(

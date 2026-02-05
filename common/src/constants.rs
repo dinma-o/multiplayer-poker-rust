@@ -22,6 +22,9 @@ pub mod five_card_draw {
     pub const MAX_RAISES_PER_ROUND: u32 = 1; // Maximum number of raises allowed per betting round
     pub const MIN_RAISE_AMOUNT: u32 = 5; // Minimum amount for each raise
     pub const MAX_RAISE_TO_AMOUNT: u32 = MAX_BET_PER_ROUND; // Maximum amount to which a player can raise
+
+    // Draw limits
+    pub const MAX_DISCARDS: usize = 4; // Maximum number of cards a player can discard during the draw phase
 }
 
 // For Seven-card Stud

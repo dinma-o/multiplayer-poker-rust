@@ -248,6 +248,34 @@ impl AccountStore {
         Ok(updated)
     }
 
+    pub fn withdraw_by_id(&mut self, id: AccountId, amount: i64) -> Result<Account, AccountError> {
+        if amount <= 0 {
+            return Err(AccountError::InvalidAmount);
+        }
+
+        let updated = {
+            let account = self
+                .accounts
+                .iter_mut()
+                .find(|a| a.id == id)
+                .ok_or(AccountError::AccountNotFound)?;
+
+            if amount > account.balance {
+                return Err(AccountError::InsufficientFunds);
+            }
+
+            account.balance = account
+                .balance
+                .checked_sub(amount)
+                .ok_or(AccountError::InvalidAmount)?;
+
+            account.clone()
+        }; // <- mutable borrow ends here
+
+        self.save()?;
+        Ok(updated)
+    }
+
     /// Records that a game was played and persists.
     pub fn record_game_played(&mut self, name: &str) -> Result<Account, AccountError> {
         let updated = {
@@ -307,6 +335,26 @@ impl AccountStore {
             .ok_or(AccountError::AccountNotFound)?;
 
         Ok(account)
+    }
+
+    pub fn get_by_id(&self, id: AccountId) -> Result<&Account, AccountError> {
+        let account = self
+            .accounts
+            .iter()
+            .find(|a| a.id == id)
+            .ok_or(AccountError::AccountNotFound)?;
+
+        Ok(account)
+    }
+
+    pub fn name_from_id(&self, id: AccountId) -> Result<String, AccountError> {
+        let account = self
+            .accounts
+            .iter()
+            .find(|a| a.id == id)
+            .ok_or(AccountError::AccountNotFound)?;
+
+        Ok(account.name.clone())
     }
 
     /// Deletes an account after verifying name and PIN.
