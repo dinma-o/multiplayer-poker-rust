@@ -41,7 +41,7 @@ impl fmt::Display for AccountError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             AccountError::NameTaken => write!(f, "account name already exists"),
-            AccountError::InvalidPinFormat => write!(f, "invalid PIN format"),
+            AccountError::InvalidPinFormat => write!(f, "invalid PIN format, must be 4 digits"),
             AccountError::AccountNotFound => write!(f, "account not found"),
             AccountError::InvalidPin => write!(f, "invalid PIN"),
             AccountError::InvalidAmount => write!(f, "invalid amount"),
@@ -145,7 +145,7 @@ impl AccountStore {
         pin: &str,
         initial_balance: i64,
     ) -> Result<Account, AccountError> {
-        let name = name.into();
+        let name = name.into().to_lowercase();
 
         if self.accounts.iter().any(|a| a.name == name) {
             return Err(AccountError::NameTaken);
@@ -175,7 +175,7 @@ impl AccountStore {
         let account = self
             .accounts
             .iter()
-            .find(|a| a.name == name)
+            .find(|a| a.name == name.to_lowercase())
             .ok_or(AccountError::AccountNotFound)?;
 
         if account.pin != pin {
@@ -202,7 +202,7 @@ impl AccountStore {
             let account = self
                 .accounts
                 .iter_mut()
-                .find(|a| a.name == name)
+                .find(|a| a.name == name.to_lowercase())
                 .ok_or(AccountError::AccountNotFound)?;
 
             account.balance = account
@@ -229,7 +229,7 @@ impl AccountStore {
             let account = self
                 .accounts
                 .iter_mut()
-                .find(|a| a.name == name)
+                .find(|a| a.name == name.to_lowercase())
                 .ok_or(AccountError::AccountNotFound)?;
 
             if amount > account.balance {
@@ -254,7 +254,7 @@ impl AccountStore {
             let account = self
                 .accounts
                 .iter_mut()
-                .find(|a| a.name == name)
+                .find(|a| a.name == name.to_lowercase())
                 .ok_or(AccountError::AccountNotFound)?;
 
             account.record_game_played();
@@ -271,7 +271,7 @@ impl AccountStore {
             let account = self
                 .accounts
                 .iter_mut()
-                .find(|a| a.name == name)
+                .find(|a| a.name == name.to_lowercase())
                 .ok_or(AccountError::AccountNotFound)?;
 
             account.record_pot_won();
@@ -288,7 +288,7 @@ impl AccountStore {
             let account = self
                 .accounts
                 .iter_mut()
-                .find(|a| a.name == name)
+                .find(|a| a.name == name.to_lowercase())
                 .ok_or(AccountError::AccountNotFound)?;
 
             account.record_fold();
@@ -298,6 +298,42 @@ impl AccountStore {
         self.save()?;
         Ok(updated)
     }
+
+    pub fn get_by_name(&self, name: &str) -> Result<&Account, AccountError> {
+        let account = self
+            .accounts
+            .iter()
+            .find(|a| a.name == name.to_lowercase())
+            .ok_or(AccountError::AccountNotFound)?;
+
+        Ok(account)
+    }
+
+    /// Deletes an account after verifying name and PIN.
+    ///
+    /// Returns the deleted account on success.
+    pub fn delete_account(&mut self, name: &str, pin: &str) -> Result<Account, AccountError> {
+        if !is_valid_pin(pin) {
+            return Err(AccountError::InvalidPinFormat);
+        }
+
+        let name = name.to_lowercase();
+        let idx = self
+            .accounts
+            .iter()
+            .position(|a| a.name == name)
+            .ok_or(AccountError::AccountNotFound)?;
+
+        if self.accounts[idx].pin != pin {
+            return Err(AccountError::InvalidPin);
+        }
+
+        let removed = self.accounts.swap_remove(idx);
+        self.save()?;
+        Ok(removed)
+    }
+
+
 }
 
 fn is_valid_pin(pin: &str) -> bool {
