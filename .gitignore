@@ -21,3 +21,5 @@ target
 #.idea/
 server/data/
 server/data/*.json
+server/server/data/*.json
+server/server/

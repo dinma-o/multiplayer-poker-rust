@@ -1,7 +1,8 @@
+use common::protocol::PlayerId;
 use serde::{Deserialize, Serialize};
 
 /// Stable identifier for an account.
-pub type AccountId = u64;
+pub type AccountId = PlayerId;
 
 /// Lightweight counters tracked per account.
 /// These are updated by the game engine as outcomes occur.
