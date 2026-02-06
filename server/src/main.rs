@@ -1,17 +1,17 @@
-mod accounts;
 mod account_store;
-mod table;
+mod accounts;
 mod dealer;
+mod engine;
 mod game_states;
-mod variants;
-mod engine; // <-- your ServerEngine
+mod table;
+mod variants; // <-- your ServerEngine
 
 use std::fs;
 use std::io::{self, Write};
 use std::path::Path;
 
 use common::constants::five_card_draw;
-use common::protocol::{Command, Event, LobbyCmd, AccountCmd, ActionCmd, PokerVariant};
+use common::protocol::{AccountCmd, ActionCmd, Command, Event, LobbyCmd, PokerVariant};
 
 use crate::account_store::AccountStore;
 use crate::engine::ServerEngine;
@@ -129,13 +129,18 @@ fn print_help_for(parts: &[&str]) {
                 five_card_draw::MIN_PLAYERS,
                 five_card_draw::MAX_PLAYERS
             );
-            println!("  Each player must have at least {} chips for the ante.", five_card_draw::ANTE_AMOUNT);
+            println!(
+                "  Each player must have at least {} chips for the ante.",
+                five_card_draw::ANTE_AMOUNT
+            );
             println!("  Shuffles, deals, and prompts the first player to act.");
         }
         "variant" => {
             println!("Usage: variant five|holdem|stud");
             println!("  Sets the lobby variant for future hands.");
-            println!("  Note: current server rules are Five Card Draw only (variant is informational).");
+            println!(
+                "  Note: current server rules are Five Card Draw only (variant is informational)."
+            );
         }
         "seed" => {
             println!("Usage: seed <u64> | seed clear");
@@ -195,7 +200,10 @@ fn print_help_for(parts: &[&str]) {
         "draw" => {
             println!("Usage: draw <player_name> [i1 i2 ...]");
             println!("  Discard the listed card indices (0-4) and draw replacements.");
-            println!("  Max discards: {}. No duplicate indices.", five_card_draw::MAX_DISCARDS);
+            println!(
+                "  Max discards: {}. No duplicate indices.",
+                five_card_draw::MAX_DISCARDS
+            );
             println!("  Provide no indices to stand pat.");
         }
         "help" => {
@@ -207,7 +215,10 @@ fn print_help_for(parts: &[&str]) {
             println!("  Exit the CLI (accounts are flushed on exit).");
         }
         _ => {
-            println!("No detailed help for '{}'. Type 'help' to list commands.", parts[1]);
+            println!(
+                "No detailed help for '{}'. Type 'help' to list commands.",
+                parts[1]
+            );
         }
     }
 }
@@ -230,7 +241,10 @@ fn print_help_account(sub: Option<&str>) {
         Some(ref s) if s == "create" => {
             println!("Usage: acct create <name> <pin> <balance>");
             println!("  Create a new account with the given starting balance.");
-            println!("  Typical starting balance: {} chips.", five_card_draw::INITIAL_CHIPS);
+            println!(
+                "  Typical starting balance: {} chips.",
+                five_card_draw::INITIAL_CHIPS
+            );
         }
         Some(ref s) if s == "deposit" => {
             println!("Usage: acct deposit <player_name> <amount>");
@@ -281,7 +295,10 @@ fn parse_command(parts: &[&str]) -> Result<Command, String> {
         "join" => {
             let pname = parts.get(1).ok_or("missing player_name")?.to_string();
             let pin = parts.get(2).ok_or("missing pin")?.to_string();
-            Ok(Command::Lobby(LobbyCmd::Join { player_name: pname, pin }))
+            Ok(Command::Lobby(LobbyCmd::Join {
+                player_name: pname,
+                pin,
+            }))
         }
         "leave" => {
             let pname = parts.get(1).ok_or("missing player_name")?.to_string();
@@ -321,19 +338,31 @@ fn parse_command(parts: &[&str]) -> Result<Command, String> {
 
         "acct" => parse_account_cmd(&parts),
 
-        "check" => Ok(Command::Action(ActionCmd::Check { player_name: parts.get(1).ok_or("missing player_name")?.to_string() })),
-        "call"  => Ok(Command::Action(ActionCmd::Call  { player_name: parts.get(1).ok_or("missing player_name")?.to_string() })),
-        "fold"  => Ok(Command::Action(ActionCmd::Fold  { player_name: parts.get(1).ok_or("missing player_name")?.to_string() })),
+        "check" => Ok(Command::Action(ActionCmd::Check {
+            player_name: parts.get(1).ok_or("missing player_name")?.to_string(),
+        })),
+        "call" => Ok(Command::Action(ActionCmd::Call {
+            player_name: parts.get(1).ok_or("missing player_name")?.to_string(),
+        })),
+        "fold" => Ok(Command::Action(ActionCmd::Fold {
+            player_name: parts.get(1).ok_or("missing player_name")?.to_string(),
+        })),
 
         "bet" => {
             let pname = parts.get(1).ok_or("missing player_name")?.to_string();
             let amt = parse_i64(parts.get(2))?;
-            Ok(Command::Action(ActionCmd::Bet { player_name: pname, amount: amt }))
+            Ok(Command::Action(ActionCmd::Bet {
+                player_name: pname,
+                amount: amt,
+            }))
         }
         "raise" => {
             let pname = parts.get(1).ok_or("missing player_name")?.to_string();
             let amt = parse_i64(parts.get(2))?;
-            Ok(Command::Action(ActionCmd::Raise { player_name: pname, amount: amt }))
+            Ok(Command::Action(ActionCmd::Raise {
+                player_name: pname,
+                amount: amt,
+            }))
         }
         "draw" => {
             let pname = parts.get(1).ok_or("missing player_name")?.to_string();
@@ -341,7 +370,10 @@ fn parse_command(parts: &[&str]) -> Result<Command, String> {
             for p in parts.iter().skip(2) {
                 discard.push(p.parse::<usize>().map_err(|_| "invalid discard index")?);
             }
-            Ok(Command::Action(ActionCmd::Draw { player_name: pname, discard }))
+            Ok(Command::Action(ActionCmd::Draw {
+                player_name: pname,
+                discard,
+            }))
         }
 
         _ => Err("unknown command (type 'help' or 'help <command>')".into()),
@@ -349,30 +381,48 @@ fn parse_command(parts: &[&str]) -> Result<Command, String> {
 }
 
 fn parse_account_cmd(parts: &[&str]) -> Result<Command, String> {
-    let sub = parts.get(1).ok_or("missing acct subcommand")?.to_lowercase();
+    let sub = parts
+        .get(1)
+        .ok_or("missing acct subcommand")?
+        .to_lowercase();
     match sub.as_str() {
-        "get" => Ok(Command::Account(AccountCmd::Get { player_name: parts.get(2).ok_or("missing player_name")?.to_string() })),
+        "get" => Ok(Command::Account(AccountCmd::Get {
+            player_name: parts.get(2).ok_or("missing player_name")?.to_string(),
+        })),
         "create" => {
             let name = parts.get(2).ok_or("missing name")?.to_string();
-            let pin  = parts.get(3).ok_or("missing pin")?.to_string();
-            let bal  = parse_i64(parts.get(4))?;
+            let pin = parts.get(3).ok_or("missing pin")?.to_string();
+            let bal = parse_i64(parts.get(4))?;
 
-            Ok(Command::Account(AccountCmd::Create { name, pin, amount: bal }))
+            Ok(Command::Account(AccountCmd::Create {
+                name,
+                pin,
+                amount: bal,
+            }))
         }
         "deposit" => {
             let pname = parts.get(2).ok_or("missing player_name")?.to_string();
             let amt = parse_i64(parts.get(3))?;
-            Ok(Command::Account(AccountCmd::Deposit { player_name: pname, amount: amt }))
+            Ok(Command::Account(AccountCmd::Deposit {
+                player_name: pname,
+                amount: amt,
+            }))
         }
         "withdraw" => {
             let pname = parts.get(2).ok_or("missing player_name")?.to_string();
             let amt = parse_i64(parts.get(3))?;
-            Ok(Command::Account(AccountCmd::Withdraw { player_name: pname, amount: amt }))
+            Ok(Command::Account(AccountCmd::Withdraw {
+                player_name: pname,
+                amount: amt,
+            }))
         }
         "delete" => {
             let pname = parts.get(2).ok_or("missing player_name")?.to_string();
             let pin = parts.get(3).ok_or("missing pin")?.to_string();
-            Ok(Command::Account(AccountCmd::Delete { player_name: pname, pin }))
+            Ok(Command::Account(AccountCmd::Delete {
+                player_name: pname,
+                pin,
+            }))
         }
         _ => Err("unknown acct subcommand".into()),
     }
@@ -385,7 +435,10 @@ fn parse_i64(v: Option<&&str>) -> Result<i64, String> {
 }
 
 fn parse_view_cmd(parts: &[&str]) -> Result<Command, String> {
-    let sub = parts.get(1).ok_or("missing view subcommand")?.to_lowercase();
+    let sub = parts
+        .get(1)
+        .ok_or("missing view subcommand")?
+        .to_lowercase();
     match sub.as_str() {
         "hand" => {
             let pname = parts.get(2).ok_or("missing player_name")?.to_string();
@@ -403,22 +456,43 @@ fn print_events(events: &[Event]) {
             Event::Info { message } => println!("info: {message}"),
             Event::Error { message } => println!("error: {message}"),
             Event::StepChanged { step } => println!("step: {:?}", step),
-            Event::PlayerJoined { player_name, player_id, seat } => println!("joined: {player_name} (ID: {player_id}) at seat {seat}"),
-            Event::PlayerLeft { player_id,player_name } => println!("left: {player_name} (ID: {player_id})"),
+            Event::PlayerJoined {
+                player_name,
+                player_id,
+                seat,
+            } => println!("joined: {player_name} (ID: {player_id}) at seat {seat}"),
+            Event::PlayerLeft {
+                player_id,
+                player_name,
+            } => println!("left: {player_name} (ID: {player_id})"),
             Event::LobbyState { seated } => {
                 println!("seated players:");
                 for p in seated {
-                    println!("  seat {}: name {} | bal {} | GP {} | PW {} | F {}",
+                    println!(
+                        "  seat {}: name {} | bal {} | GP {} | PW {} | F {}",
                         p.seat, p.player_name, p.balance, p.games_played, p.pots_won, p.folds
                     );
                 }
             }
             Event::PotUpdated { pot } => println!("pot: {pot}"),
-            Event::PrivateHand { player_name, cards } => println!("hand({player_name}): {:?}", cards.iter().map(|c| c.to_string()).collect::<Vec<_>>()),
-            Event::ActionRequested { player_name, allowed, call_amount, min_raise } => {
-                println!("action requested for {player_name}: allowed={allowed:?} call={call_amount:?} min_raise={min_raise:?}");
+            Event::PrivateHand { player_name, cards } => println!(
+                "hand({player_name}): {:?}",
+                cards.iter().map(|c| c.to_string()).collect::<Vec<_>>()
+            ),
+            Event::ActionRequested {
+                player_name,
+                allowed,
+                call_amount,
+                min_raise,
+            } => {
+                println!(
+                    "action requested for {player_name}: allowed={allowed:?} call={call_amount:?} min_raise={min_raise:?}"
+                );
             }
-            Event::DrawRequested { player_name, max_discards } => {
+            Event::DrawRequested {
+                player_name,
+                max_discards,
+            } => {
                 println!("draw requested for {player_name}: max_discards={max_discards}");
             }
             Event::Showdown { results } => {

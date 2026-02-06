@@ -1,4 +1,4 @@
-use rand::{ seq::SliceRandom };
+use rand::seq::SliceRandom;
 use std::fmt;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -114,7 +114,10 @@ impl Deck {
             }
         }
 
-        Deck { cards, discarded: Vec::new() }
+        Deck {
+            cards,
+            discarded: Vec::new(),
+        }
     }
 
     pub fn new_shuffled() -> Self {
@@ -160,8 +163,8 @@ mod tests {
     use super::*;
     use std::collections::HashSet;
 
+    use rand::SeedableRng;
     use rand::rngs::StdRng;
-    use rand::{ SeedableRng };
 
     // Card tests
     #[test]
@@ -242,6 +245,9 @@ mod tests {
         let cards1: Vec<Card> = deck1.cards.iter().cloned().collect();
         let cards2: Vec<Card> = deck2.cards.iter().cloned().collect();
 
-        assert_eq!(cards1, cards2, "Two decks shuffled with the same RNG seed differ");
+        assert_eq!(
+            cards1, cards2,
+            "Two decks shuffled with the same RNG seed differ"
+        );
     }
 }

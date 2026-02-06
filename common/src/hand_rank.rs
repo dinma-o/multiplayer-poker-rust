@@ -1,7 +1,10 @@
-use std::collections::HashMap;
 use itertools::Itertools;
+use std::collections::HashMap;
 
-use crate::{ card_deck::{ Card, Suit }, hand::FiveCardHand };
+use crate::{
+    card_deck::{Card, Suit},
+    hand::FiveCardHand,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum HandCategory {
@@ -24,11 +27,17 @@ pub struct HandRank {
 
 impl HandRank {
     pub fn new(category: HandCategory, tiebreakers: [u8; 5]) -> Self {
-        HandRank { category, tiebreakers }
+        HandRank {
+            category,
+            tiebreakers,
+        }
     }
 
     pub fn straight(category: HandCategory, high_card: u8) -> Self {
-        Self { category, tiebreakers: [high_card, 0, 0, 0, 0] }
+        Self {
+            category,
+            tiebreakers: [high_card, 0, 0, 0, 0],
+        }
     }
 }
 
@@ -53,10 +62,7 @@ pub fn rank_five_card_hand(hand: &FiveCardHand) -> HandRank {
 
 fn rank_five_cards(cards: &[Card; 5]) -> HandRank {
     let suits: [Suit; 5] = cards.map(|c| c.suit());
-    let mut ranks: Vec<u8> = cards
-        .iter()
-        .map(|c| c.rank() as u8)
-        .collect();
+    let mut ranks: Vec<u8> = cards.iter().map(|c| c.rank() as u8).collect();
     ranks.sort_unstable(); // ascending
 
     let is_flush = suits.iter().all(|&s| s == suits[0]);
@@ -83,10 +89,7 @@ fn rank_five_cards(cards: &[Card; 5]) -> HandRank {
     }
 
     // group counts as (count, rank), sorted desc
-    let mut groups: Vec<(u8, u8)> = rank_counts
-        .iter()
-        .map(|(&r, &c)| (c, r))
-        .collect();
+    let mut groups: Vec<(u8, u8)> = rank_counts.iter().map(|(&r, &c)| (c, r)).collect();
     groups.sort_unstable_by(|a, b| b.cmp(a));
 
     // Straight Flush
@@ -96,7 +99,10 @@ fn rank_five_cards(cards: &[Card; 5]) -> HandRank {
 
     // Four of a Kind / Full House
     if groups[0].0 == 4 {
-        return HandRank::new(HandCategory::FourOfAKind, [groups[0].1, groups[1].1, 0, 0, 0]);
+        return HandRank::new(
+            HandCategory::FourOfAKind,
+            [groups[0].1, groups[1].1, 0, 0, 0],
+        );
     }
     if groups[0].0 == 3 && groups[1].0 == 2 {
         return HandRank::new(HandCategory::FullHouse, [groups[0].1, groups[1].1, 0, 0, 0]);
@@ -120,13 +126,10 @@ fn rank_five_cards(cards: &[Card; 5]) -> HandRank {
             .map(|&(_, r)| r)
             .collect();
         kickers.sort_unstable_by(|a, b| b.cmp(a));
-        return HandRank::new(HandCategory::ThreeOfAKind, [
-            groups[0].1,
-            kickers[0],
-            kickers[1],
-            0,
-            0,
-        ]);
+        return HandRank::new(
+            HandCategory::ThreeOfAKind,
+            [groups[0].1, kickers[0], kickers[1], 0, 0],
+        );
     }
 
     // Two pair
@@ -149,13 +152,10 @@ fn rank_five_cards(cards: &[Card; 5]) -> HandRank {
             .map(|&(_, r)| r)
             .collect();
         kickers.sort_unstable_by(|a, b| b.cmp(a));
-        return HandRank::new(HandCategory::OnePair, [
-            groups[0].1,
-            kickers[0],
-            kickers[1],
-            kickers[2],
-            0,
-        ]);
+        return HandRank::new(
+            HandCategory::OnePair,
+            [groups[0].1, kickers[0], kickers[1], kickers[2], 0],
+        );
     }
 
     // High card
@@ -205,7 +205,10 @@ pub fn determine_showdown_winner(ranked_hands: &[(usize, HandRank)]) -> ShowDown
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{ card_deck::{ Card, Rank, Suit }, hand::FiveCardHand };
+    use crate::{
+        card_deck::{Card, Rank, Suit},
+        hand::FiveCardHand,
+    };
 
     // Shared helpers for all tests in this file
     fn h(cards: [Card; 5]) -> FiveCardHand {
@@ -236,142 +239,122 @@ mod tests {
 
         #[test]
         fn detects_high_card() {
-            let r = rank_five_card_hand(
-                &h([
-                    c(Rank::Ace, Suit::Spades),
-                    c(Rank::King, Suit::Hearts),
-                    c(Rank::Nine, Suit::Clubs),
-                    c(Rank::Seven, Suit::Diamonds),
-                    c(Rank::Three, Suit::Spades),
-                ])
-            );
+            let r = rank_five_card_hand(&h([
+                c(Rank::Ace, Suit::Spades),
+                c(Rank::King, Suit::Hearts),
+                c(Rank::Nine, Suit::Clubs),
+                c(Rank::Seven, Suit::Diamonds),
+                c(Rank::Three, Suit::Spades),
+            ]));
             assert_eq!(r.category, HandCategory::HighCard);
         }
 
         #[test]
         fn detects_one_pair() {
-            let r = rank_five_card_hand(
-                &h([
-                    c(Rank::Ten, Suit::Spades),
-                    c(Rank::Ten, Suit::Hearts),
-                    c(Rank::Ace, Suit::Clubs),
-                    c(Rank::Seven, Suit::Diamonds),
-                    c(Rank::Three, Suit::Hearts),
-                ])
-            );
+            let r = rank_five_card_hand(&h([
+                c(Rank::Ten, Suit::Spades),
+                c(Rank::Ten, Suit::Hearts),
+                c(Rank::Ace, Suit::Clubs),
+                c(Rank::Seven, Suit::Diamonds),
+                c(Rank::Three, Suit::Hearts),
+            ]));
             assert_eq!(r.category, HandCategory::OnePair);
         }
 
         #[test]
         fn detects_two_pair() {
-            let r = rank_five_card_hand(
-                &h([
-                    c(Rank::Ace, Suit::Spades),
-                    c(Rank::Ace, Suit::Hearts),
-                    c(Rank::Jack, Suit::Clubs),
-                    c(Rank::Jack, Suit::Diamonds),
-                    c(Rank::Nine, Suit::Spades),
-                ])
-            );
+            let r = rank_five_card_hand(&h([
+                c(Rank::Ace, Suit::Spades),
+                c(Rank::Ace, Suit::Hearts),
+                c(Rank::Jack, Suit::Clubs),
+                c(Rank::Jack, Suit::Diamonds),
+                c(Rank::Nine, Suit::Spades),
+            ]));
             assert_eq!(r.category, HandCategory::TwoPair);
         }
 
         #[test]
         fn detects_three_of_a_kind() {
-            let r = rank_five_card_hand(
-                &h([
-                    c(Rank::Seven, Suit::Spades),
-                    c(Rank::Seven, Suit::Hearts),
-                    c(Rank::Seven, Suit::Clubs),
-                    c(Rank::Ace, Suit::Diamonds),
-                    c(Rank::Two, Suit::Spades),
-                ])
-            );
+            let r = rank_five_card_hand(&h([
+                c(Rank::Seven, Suit::Spades),
+                c(Rank::Seven, Suit::Hearts),
+                c(Rank::Seven, Suit::Clubs),
+                c(Rank::Ace, Suit::Diamonds),
+                c(Rank::Two, Suit::Spades),
+            ]));
             assert_eq!(r.category, HandCategory::ThreeOfAKind);
         }
 
         #[test]
         fn detects_straight() {
-            let r = rank_five_card_hand(
-                &h([
-                    c(Rank::Nine, Suit::Spades),
-                    c(Rank::Ten, Suit::Hearts),
-                    c(Rank::Jack, Suit::Clubs),
-                    c(Rank::Queen, Suit::Diamonds),
-                    c(Rank::King, Suit::Spades),
-                ])
-            );
+            let r = rank_five_card_hand(&h([
+                c(Rank::Nine, Suit::Spades),
+                c(Rank::Ten, Suit::Hearts),
+                c(Rank::Jack, Suit::Clubs),
+                c(Rank::Queen, Suit::Diamonds),
+                c(Rank::King, Suit::Spades),
+            ]));
             assert_eq!(r.category, HandCategory::Straight);
         }
 
         #[test]
         fn detects_wheel_straight() {
-            let r = rank_five_card_hand(
-                &h([
-                    c(Rank::Ace, Suit::Spades),
-                    c(Rank::Two, Suit::Hearts),
-                    c(Rank::Three, Suit::Clubs),
-                    c(Rank::Four, Suit::Diamonds),
-                    c(Rank::Five, Suit::Spades),
-                ])
-            );
+            let r = rank_five_card_hand(&h([
+                c(Rank::Ace, Suit::Spades),
+                c(Rank::Two, Suit::Hearts),
+                c(Rank::Three, Suit::Clubs),
+                c(Rank::Four, Suit::Diamonds),
+                c(Rank::Five, Suit::Spades),
+            ]));
             assert_eq!(r.category, HandCategory::Straight);
             assert_eq!(r.tiebreakers, [5, 0, 0, 0, 0]);
         }
 
         #[test]
         fn detects_flush() {
-            let r = rank_five_card_hand(
-                &h([
-                    c(Rank::Ace, Suit::Spades),
-                    c(Rank::Jack, Suit::Spades),
-                    c(Rank::Nine, Suit::Spades),
-                    c(Rank::Six, Suit::Spades),
-                    c(Rank::Three, Suit::Spades),
-                ])
-            );
+            let r = rank_five_card_hand(&h([
+                c(Rank::Ace, Suit::Spades),
+                c(Rank::Jack, Suit::Spades),
+                c(Rank::Nine, Suit::Spades),
+                c(Rank::Six, Suit::Spades),
+                c(Rank::Three, Suit::Spades),
+            ]));
             assert_eq!(r.category, HandCategory::Flush);
         }
 
         #[test]
         fn detects_full_house() {
-            let r = rank_five_card_hand(
-                &h([
-                    c(Rank::Eight, Suit::Spades),
-                    c(Rank::Eight, Suit::Hearts),
-                    c(Rank::Eight, Suit::Clubs),
-                    c(Rank::Two, Suit::Diamonds),
-                    c(Rank::Two, Suit::Spades),
-                ])
-            );
+            let r = rank_five_card_hand(&h([
+                c(Rank::Eight, Suit::Spades),
+                c(Rank::Eight, Suit::Hearts),
+                c(Rank::Eight, Suit::Clubs),
+                c(Rank::Two, Suit::Diamonds),
+                c(Rank::Two, Suit::Spades),
+            ]));
             assert_eq!(r.category, HandCategory::FullHouse);
         }
 
         #[test]
         fn detects_four_of_a_kind() {
-            let r = rank_five_card_hand(
-                &h([
-                    c(Rank::King, Suit::Spades),
-                    c(Rank::King, Suit::Hearts),
-                    c(Rank::King, Suit::Clubs),
-                    c(Rank::King, Suit::Diamonds),
-                    c(Rank::Five, Suit::Spades),
-                ])
-            );
+            let r = rank_five_card_hand(&h([
+                c(Rank::King, Suit::Spades),
+                c(Rank::King, Suit::Hearts),
+                c(Rank::King, Suit::Clubs),
+                c(Rank::King, Suit::Diamonds),
+                c(Rank::Five, Suit::Spades),
+            ]));
             assert_eq!(r.category, HandCategory::FourOfAKind);
         }
 
         #[test]
         fn detects_straight_flush_and_royal_is_high_14() {
-            let r = rank_five_card_hand(
-                &h([
-                    c(Rank::Ten, Suit::Hearts),
-                    c(Rank::Jack, Suit::Hearts),
-                    c(Rank::Queen, Suit::Hearts),
-                    c(Rank::King, Suit::Hearts),
-                    c(Rank::Ace, Suit::Hearts),
-                ])
-            );
+            let r = rank_five_card_hand(&h([
+                c(Rank::Ten, Suit::Hearts),
+                c(Rank::Jack, Suit::Hearts),
+                c(Rank::Queen, Suit::Hearts),
+                c(Rank::King, Suit::Hearts),
+                c(Rank::Ace, Suit::Hearts),
+            ]));
             assert_eq!(r.category, HandCategory::StraightFlush);
             assert_eq!(r.tiebreakers, [14, 0, 0, 0, 0]);
         }
@@ -382,100 +365,84 @@ mod tests {
 
         #[test]
         fn high_card_tiebreakers_descending() {
-            let r = rank_five_card_hand(
-                &h([
-                    c(Rank::Ace, Suit::Spades),
-                    c(Rank::King, Suit::Hearts),
-                    c(Rank::Nine, Suit::Clubs),
-                    c(Rank::Seven, Suit::Diamonds),
-                    c(Rank::Three, Suit::Spades),
-                ])
-            );
+            let r = rank_five_card_hand(&h([
+                c(Rank::Ace, Suit::Spades),
+                c(Rank::King, Suit::Hearts),
+                c(Rank::Nine, Suit::Clubs),
+                c(Rank::Seven, Suit::Diamonds),
+                c(Rank::Three, Suit::Spades),
+            ]));
             assert_eq!(r.tiebreakers, [14, 13, 9, 7, 3]);
         }
 
         #[test]
         fn one_pair_tiebreakers_pair_then_kickers() {
-            let r = rank_five_card_hand(
-                &h([
-                    c(Rank::Ten, Suit::Spades),
-                    c(Rank::Ten, Suit::Hearts),
-                    c(Rank::Ace, Suit::Clubs),
-                    c(Rank::Seven, Suit::Diamonds),
-                    c(Rank::Three, Suit::Hearts),
-                ])
-            );
+            let r = rank_five_card_hand(&h([
+                c(Rank::Ten, Suit::Spades),
+                c(Rank::Ten, Suit::Hearts),
+                c(Rank::Ace, Suit::Clubs),
+                c(Rank::Seven, Suit::Diamonds),
+                c(Rank::Three, Suit::Hearts),
+            ]));
             assert_eq!(r.tiebreakers, [10, 14, 7, 3, 0]);
         }
 
         #[test]
         fn two_pair_tiebreaker_compares_kicker() {
-            let h1 = rank_five_card_hand(
-                &h([
-                    c(Rank::Ace, Suit::Spades),
-                    c(Rank::Ace, Suit::Hearts),
-                    c(Rank::Jack, Suit::Clubs),
-                    c(Rank::Jack, Suit::Diamonds),
-                    c(Rank::Nine, Suit::Spades),
-                ])
-            );
+            let h1 = rank_five_card_hand(&h([
+                c(Rank::Ace, Suit::Spades),
+                c(Rank::Ace, Suit::Hearts),
+                c(Rank::Jack, Suit::Clubs),
+                c(Rank::Jack, Suit::Diamonds),
+                c(Rank::Nine, Suit::Spades),
+            ]));
 
-            let h2 = rank_five_card_hand(
-                &h([
-                    c(Rank::Ace, Suit::Clubs),
-                    c(Rank::Ace, Suit::Diamonds),
-                    c(Rank::Jack, Suit::Hearts),
-                    c(Rank::Jack, Suit::Spades),
-                    c(Rank::Eight, Suit::Clubs),
-                ])
-            );
+            let h2 = rank_five_card_hand(&h([
+                c(Rank::Ace, Suit::Clubs),
+                c(Rank::Ace, Suit::Diamonds),
+                c(Rank::Jack, Suit::Hearts),
+                c(Rank::Jack, Suit::Spades),
+                c(Rank::Eight, Suit::Clubs),
+            ]));
 
             assert!(h1 > h2);
         }
 
         #[test]
         fn ordering_works_across_categories_and_tiebreakers() {
-            let p10 = rank_five_card_hand(
-                &h([
-                    c(Rank::Ten, Suit::Spades),
-                    c(Rank::Ten, Suit::Hearts),
-                    c(Rank::Ace, Suit::Clubs),
-                    c(Rank::Seven, Suit::Diamonds),
-                    c(Rank::Three, Suit::Hearts),
-                ])
-            );
+            let p10 = rank_five_card_hand(&h([
+                c(Rank::Ten, Suit::Spades),
+                c(Rank::Ten, Suit::Hearts),
+                c(Rank::Ace, Suit::Clubs),
+                c(Rank::Seven, Suit::Diamonds),
+                c(Rank::Three, Suit::Hearts),
+            ]));
 
-            let pj = rank_five_card_hand(
-                &h([
-                    c(Rank::Jack, Suit::Spades),
-                    c(Rank::Jack, Suit::Hearts),
-                    c(Rank::Two, Suit::Clubs),
-                    c(Rank::Three, Suit::Diamonds),
-                    c(Rank::Four, Suit::Hearts),
-                ])
-            );
+            let pj = rank_five_card_hand(&h([
+                c(Rank::Jack, Suit::Spades),
+                c(Rank::Jack, Suit::Hearts),
+                c(Rank::Two, Suit::Clubs),
+                c(Rank::Three, Suit::Diamonds),
+                c(Rank::Four, Suit::Hearts),
+            ]));
 
             assert!(pj > p10);
 
-            let sf = rank_five_card_hand(
-                &h([
-                    c(Rank::Nine, Suit::Clubs),
-                    c(Rank::Ten, Suit::Clubs),
-                    c(Rank::Jack, Suit::Clubs),
-                    c(Rank::Queen, Suit::Clubs),
-                    c(Rank::King, Suit::Clubs),
-                ])
-            );
+            let sf = rank_five_card_hand(&h([
+                c(Rank::Nine, Suit::Clubs),
+                c(Rank::Ten, Suit::Clubs),
+                c(Rank::Jack, Suit::Clubs),
+                c(Rank::Queen, Suit::Clubs),
+                c(Rank::King, Suit::Clubs),
+            ]));
 
-            let fk = rank_five_card_hand(
-                &h([
-                    c(Rank::Ace, Suit::Spades),
-                    c(Rank::Ace, Suit::Hearts),
-                    c(Rank::Ace, Suit::Clubs),
-                    c(Rank::Ace, Suit::Diamonds),
-                    c(Rank::Two, Suit::Spades),
-                ])
-            );
+            let fk = rank_five_card_hand(&h([
+                c(Rank::Ace, Suit::Spades),
+                c(Rank::Ace, Suit::Hearts),
+                c(Rank::Ace, Suit::Clubs),
+                c(Rank::Ace, Suit::Diamonds),
+                c(Rank::Two, Suit::Spades),
+            ]));
 
             assert!(sf > fk);
         }
@@ -593,64 +560,66 @@ mod tests {
         #[test]
         fn determines_winner_correctly() {
             let hands = vec![
-                (0, rank_five_card_hand(
-                    &h([
+                (
+                    0,
+                    rank_five_card_hand(&h([
                         c(Rank::Ten, Suit::Spades),
                         c(Rank::Ten, Suit::Hearts),
                         c(Rank::Ace, Suit::Clubs),
                         c(Rank::Seven, Suit::Diamonds),
                         c(Rank::Three, Suit::Hearts),
-                    ])
-                )), // One Pair
-
-                (1, rank_five_card_hand(
-                    &h([
+                    ])),
+                ), // One Pair
+                (
+                    1,
+                    rank_five_card_hand(&h([
                         c(Rank::Jack, Suit::Spades),
                         c(Rank::Jack, Suit::Hearts),
                         c(Rank::Two, Suit::Clubs),
                         c(Rank::Three, Suit::Diamonds),
                         c(Rank::Four, Suit::Hearts),
-                    ])
-                )), // One Pair
-
-                (2, rank_five_card_hand(
-                    &h([
+                    ])),
+                ), // One Pair
+                (
+                    2,
+                    rank_five_card_hand(&h([
                         c(Rank::Nine, Suit::Clubs),
                         c(Rank::Ten, Suit::Clubs),
                         c(Rank::Jack, Suit::Clubs),
                         c(Rank::Queen, Suit::Clubs),
                         c(Rank::King, Suit::Clubs),
-                    ])
-                )), // Straight Flush
+                    ])),
+                ), // Straight Flush
             ];
 
             let result = determine_showdown_winner(&hands);
             assert_eq!(result.winner_indices, vec![2]);
             assert_eq!(result.winning_rank.category, HandCategory::StraightFlush);
         }
-        
+
         #[test]
         fn determines_tie_correctly() {
             let hands = vec![
-                (0, rank_five_card_hand(
-                    &h([
+                (
+                    0,
+                    rank_five_card_hand(&h([
                         c(Rank::Ace, Suit::Spades),
                         c(Rank::Ace, Suit::Hearts),
                         c(Rank::Jack, Suit::Clubs),
                         c(Rank::Jack, Suit::Diamonds),
                         c(Rank::Nine, Suit::Spades),
-                    ])
-                )), // Two Pair
-
-                (1, rank_five_card_hand(
-                    &h([
+                    ])),
+                ), // Two Pair
+                (
+                    1,
+                    rank_five_card_hand(&h([
                         c(Rank::Ace, Suit::Clubs),
                         c(Rank::Ace, Suit::Diamonds),
                         c(Rank::Jack, Suit::Hearts),
                         c(Rank::Jack, Suit::Spades),
                         c(Rank::Nine, Suit::Clubs),
-                    ])
-                )), // Two Pair
+                    ])),
+                ), // Two Pair
             ];
 
             let result = determine_showdown_winner(&hands);

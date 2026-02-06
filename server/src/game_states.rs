@@ -1,5 +1,8 @@
-use std::collections::{ HashMap, HashSet };
-use common::{ hand::{ Hand }, protocol::{ HandStep, PlayerId } };
+use common::{
+    hand::Hand,
+    protocol::{HandStep, PlayerId},
+};
+use std::collections::{HashMap, HashSet};
 // Define the various states of a Five Card Draw Poker game.
 
 #[derive(Debug, Clone)]
@@ -10,11 +13,11 @@ pub struct PokerStateMachine {
 
 #[derive(Debug, Clone)]
 pub struct BettingRoundState {
-    pub order: Vec<PlayerId>, // fixed action order
-    pub to_act_idx: usize, // index into order
+    pub order: Vec<PlayerId>,            // fixed action order
+    pub to_act_idx: usize,               // index into order
     pub contrib: HashMap<PlayerId, u32>, // chips contributed this round
-    pub pending: HashSet<PlayerId>, // players yet to act this round
-    pub raises_used: u32, // number of raises used this round
+    pub pending: HashSet<PlayerId>,      // players yet to act this round
+    pub raises_used: u32,                // number of raises used this round
 }
 
 impl BettingRoundState {
@@ -24,7 +27,13 @@ impl BettingRoundState {
             contrib.insert(pid, 0);
         }
         let pending = order.iter().cloned().collect();
-        Self { order, to_act_idx: 0, contrib, pending, raises_used: 0 }
+        Self {
+            order,
+            to_act_idx: 0,
+            contrib,
+            pending,
+            raises_used: 0,
+        }
     }
 
     pub fn current_player(&self) -> PlayerId {
@@ -57,7 +66,10 @@ pub struct DrawRoundState {
 
 impl DrawRoundState {
     pub fn new(order: Vec<PlayerId>) -> Self {
-        Self { order, to_act_idx: 0 }
+        Self {
+            order,
+            to_act_idx: 0,
+        }
     }
 
     pub fn current_player(&self) -> PlayerId {
@@ -88,7 +100,7 @@ impl DrawRoundState {
 #[derive(Debug, Clone)]
 pub struct HandState<const HAND_SIZE: usize> {
     player_hands: HashMap<PlayerId, Hand<HAND_SIZE>>, // Map of player ID to their hand of cards
-    player_fold_status: HashMap<PlayerId, bool>, // Map of player ID to their fold status
+    player_fold_status: HashMap<PlayerId, bool>,      // Map of player ID to their fold status
     pot_size: u32,
     current_bet: u32,
     players_in_round: u32,
@@ -229,7 +241,7 @@ mod tests {
             HandStep::DrawPhase,
             HandStep::BettingRound2,
             HandStep::Showdown,
-            HandStep::Payout
+            HandStep::Payout,
         ];
         let mut fsm = PokerStateMachine::new(plan);
 

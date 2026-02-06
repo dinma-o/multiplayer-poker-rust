@@ -1,9 +1,9 @@
-use std::collections::HashMap;
-use crate::game_states::{ PokerStateMachine, HandState };
 use crate::dealer::DealerManager;
-use crate::variants::{ self };
+use crate::game_states::{HandState, PokerStateMachine};
+use crate::variants::{self};
 use common::constants::five_card_draw::{self as five_card_draw_constants, MAX_PLAYERS};
-use common::protocol::{ HandStep, PlayerId };
+use common::protocol::{HandStep, PlayerId};
+use std::collections::HashMap;
 
 #[derive(Debug, Clone)]
 pub struct FiveCardTable {
@@ -40,7 +40,7 @@ impl FiveCardTable {
     pub fn new() -> Self {
         FiveCardTable {
             game_state_machine: PokerStateMachine::new(
-                variants::five_card_draw::five_card_draw_plan()
+                variants::five_card_draw::five_card_draw_plan(),
             ),
             hand_state: HandState::new(five_card_draw_constants::ANTE_AMOUNT),
             dealer_manager: DealerManager::new(),
@@ -61,12 +61,15 @@ impl FiveCardTable {
             return Err(JoinError::TableFull);
         }
         if let HandStep::WaitingForPlayers = self.game_state_machine.get_current_state() {
-            self.player_lookup.insert(player_id, PlayerAtTable {
+            self.player_lookup.insert(
                 player_id,
-                times_folded: 0,
-                pots_won: 0,
-                rounds_played: 0,
-            });
+                PlayerAtTable {
+                    player_id,
+                    times_folded: 0,
+                    pots_won: 0,
+                    rounds_played: 0,
+                },
+            );
 
             let mut seat_index = None;
             for (index, seat) in self.seats.iter_mut().enumerate() {
@@ -92,10 +95,10 @@ impl FiveCardTable {
         }
         if *self.game_state_machine.get_current_state() == HandStep::WaitingForPlayers {
             let player = self.player_lookup.remove(&player_id).unwrap();
-            if
-                let Some(seat) = self.seats
-                    .iter_mut()
-                    .find(|seat| seat.as_ref() == Some(&player_id))
+            if let Some(seat) = self
+                .seats
+                .iter_mut()
+                .find(|seat| seat.as_ref() == Some(&player_id))
             {
                 *seat = None;
             }
@@ -181,10 +184,10 @@ impl FiveCardTable {
     }
 
     pub fn is_active_player(&self, player_id: PlayerId) -> bool {
-        self
-            .seated_players()
+        self.seated_players()
             .iter()
-            .any(|(_, pid)| *pid == player_id) && !self.hand_state().has_player_folded(&player_id)
+            .any(|(_, pid)| *pid == player_id)
+            && !self.hand_state().has_player_folded(&player_id)
     }
 }
 

@@ -1,4 +1,4 @@
-use crate::card_deck::{ Card, Deck };
+use crate::card_deck::{Card, Deck};
 use std::fmt;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -101,7 +101,7 @@ pub type FiveCardHand = Hand<5>;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::card_deck::{ Deck };
+    use crate::card_deck::Deck;
     use std::collections::HashSet;
 
     // FiveCardHand tests
@@ -137,7 +137,11 @@ mod tests {
 
         let hand = BigHand::draw_from_deck(&mut deck);
         assert!(hand.is_none());
-        assert_eq!(deck.size(), before, "Deck size should not change on failed draw");
+        assert_eq!(
+            deck.size(),
+            before,
+            "Deck size should not change on failed draw"
+        );
     }
 
     #[test]

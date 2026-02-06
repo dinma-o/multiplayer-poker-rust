@@ -17,7 +17,7 @@ impl DealerManager {
             if seats[self.dealer_position].is_some() {
                 return;
             }
-        }   
+        }
     }
 
     pub fn get_dealer_position(&self) -> usize {
@@ -56,7 +56,6 @@ impl DealerManager {
         }
         self.advance_dealer(seats);
     }
-
 }
 
 #[cfg(test)]

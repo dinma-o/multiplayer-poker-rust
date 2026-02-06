@@ -13,11 +13,11 @@ pub enum PokerVariant {
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum HandStep {
     WaitingForPlayers,
-    CollectForcedBets,        // ante or blinds later
-    DealPrivate,              // draw5/hole cards/stud down cards
-    DealCommunity,            // hold'em later
+    CollectForcedBets, // ante or blinds later
+    DealPrivate,       // draw5/hole cards/stud down cards
+    DealCommunity,     // hold'em later
     BettingRound1,
-    DrawPhase,                // draw5 only (no-op for others)
+    DrawPhase, // draw5 only (no-op for others)
     BettingRound2,
     Showdown,
     Payout,
@@ -34,13 +34,27 @@ pub enum Command {
 
 #[derive(Debug, Clone)]
 pub enum AccountCmd {
-    Create { name: String, pin: String, amount: Chips },
-    Delete { player_name: String, pin: String },
-    Deposit { player_name: String, amount: Chips },
-    Withdraw { player_name: String, amount: Chips },
-    Get { player_name: String },
+    Create {
+        name: String,
+        pin: String,
+        amount: Chips,
+    },
+    Delete {
+        player_name: String,
+        pin: String,
+    },
+    Deposit {
+        player_name: String,
+        amount: Chips,
+    },
+    Withdraw {
+        player_name: String,
+        amount: Chips,
+    },
+    Get {
+        player_name: String,
+    },
 }
-
 
 #[derive(Debug, Clone)]
 pub enum LobbyCmd {
@@ -60,30 +74,61 @@ pub enum LobbyCmd {
 
 #[derive(Debug, Clone)]
 pub enum ActionCmd {
-    Check { player_name: String },
-    Bet { player_name: String, amount: Chips },
-    Call { player_name: String },
-    Raise { player_name: String, amount: Chips },
-    Fold { player_name: String },
-    Draw { player_name: String, discard: Vec<usize> }, // indices into 5-card hand
+    Check {
+        player_name: String,
+    },
+    Bet {
+        player_name: String,
+        amount: Chips,
+    },
+    Call {
+        player_name: String,
+    },
+    Raise {
+        player_name: String,
+        amount: Chips,
+    },
+    Fold {
+        player_name: String,
+    },
+    Draw {
+        player_name: String,
+        discard: Vec<usize>,
+    }, // indices into 5-card hand
 }
-
 
 // -------------------- Events --------------------
 
 #[derive(Debug, Clone)]
 pub enum Event {
     Ok,
-    Info { message: String },
-    Error { message: String },
+    Info {
+        message: String,
+    },
+    Error {
+        message: String,
+    },
 
-    StepChanged { step: HandStep },
+    StepChanged {
+        step: HandStep,
+    },
 
-    LobbyState { seated: Vec<PlayerSummary> },
-    PlayerJoined { player_id: PlayerId, player_name: String, seat: usize },
-    PlayerLeft { player_id: PlayerId, player_name: String },
+    LobbyState {
+        seated: Vec<PlayerSummary>,
+    },
+    PlayerJoined {
+        player_id: PlayerId,
+        player_name: String,
+        seat: usize,
+    },
+    PlayerLeft {
+        player_id: PlayerId,
+        player_name: String,
+    },
 
-    PotUpdated { pot: Chips },
+    PotUpdated {
+        pot: Chips,
+    },
 
     ActionRequested {
         player_name: String,

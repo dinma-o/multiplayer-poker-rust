@@ -1,26 +1,18 @@
 use common::{
     card_deck::Deck,
-    constants::five_card_draw::{ self, ANTE_AMOUNT },
+    constants::five_card_draw::{self, ANTE_AMOUNT},
     hand::Hand,
-    hand_rank::{ self, rank_five_card_hand },
+    hand_rank::{self, rank_five_card_hand},
     protocol::{
-        AccountCmd,
-        ActionCmd,
-        AllowedAction,
-        Command,
-        Event,
-        HandStep,
-        LobbyCmd,
-        PlayerId,
-        PlayerSummary,
-        ShowdownLine,
+        AccountCmd, ActionCmd, AllowedAction, Command, Event, HandStep, LobbyCmd, PlayerId,
+        PlayerSummary, ShowdownLine,
     },
 };
-use rand::{ rngs::StdRng, SeedableRng };
+use rand::{SeedableRng, rngs::StdRng};
 use std::cmp::Ordering;
-use std::collections::{ HashMap, HashSet };
+use std::collections::{HashMap, HashSet};
 
-use crate::{ account_store::AccountStore, game_states::BettingRoundState, table::FiveCardTable };
+use crate::{account_store::AccountStore, game_states::BettingRoundState, table::FiveCardTable};
 
 pub struct ServerEngine {
     pub accounts: AccountStore,
@@ -67,7 +59,9 @@ impl ServerEngine {
     }
 
     pub fn hand_state_summary_event(&self) -> Event {
-        Event::Info { message: self.hand_state_summary() }
+        Event::Info {
+            message: self.hand_state_summary(),
+        }
     }
 
     fn hand_state_summary(&self) -> String {
@@ -77,7 +71,10 @@ impl ServerEngine {
         lines.push(format!("Hand state: {:?}", step));
         lines.push(format!("Dealer seat: {}", self.table.dealer_position()));
         lines.push(format!("Pot: {}", self.table.hand_state().pot_size()));
-        lines.push(format!("Current bet: {}", self.table.hand_state().current_bet()));
+        lines.push(format!(
+            "Current bet: {}",
+            self.table.hand_state().current_bet()
+        ));
 
         if matches!(step, HandStep::WaitingForPlayers) {
             lines.push("No active hand in progress.".into());
@@ -123,13 +120,15 @@ impl ServerEngine {
                 if let Some(br) = self.table.hand_state().betting() {
                     let pid = br.current_player();
                     let pname = self.accounts.name_from_id(pid).unwrap_or("Unknown".into());
-                    if
-                        let Event::ActionRequested { allowed, call_amount, min_raise, .. } =
-                            self.action_requested_event_for(pid, &pname)
+                    if let Event::ActionRequested {
+                        allowed,
+                        call_amount,
+                        min_raise,
+                        ..
+                    } = self.action_requested_event_for(pid, &pname)
                     {
                         let allow_call = allowed.iter().any(|a| matches!(a, AllowedAction::Call));
-                        let allow_raise =
-                            allowed.iter().any(|a| matches!(a, AllowedAction::Raise));
+                        let allow_raise = allowed.iter().any(|a| matches!(a, AllowedAction::Raise));
                         let call_text = if allow_call {
                             Self::format_opt_chips(call_amount)
                         } else {
@@ -187,43 +186,52 @@ impl ServerEngine {
             AccountCmd::Create { name, pin, amount } => {
                 match self.accounts.create_account(&name, &pin, amount) {
                     Ok(_) => vec![Event::Ok],
-                    Err(e) =>
-                        vec![Event::Error { message: format!("Account creation failed: {:?}", e) }],
+                    Err(e) => vec![Event::Error {
+                        message: format!("Account creation failed: {:?}", e),
+                    }],
                 }
             }
 
             AccountCmd::Delete { player_name, pin } => {
                 match self.accounts.delete_account(&player_name, &pin) {
                     Ok(_) => vec![Event::Ok],
-                    Err(e) =>
-                        vec![Event::Error { message: format!("Account deletion failed: {:?}", e) }],
+                    Err(e) => vec![Event::Error {
+                        message: format!("Account deletion failed: {:?}", e),
+                    }],
                 }
             }
 
-            AccountCmd::Deposit { player_name, amount } => {
-                match self.accounts.deposit(&player_name, amount) {
-                    Ok(_) => vec![Event::Ok],
-                    Err(e) => vec![Event::Error { message: format!("Deposit failed: {:?}", e) }],
-                }
-            }
+            AccountCmd::Deposit {
+                player_name,
+                amount,
+            } => match self.accounts.deposit(&player_name, amount) {
+                Ok(_) => vec![Event::Ok],
+                Err(e) => vec![Event::Error {
+                    message: format!("Deposit failed: {:?}", e),
+                }],
+            },
 
-            AccountCmd::Withdraw { player_name, amount } => {
-                match self.accounts.withdraw(&player_name, amount) {
-                    Ok(_) => vec![Event::Ok],
-                    Err(e) => vec![Event::Error { message: format!("Withdraw failed: {:?}", e) }],
-                }
-            }
+            AccountCmd::Withdraw {
+                player_name,
+                amount,
+            } => match self.accounts.withdraw(&player_name, amount) {
+                Ok(_) => vec![Event::Ok],
+                Err(e) => vec![Event::Error {
+                    message: format!("Withdraw failed: {:?}", e),
+                }],
+            },
 
-            AccountCmd::Get { player_name } => {
-                match self.accounts.get_by_name(&player_name) {
-                    Ok(acct) => {
-                        let summary = acct.summary();
-                        vec![Event::Info { message: format!("Account info:\n{summary}") }]
-                    }
-                    Err(e) =>
-                        vec![Event::Error { message: format!("Get account failed: {:?}", e) }],
+            AccountCmd::Get { player_name } => match self.accounts.get_by_name(&player_name) {
+                Ok(acct) => {
+                    let summary = acct.summary();
+                    vec![Event::Info {
+                        message: format!("Account info:\n{summary}"),
+                    }]
                 }
-            }
+                Err(e) => vec![Event::Error {
+                    message: format!("Get account failed: {:?}", e),
+                }],
+            },
         }
     }
 
@@ -231,7 +239,9 @@ impl ServerEngine {
         match cmd {
             LobbyCmd::SetVariant { variant } => {
                 // Nothing fancy yet
-                vec![Event::Info { message: format!("Set poker variant to {:?}", variant) }]
+                vec![Event::Info {
+                    message: format!("Set poker variant to {:?}", variant),
+                }]
             }
 
             LobbyCmd::GetHandState => vec![self.hand_state_summary_event()],
@@ -263,12 +273,16 @@ impl ServerEngine {
 
             LobbyCmd::SetRngSeed { seed } => {
                 self.rng_seed = Some(seed);
-                vec![Event::Info { message: format!("RNG seed set to {}", seed) }]
+                vec![Event::Info {
+                    message: format!("RNG seed set to {}", seed),
+                }]
             }
 
             LobbyCmd::ClearRngSeed => {
                 self.rng_seed = None;
-                vec![Event::Info { message: "RNG seed cleared (random shuffle)".into() }]
+                vec![Event::Info {
+                    message: "RNG seed cleared (random shuffle)".into(),
+                }]
             }
 
             LobbyCmd::SitOutNext { player_name } => {
@@ -322,30 +336,36 @@ impl ServerEngine {
                 }]
             }
 
-            LobbyCmd::GetLobbyState => { vec![self.lobby_state_event()] }
+            LobbyCmd::GetLobbyState => {
+                vec![self.lobby_state_event()]
+            }
 
             LobbyCmd::Join { player_name, pin } => {
                 if self.table.current_step() != HandStep::WaitingForPlayers {
-                    return vec![Event::Error { message: "Cannot join table during hand".into() }];
+                    return vec![Event::Error {
+                        message: "Cannot join table during hand".into(),
+                    }];
                 }
 
                 match self.accounts.login(&player_name, &pin) {
-                    Ok(pa) => {
-                        match self.table.join_table(pa.id) {
-                            Ok(seat) =>
-                                vec![
-                                    Event::PlayerJoined {
-                                        player_id: pa.id,
-                                        player_name: pa.name.clone(),
-                                        seat: seat,
-                                    },
-                                    self.lobby_state_event()
-                                ],
-                            Err(e) =>
-                                vec![Event::Error { message: format!("Seating failed: {:?}", e) }],
-                        }
+                    Ok(pa) => match self.table.join_table(pa.id) {
+                        Ok(seat) => vec![
+                            Event::PlayerJoined {
+                                player_id: pa.id,
+                                player_name: pa.name.clone(),
+                                seat: seat,
+                            },
+                            self.lobby_state_event(),
+                        ],
+                        Err(e) => vec![Event::Error {
+                            message: format!("Seating failed: {:?}", e),
+                        }],
+                    },
+                    Err(e) => {
+                        vec![Event::Error {
+                            message: format!("Login failed: {:?}", e),
+                        }]
                     }
-                    Err(e) => { vec![Event::Error { message: format!("Login failed: {:?}", e) }] }
                 }
             }
 
@@ -362,15 +382,16 @@ impl ServerEngine {
                 if self.table.current_step() == HandStep::WaitingForPlayers {
                     self.sit_out_next.remove(&pid);
                     match self.table.leave_table(pid) {
-                        Ok(_) =>
-                            vec![
-                                Event::PlayerLeft {
-                                    player_id: pid,
-                                    player_name: pname.clone(),
-                                },
-                                self.lobby_state_event()
-                            ],
-                        Err(e) => vec![Event::Error { message: format!("Leave failed: {:?}", e) }],
+                        Ok(_) => vec![
+                            Event::PlayerLeft {
+                                player_id: pid,
+                                player_name: pname.clone(),
+                            },
+                            self.lobby_state_event(),
+                        ],
+                        Err(e) => vec![Event::Error {
+                            message: format!("Leave failed: {:?}", e),
+                        }],
                     }
                 } else {
                     self.handle_midhand_leave(pid, &pname)
@@ -379,7 +400,9 @@ impl ServerEngine {
 
             LobbyCmd::StartHand => {
                 if self.table.current_step() != HandStep::WaitingForPlayers {
-                    return vec![Event::Error { message: "Hand already in progress".into() }];
+                    return vec![Event::Error {
+                        message: "Hand already in progress".into(),
+                    }];
                 }
 
                 let seated = self.table.seated_players();
@@ -389,18 +412,22 @@ impl ServerEngine {
                     .filter(|pid| !self.sit_out_next.contains(pid))
                     .collect();
 
-                if
-                    eligible.len() < (five_card_draw::MIN_PLAYERS as usize) ||
-                    eligible.len() > (five_card_draw::MAX_PLAYERS as usize)
+                if eligible.len() < (five_card_draw::MIN_PLAYERS as usize)
+                    || eligible.len() > (five_card_draw::MAX_PLAYERS as usize)
                 {
-                    return vec![Event::Error { message: "need 2–5 players to start".into() }];
+                    return vec![Event::Error {
+                        message: "need 2–5 players to start".into(),
+                    }];
                 }
 
                 // Confirm that each player has enough balance to cover the ante
                 for player_id in &eligible {
                     if !self.has_enough_for_ante(*player_id) {
                         return vec![Event::Error {
-                            message: format!("Player {} does not have enough balance for ante", player_id),
+                            message: format!(
+                                "Player {} does not have enough balance for ante",
+                                player_id
+                            ),
                         }];
                     }
                 }
@@ -417,14 +444,18 @@ impl ServerEngine {
                 }
 
                 self.table.advance_table_state();
-                let mut events = vec![Event::StepChanged { step: self.table.current_step() }];
+                let mut events = vec![Event::StepChanged {
+                    step: self.table.current_step(),
+                }];
 
                 events.extend(self.run_automatic_steps());
 
                 events
             }
 
-            _ => vec![Event::Error { message: "Lobby command not implemented yet".into() }],
+            _ => vec![Event::Error {
+                message: "Lobby command not implemented yet".into(),
+            }],
         }
     }
 
@@ -433,7 +464,9 @@ impl ServerEngine {
         match self.table.current_step() {
             HandStep::BettingRound1 | HandStep::BettingRound2 => self.apply_betting_action(cmd),
             HandStep::DrawPhase => self.apply_draw_action(cmd), // later
-            _ => vec![Event::Error { message: "Actions not allowed in current step".into() }],
+            _ => vec![Event::Error {
+                message: "Actions not allowed in current step".into(),
+            }],
         }
     }
 
@@ -452,7 +485,9 @@ impl ServerEngine {
         let current_player = match self.table.hand_state().betting() {
             Some(br) => br.current_player(),
             None => {
-                return vec![Event::Error { message: "Betting round not initialized".into() }];
+                return vec![Event::Error {
+                    message: "Betting round not initialized".into(),
+                }];
             }
         };
 
@@ -460,7 +495,9 @@ impl ServerEngine {
             return vec![Event::Error {
                 message: format!(
                     "Not your turn. Expected {}",
-                    self.accounts.name_from_id(current_player).unwrap_or("Unknown".into())
+                    self.accounts
+                        .name_from_id(current_player)
+                        .unwrap_or("Unknown".into())
                 ),
             }];
         }
@@ -470,11 +507,13 @@ impl ServerEngine {
 
         // Pull current bet + contrib + call amount
         let current_bet = self.table.hand_state().current_bet();
-        let contrib = self.table
+        let contrib = self
+            .table
             .hand_state()
             .betting()
             .unwrap()
-            .contrib.get(&pid)
+            .contrib
+            .get(&pid)
             .copied()
             .unwrap_or(0);
         let call_amount = current_bet.saturating_sub(contrib);
@@ -483,15 +522,29 @@ impl ServerEngine {
         match cmd {
             ActionCmd::Check { .. } => {
                 if call_amount != 0 {
-                    return vec![Event::Error { message: "Cannot check when facing a bet".into() }];
+                    return vec![Event::Error {
+                        message: "Cannot check when facing a bet".into(),
+                    }];
                 }
-                self.table.hand_state_mut().betting_mut().unwrap().pending.remove(&pid);
+                self.table
+                    .hand_state_mut()
+                    .betting_mut()
+                    .unwrap()
+                    .pending
+                    .remove(&pid);
             }
 
             ActionCmd::Fold { .. } => {
                 // mark folded
-                self.table.hand_state_mut().set_player_fold_status(pid, true);
-                self.table.hand_state_mut().betting_mut().unwrap().pending.remove(&pid);
+                self.table
+                    .hand_state_mut()
+                    .set_player_fold_status(pid, true);
+                self.table
+                    .hand_state_mut()
+                    .betting_mut()
+                    .unwrap()
+                    .pending
+                    .remove(&pid);
 
                 // EARLY WIN: if only 1 active player remains, end round + fast-forward
                 let active = self.active_players_in_hand();
@@ -499,13 +552,14 @@ impl ServerEngine {
                     self.table.hand_state_mut().end_betting_round();
 
                     // Skip straight to Showdown/Payout
-                    while
-                        self.table.current_step() != HandStep::Showdown &&
-                        self.table.current_step() != HandStep::Payout
+                    while self.table.current_step() != HandStep::Showdown
+                        && self.table.current_step() != HandStep::Payout
                     {
                         self.table.advance_table_state();
                     }
-                    events.push(Event::StepChanged { step: self.table.current_step() });
+                    events.push(Event::StepChanged {
+                        step: self.table.current_step(),
+                    });
 
                     events.extend(self.run_automatic_steps());
                     return events;
@@ -520,11 +574,12 @@ impl ServerEngine {
                 }
                 // validate amount min/max here
                 if amount <= 0 {
-                    return vec![Event::Error { message: "Bet amount must be positive".into() }];
+                    return vec![Event::Error {
+                        message: "Bet amount must be positive".into(),
+                    }];
                 }
-                if
-                    amount < (five_card_draw::MIN_BET_PER_ROUND as i64) ||
-                    amount > (five_card_draw::MAX_BET_PER_ROUND as i64)
+                if amount < (five_card_draw::MIN_BET_PER_ROUND as i64)
+                    || amount > (five_card_draw::MAX_BET_PER_ROUND as i64)
                 {
                     return vec![Event::Error {
                         message: format!(
@@ -545,7 +600,9 @@ impl ServerEngine {
 
                 // withdraw from accounts
                 if let Err(e) = self.accounts.withdraw(&pname, amount as i64) {
-                    return vec![Event::Error { message: format!("Withdraw failed: {:?}", e) }];
+                    return vec![Event::Error {
+                        message: format!("Withdraw failed: {:?}", e),
+                    }];
                 }
 
                 // update pot + current bet + contrib
@@ -560,11 +617,15 @@ impl ServerEngine {
 
             ActionCmd::Call { .. } => {
                 if call_amount == 0 {
-                    return vec![Event::Error { message: "Nothing to call".into() }];
+                    return vec![Event::Error {
+                        message: "Nothing to call".into(),
+                    }];
                 }
 
                 if let Err(e) = self.accounts.withdraw(&pname, call_amount as i64) {
-                    return vec![Event::Error { message: format!("Withdraw failed: {:?}", e) }];
+                    return vec![Event::Error {
+                        message: format!("Withdraw failed: {:?}", e),
+                    }];
                 }
 
                 self.table.hand_state_mut().add_to_pot(call_amount);
@@ -581,14 +642,18 @@ impl ServerEngine {
                     }];
                 }
                 if amount <= 0 {
-                    return vec![Event::Error { message: "Raise amount must be positive".into() }];
+                    return vec![Event::Error {
+                        message: "Raise amount must be positive".into(),
+                    }];
                 }
 
                 // raise cap
                 {
                     let br = self.table.hand_state().betting().unwrap();
                     if br.raises_used >= five_card_draw::MAX_RAISES_PER_ROUND {
-                        return vec![Event::Error { message: "Raise cap reached".into() }];
+                        return vec![Event::Error {
+                            message: "Raise cap reached".into(),
+                        }];
                     }
                 }
 
@@ -620,17 +685,21 @@ impl ServerEngine {
                     }];
                 }
 
-                let br_contrib = self.table
+                let br_contrib = self
+                    .table
                     .hand_state()
                     .betting()
                     .unwrap()
-                    .contrib.get(&pid)
+                    .contrib
+                    .get(&pid)
                     .copied()
                     .unwrap_or(0);
                 let delta = new_bet.saturating_sub(br_contrib);
 
                 if let Err(e) = self.accounts.withdraw(&pname, delta as i64) {
-                    return vec![Event::Error { message: format!("Withdraw failed: {:?}", e) }];
+                    return vec![Event::Error {
+                        message: format!("Withdraw failed: {:?}", e),
+                    }];
                 }
 
                 self.table.hand_state_mut().add_to_pot(delta);
@@ -644,26 +713,39 @@ impl ServerEngine {
             }
 
             _ => {
-                return vec![Event::Error { message: "Unsupported action in betting round".into() }];
+                return vec![Event::Error {
+                    message: "Unsupported action in betting round".into(),
+                }];
             }
         }
 
         // Emit pot update after money actions (optional)
-        events.push(Event::PotUpdated { pot: self.table.hand_state().pot_size() as i64 });
+        events.push(Event::PotUpdated {
+            pot: self.table.hand_state().pot_size() as i64,
+        });
 
         // Round complete?
-        let pending_empty = self.table.hand_state().betting().unwrap().pending.is_empty();
+        let pending_empty = self
+            .table
+            .hand_state()
+            .betting()
+            .unwrap()
+            .pending
+            .is_empty();
         if pending_empty {
             self.table.hand_state_mut().end_betting_round();
             self.table.advance_table_state();
-            events.push(Event::StepChanged { step: self.table.current_step() });
+            events.push(Event::StepChanged {
+                step: self.table.current_step(),
+            });
 
             // Let automatic runner take it to the next prompt (draw phase / betting2)
             events.extend(self.run_automatic_steps());
             return events;
         }
 
-        let seated_set: HashSet<PlayerId> = self.table
+        let seated_set: HashSet<PlayerId> = self
+            .table
             .seated_players()
             .iter()
             .map(|(_, pid)| *pid)
@@ -690,7 +772,10 @@ impl ServerEngine {
 
         // Prompt next player
         let next_pid = self.table.hand_state().betting().unwrap().current_player();
-        let next_name = self.accounts.name_from_id(next_pid).unwrap_or("Unknown".into());
+        let next_name = self
+            .accounts
+            .name_from_id(next_pid)
+            .unwrap_or("Unknown".into());
         events.push(self.action_requested_event_for(next_pid, &next_name));
 
         events
@@ -701,33 +786,47 @@ impl ServerEngine {
 
         // Check that we are in a draw phase/step
         if self.table.current_step() != HandStep::DrawPhase {
-            return vec![Event::Error { message: "Not in draw phase".into() }];
+            return vec![Event::Error {
+                message: "Not in draw phase".into(),
+            }];
         }
 
         // Resolve name -> pid
         let (player_name, discard) = match cmd {
-            ActionCmd::Draw { player_name, discard } => (player_name, discard),
+            ActionCmd::Draw {
+                player_name,
+                discard,
+            } => (player_name, discard),
             _ => {
-                return vec![Event::Error { message: "Only Draw is allowed in DrawPhase".into() }];
+                return vec![Event::Error {
+                    message: "Only Draw is allowed in DrawPhase".into(),
+                }];
             }
         };
 
         let pid = match self.accounts.get_by_name(&player_name) {
             Ok(acct) => acct.id,
             Err(e) => {
-                return vec![Event::Error { message: format!("Get account failed: {:?}", e) }];
+                return vec![Event::Error {
+                    message: format!("Get account failed: {:?}", e),
+                }];
             }
         };
 
         let expected = match self.table.hand_state().draw() {
             Some(dr) => dr.current_player(),
             None => {
-                return vec![Event::Error { message: "Draw round not initialized".into() }];
+                return vec![Event::Error {
+                    message: "Draw round not initialized".into(),
+                }];
             }
         };
 
         if pid != expected {
-            let expected_name = self.accounts.name_from_id(expected).unwrap_or("Unknown".into());
+            let expected_name = self
+                .accounts
+                .name_from_id(expected)
+                .unwrap_or("Unknown".into());
             return vec![Event::Error {
                 message: format!("Not your draw turn. Expected {expected_name}"),
             }];
@@ -735,23 +834,31 @@ impl ServerEngine {
 
         // Validate discard list
         if discard.len() > five_card_draw::MAX_DISCARDS {
-            return vec![Event::Error { message: "Too many discards".into() }];
+            return vec![Event::Error {
+                message: "Too many discards".into(),
+            }];
         }
 
         let mut seen = std::collections::HashSet::new();
         for &i in &discard {
             if i >= 5 {
-                return vec![Event::Error { message: "Discard index out of range (0..4)".into() }];
+                return vec![Event::Error {
+                    message: "Discard index out of range (0..4)".into(),
+                }];
             }
             if !seen.insert(i) {
-                return vec![Event::Error { message: "Duplicate discard index".into() }];
+                return vec![Event::Error {
+                    message: "Duplicate discard index".into(),
+                }];
             }
         }
 
         let hand = match self.table.hand_state().player_hand(&pid) {
             Some(h) => h.clone(),
             None => {
-                return vec![Event::Error { message: "Player hand not found".into() }];
+                return vec![Event::Error {
+                    message: "Player hand not found".into(),
+                }];
             }
         };
 
@@ -759,7 +866,9 @@ impl ServerEngine {
         new_hand.replace_from_deck(&discard, &mut self.deck);
 
         // Store updated hand
-        self.table.hand_state_mut().set_player_hand(pid, new_hand.clone());
+        self.table
+            .hand_state_mut()
+            .set_player_hand(pid, new_hand.clone());
 
         // Emit private hand event
         events.push(Event::PrivateHand {
@@ -776,7 +885,9 @@ impl ServerEngine {
 
                 // Move to BettingRound2
                 self.table.advance_table_state();
-                events.push(Event::StepChanged { step: self.table.current_step() });
+                events.push(Event::StepChanged {
+                    step: self.table.current_step(),
+                });
 
                 // Initialize betting round 2 and prompt
                 events.extend(self.enter_betting_round());
@@ -786,7 +897,10 @@ impl ServerEngine {
 
         // Prompt next drawer
         let next_pid = self.table.hand_state().draw().unwrap().current_player();
-        let next_name = self.accounts.name_from_id(next_pid).unwrap_or("Unknown".into());
+        let next_name = self
+            .accounts
+            .name_from_id(next_pid)
+            .unwrap_or("Unknown".into());
 
         events.push(Event::DrawRequested {
             player_name: next_name,
@@ -799,7 +913,8 @@ impl ServerEngine {
     fn handle_midhand_leave(&mut self, pid: PlayerId, pname: &str) -> Vec<Event> {
         let mut events = Vec::new();
 
-        let is_seated = self.table
+        let is_seated = self
+            .table
             .seated_players()
             .iter()
             .any(|(_, spid)| *spid == pid);
@@ -810,7 +925,9 @@ impl ServerEngine {
         }
 
         // Mark folded and queue leave for end of hand
-        self.table.hand_state_mut().set_player_fold_status(pid, true);
+        self.table
+            .hand_state_mut()
+            .set_player_fold_status(pid, true);
         if let Some(br) = self.table.hand_state_mut().betting_mut() {
             br.pending.remove(&pid);
         }
@@ -840,13 +957,14 @@ impl ServerEngine {
         if active.len() == 1 {
             self.table.hand_state_mut().end_betting_round();
 
-            while
-                self.table.current_step() != HandStep::Showdown &&
-                self.table.current_step() != HandStep::Payout
+            while self.table.current_step() != HandStep::Showdown
+                && self.table.current_step() != HandStep::Payout
             {
                 self.table.advance_table_state();
             }
-            events.push(Event::StepChanged { step: self.table.current_step() });
+            events.push(Event::StepChanged {
+                step: self.table.current_step(),
+            });
             events.extend(self.run_automatic_steps());
             return events;
         }
@@ -857,13 +975,16 @@ impl ServerEngine {
                     if br.pending.is_empty() {
                         self.table.hand_state_mut().end_betting_round();
                         self.table.advance_table_state();
-                        events.push(Event::StepChanged { step: self.table.current_step() });
+                        events.push(Event::StepChanged {
+                            step: self.table.current_step(),
+                        });
                         events.extend(self.run_automatic_steps());
                         return events;
                     }
 
                     if br.current_player() == pid {
-                        let seated_set: HashSet<PlayerId> = self.table
+                        let seated_set: HashSet<PlayerId> = self
+                            .table
                             .seated_players()
                             .iter()
                             .map(|(_, pid)| *pid)
@@ -875,9 +996,8 @@ impl ServerEngine {
                             .filter(|pid| self.table.hand_state().has_player_folded(pid))
                             .collect();
 
-                        let is_active = |pid: PlayerId| {
-                            seated_set.contains(&pid) && !folded_set.contains(&pid)
-                        };
+                        let is_active =
+                            |pid: PlayerId| seated_set.contains(&pid) && !folded_set.contains(&pid);
 
                         let br = self.table.hand_state_mut().betting_mut().unwrap();
                         Self::advance_to_next_actor_local(br, &is_active);
@@ -886,7 +1006,8 @@ impl ServerEngine {
                         }
 
                         let next_pid = br.current_player();
-                        let next_name = self.accounts
+                        let next_name = self
+                            .accounts
                             .name_from_id(next_pid)
                             .unwrap_or("Unknown".into());
                         events.push(self.action_requested_event_for(next_pid, &next_name));
@@ -897,14 +1018,17 @@ impl ServerEngine {
                 if draw_done {
                     self.table.hand_state_mut().end_draw_round();
                     self.table.advance_table_state();
-                    events.push(Event::StepChanged { step: self.table.current_step() });
+                    events.push(Event::StepChanged {
+                        step: self.table.current_step(),
+                    });
                     events.extend(self.enter_betting_round());
                     return events;
                 }
 
                 if draw_removed_current {
                     if let Some(next_pid) = next_draw_pid {
-                        let next_name = self.accounts
+                        let next_name = self
+                            .accounts
                             .name_from_id(next_pid)
                             .unwrap_or("Unknown".into());
                         events.push(Event::DrawRequested {
@@ -928,7 +1052,8 @@ impl ServerEngine {
                 HandStep::CollectForcedBets => {
                     let ante = five_card_draw::ANTE_AMOUNT;
 
-                    let seated_ids = self.table
+                    let seated_ids = self
+                        .table
                         .seated_players()
                         .into_iter()
                         .map(|(_seat, player_id)| player_id)
@@ -943,7 +1068,8 @@ impl ServerEngine {
                     let mut payers = Vec::new();
 
                     for pid in &eligible_ids {
-                        let bal = self.accounts
+                        let bal = self
+                            .accounts
                             .get_by_id(*pid)
                             .map(|a| a.balance)
                             .unwrap_or(0);
@@ -959,7 +1085,8 @@ impl ServerEngine {
                             let _ = self.table.leave_table(*pid);
                             events.push(Event::PlayerLeft {
                                 player_id: *pid,
-                                player_name: self.accounts
+                                player_name: self
+                                    .accounts
                                     .name_from_id(*pid)
                                     .unwrap_or("Unknown".into()),
                             });
@@ -975,13 +1102,17 @@ impl ServerEngine {
                             message: "Not enough players can pay ante to start hand".into(),
                         });
                         events.push(Event::PotUpdated { pot: 0 });
-                        events.push(Event::StepChanged { step: HandStep::WaitingForPlayers });
+                        events.push(Event::StepChanged {
+                            step: HandStep::WaitingForPlayers,
+                        });
                         events.push(self.lobby_state_event());
                         break;
                     }
 
                     for pid in &payers {
-                        let _ = self.accounts.withdraw_by_id(*pid, ante.try_into().unwrap_or(5));
+                        let _ = self
+                            .accounts
+                            .withdraw_by_id(*pid, ante.try_into().unwrap_or(5));
                     }
 
                     for pid in &kicked {
@@ -990,17 +1121,24 @@ impl ServerEngine {
                         events.push(Event::Info {
                             message: format!("{} removed: cannot pay ante", name),
                         });
-                        events.push(Event::PlayerLeft { player_id: *pid, player_name: name });
+                        events.push(Event::PlayerLeft {
+                            player_id: *pid,
+                            player_name: name,
+                        });
                     }
 
-                    self.table.hand_state_mut().add_to_pot((payers.len() as u32) * ante);
+                    self.table
+                        .hand_state_mut()
+                        .add_to_pot((payers.len() as u32) * ante);
                     events.push(Event::PotUpdated {
                         pot: self.table.hand_state().pot_size() as i64,
                     });
 
                     // advance state at end of step
                     self.table.advance_table_state();
-                    events.push(Event::StepChanged { step: self.table.current_step() });
+                    events.push(Event::StepChanged {
+                        step: self.table.current_step(),
+                    });
                 }
 
                 HandStep::DealPrivate => {
@@ -1015,14 +1153,20 @@ impl ServerEngine {
 
                     for pid in seated {
                         if sit_out.contains(&pid) {
-                            self.table.hand_state_mut().set_player_fold_status(pid, true);
+                            self.table
+                                .hand_state_mut()
+                                .set_player_fold_status(pid, true);
                             continue;
                         }
                         let name = self.accounts.name_from_id(pid).unwrap_or("Unknown".into());
                         let hand = Hand::<5>::draw_from_deck(&mut self.deck).unwrap();
 
-                        self.table.hand_state_mut().set_player_hand(pid, hand.clone());
-                        self.table.hand_state_mut().set_player_fold_status(pid, false);
+                        self.table
+                            .hand_state_mut()
+                            .set_player_hand(pid, hand.clone());
+                        self.table
+                            .hand_state_mut()
+                            .set_player_fold_status(pid, false);
 
                         events.push(Event::PrivateHand {
                             player_name: name,
@@ -1035,7 +1179,9 @@ impl ServerEngine {
 
                     // advance state at end of step
                     self.table.advance_table_state();
-                    events.push(Event::StepChanged { step: self.table.current_step() });
+                    events.push(Event::StepChanged {
+                        step: self.table.current_step(),
+                    });
 
                     if self.is_decision_step(self.table.current_step()) {
                         events.extend(self.on_enter_decision_step(self.table.current_step()));
@@ -1051,13 +1197,17 @@ impl ServerEngine {
                 HandStep::Showdown => {
                     events.extend(self.do_showdown());
                     self.table.advance_table_state();
-                    events.push(Event::StepChanged { step: self.table.current_step() });
+                    events.push(Event::StepChanged {
+                        step: self.table.current_step(),
+                    });
                 }
 
                 HandStep::Payout => {
                     events.extend(self.do_payout());
                     self.table.advance_table_state(); // should go back to WaitingForPlayers
-                    events.push(Event::StepChanged { step: self.table.current_step() });
+                    events.push(Event::StepChanged {
+                        step: self.table.current_step(),
+                    });
                     break; // stop auto-run after finishing a hand
                 }
 
@@ -1078,7 +1228,10 @@ impl ServerEngine {
     }
 
     pub fn is_decision_step(&self, step: HandStep) -> bool {
-        matches!(step, HandStep::BettingRound1 | HandStep::BettingRound2 | HandStep::DrawPhase)
+        matches!(
+            step,
+            HandStep::BettingRound1 | HandStep::BettingRound2 | HandStep::DrawPhase
+        )
     }
 
     fn on_enter_decision_step(&mut self, step: HandStep) -> Vec<Event> {
@@ -1098,14 +1251,21 @@ impl ServerEngine {
             .collect();
 
         if active_in_order.is_empty() {
-            return vec![Event::Error { message: "No active players for draw".into() }];
+            return vec![Event::Error {
+                message: "No active players for draw".into(),
+            }];
         }
 
-        self.table.hand_state_mut().start_draw_round(active_in_order.clone());
+        self.table
+            .hand_state_mut()
+            .start_draw_round(active_in_order.clone());
 
         // store draw order + index somewhere (HandState) OR just request first for now
         let first_player = active_in_order[0];
-        let pname = self.accounts.name_from_id(first_player).unwrap_or("Unknown".into());
+        let pname = self
+            .accounts
+            .name_from_id(first_player)
+            .unwrap_or("Unknown".into());
 
         vec![Event::DrawRequested {
             player_name: pname,
@@ -1117,22 +1277,26 @@ impl ServerEngine {
         let order = self.table.action_order();
 
         // Filter out to have only active players (not folded and seated)
-        let seated_set: HashSet<PlayerId> = self.table
+        let seated_set: HashSet<PlayerId> = self
+            .table
             .seated_players()
             .iter()
             .map(|(_, pid)| *pid)
             .collect();
         let active_in_order = order
             .into_iter()
-            .filter(
-                |pid| seated_set.contains(pid) && !self.table.hand_state().has_player_folded(pid)
-            )
+            .filter(|pid| {
+                seated_set.contains(pid) && !self.table.hand_state().has_player_folded(pid)
+            })
             .collect();
 
         // Initialize betting round state
-        self.table.hand_state_mut().start_betting_round(active_in_order);
+        self.table
+            .hand_state_mut()
+            .start_betting_round(active_in_order);
 
-        let seated_set: HashSet<PlayerId> = self.table
+        let seated_set: HashSet<PlayerId> = self
+            .table
             .seated_players()
             .iter()
             .map(|(_, pid)| *pid)
@@ -1153,7 +1317,10 @@ impl ServerEngine {
 
         // Emit ActionRequested for the first player to act
         let first_player = self.table.hand_state().betting().unwrap().current_player();
-        let pname = self.accounts.name_from_id(first_player).unwrap_or("Unknown".into());
+        let pname = self
+            .accounts
+            .name_from_id(first_player)
+            .unwrap_or("Unknown".into());
 
         vec![self.action_requested_event_for(first_player, &pname)]
     }
@@ -1182,11 +1349,13 @@ impl ServerEngine {
         self.table
             .seated_players()
             .iter()
-            .any(|(_, spid)| *spid == pid) && !self.table.hand_state().has_player_folded(&pid)
+            .any(|(_, spid)| *spid == pid)
+            && !self.table.hand_state().has_player_folded(&pid)
     }
 
     fn active_players_in_order(&self) -> Vec<PlayerId> {
-        let seated_set: HashSet<PlayerId> = self.table
+        let seated_set: HashSet<PlayerId> = self
+            .table
             .seated_players()
             .iter()
             .map(|(_, pid)| *pid)
@@ -1196,9 +1365,9 @@ impl ServerEngine {
 
         order
             .into_iter()
-            .filter(
-                |pid| seated_set.contains(pid) && !self.table.hand_state().has_player_folded(pid)
-            )
+            .filter(|pid| {
+                seated_set.contains(pid) && !self.table.hand_state().has_player_folded(pid)
+            })
             .collect()
     }
 
@@ -1213,7 +1382,7 @@ impl ServerEngine {
 
     fn advance_to_next_actor_local(
         br: &mut BettingRoundState,
-        is_active: &impl Fn(PlayerId) -> bool
+        is_active: &impl Fn(PlayerId) -> bool,
     ) {
         let n = br.order.len();
         if n == 0 {
@@ -1231,7 +1400,7 @@ impl ServerEngine {
 
     fn resolve_player_from_action(&self, cmd: &ActionCmd) -> Result<(PlayerId, String), Event> {
         match cmd {
-            | ActionCmd::Check { player_name }
+            ActionCmd::Check { player_name }
             | ActionCmd::Bet { player_name, .. }
             | ActionCmd::Call { player_name }
             | ActionCmd::Raise { player_name, .. }
@@ -1245,22 +1414,27 @@ impl ServerEngine {
 
     fn action_requested_event_for(&self, pid: PlayerId, pname: &str) -> Event {
         let current_bet = self.table.hand_state().current_bet();
-        let contrib = self.table
+        let contrib = self
+            .table
             .hand_state()
             .betting()
             .unwrap()
-            .contrib.get(&pid)
+            .contrib
+            .get(&pid)
             .copied()
             .unwrap_or(0);
         let call_amount = current_bet.saturating_sub(contrib);
 
         let allowed_actions: Vec<AllowedAction> = if current_bet == 0 {
-            vec![AllowedAction::Check, AllowedAction::Bet, AllowedAction::Fold]
+            vec![
+                AllowedAction::Check,
+                AllowedAction::Bet,
+                AllowedAction::Fold,
+            ]
         } else {
             // Check if we have passed raise cap
-            if
-                self.table.hand_state().betting().unwrap().raises_used >=
-                five_card_draw::MAX_RAISES_PER_ROUND
+            if self.table.hand_state().betting().unwrap().raises_used
+                >= five_card_draw::MAX_RAISES_PER_ROUND
             {
                 return Event::ActionRequested {
                     player_name: pname.to_string(),
@@ -1270,7 +1444,11 @@ impl ServerEngine {
                 };
             }
 
-            vec![AllowedAction::Call, AllowedAction::Raise, AllowedAction::Fold]
+            vec![
+                AllowedAction::Call,
+                AllowedAction::Raise,
+                AllowedAction::Fold,
+            ]
         };
 
         Event::ActionRequested {
@@ -1311,7 +1489,8 @@ impl ServerEngine {
         use common::hand_rank::rank_five_card_hand;
 
         // Active players = players who still have hands and did not fold
-        let active: Vec<PlayerId> = self.table
+        let active: Vec<PlayerId> = self
+            .table
             .hand_state()
             .players_with_hands()
             .into_iter()
@@ -1319,7 +1498,9 @@ impl ServerEngine {
             .collect();
 
         if active.is_empty() {
-            return vec![Event::Error { message: "Showdown: no active players".into() }];
+            return vec![Event::Error {
+                message: "Showdown: no active players".into(),
+            }];
         }
 
         // Rank all active hands + build showdown lines
@@ -1349,7 +1530,9 @@ impl ServerEngine {
 
         // If somehow ranked is empty
         if ranked.is_empty() {
-            return vec![Event::Error { message: "Showdown: no hands to rank".into() }];
+            return vec![Event::Error {
+                message: "Showdown: no hands to rank".into(),
+            }];
         }
 
         vec![Event::Showdown { results: lines }]
@@ -1365,7 +1548,9 @@ impl ServerEngine {
         if participants.len() < 2 {
             // hand can't really exist, but don't crash
             self.table.hand_state_mut().reset_for_new_deal();
-            return vec![Event::Error { message: "Payout: not enough participants".into() }];
+            return vec![Event::Error {
+                message: "Payout: not enough participants".into(),
+            }];
         }
 
         // Determine active (not folded)
@@ -1377,7 +1562,9 @@ impl ServerEngine {
 
         if active.is_empty() {
             self.table.hand_state_mut().reset_for_new_deal();
-            return vec![Event::Error { message: "Payout: no active players".into() }];
+            return vec![Event::Error {
+                message: "Payout: no active players".into(),
+            }];
         }
 
         // Rank active hands and find max (TA clarification on limited tie-breaking)
@@ -1398,24 +1585,24 @@ impl ServerEngine {
                     best_rank = Some(r);
                     winners = vec![*pid];
                 }
-                Some(br) => {
-                    match Self::compare_for_payout(r, br) {
-                        Ordering::Greater => {
-                            best_rank = Some(r);
-                            winners = vec![*pid];
-                        }
-                        Ordering::Equal => {
-                            winners.push(*pid);
-                        }
-                        Ordering::Less => {}
+                Some(br) => match Self::compare_for_payout(r, br) {
+                    Ordering::Greater => {
+                        best_rank = Some(r);
+                        winners = vec![*pid];
                     }
-                }
+                    Ordering::Equal => {
+                        winners.push(*pid);
+                    }
+                    Ordering::Less => {}
+                },
             }
         }
 
         if winners.is_empty() {
             self.table.hand_state_mut().reset_for_new_deal();
-            return vec![Event::Error { message: "Payout: could not determine winner".into() }];
+            return vec![Event::Error {
+                message: "Payout: could not determine winner".into(),
+            }];
         }
 
         // Split pot
@@ -1438,7 +1625,10 @@ impl ServerEngine {
                 .find(|pid| winners.contains(pid))
                 .unwrap_or(winners[0]);
 
-            if let Some(pair) = payout_pairs.iter_mut().find(|(pid, _)| *pid == remainder_pid) {
+            if let Some(pair) = payout_pairs
+                .iter_mut()
+                .find(|(pid, _)| *pid == remainder_pid)
+            {
                 pair.1 += remainder;
             }
         }
@@ -1507,22 +1697,21 @@ impl ServerEngine {
         use hand_rank::HandCategory;
 
         match a.category.cmp(&b.category) {
-            Ordering::Equal =>
-                match a.category {
-                    // TA clarification: only partial tie-breaking for these categories
-                    HandCategory::HighCard | HandCategory::OnePair => {
-                        a.tiebreakers[0].cmp(&b.tiebreakers[0])
-                    }
-                    HandCategory::TwoPair => {
-                        // Compare high pair, then low pair, ignore kicker
-                        match a.tiebreakers[0].cmp(&b.tiebreakers[0]) {
-                            Ordering::Equal => a.tiebreakers[1].cmp(&b.tiebreakers[1]),
-                            ord => ord,
-                        }
-                    }
-                    // Other categories use full ordering
-                    _ => a.cmp(&b),
+            Ordering::Equal => match a.category {
+                // TA clarification: only partial tie-breaking for these categories
+                HandCategory::HighCard | HandCategory::OnePair => {
+                    a.tiebreakers[0].cmp(&b.tiebreakers[0])
                 }
+                HandCategory::TwoPair => {
+                    // Compare high pair, then low pair, ignore kicker
+                    match a.tiebreakers[0].cmp(&b.tiebreakers[0]) {
+                        Ordering::Equal => a.tiebreakers[1].cmp(&b.tiebreakers[1]),
+                        ord => ord,
+                    }
+                }
+                // Other categories use full ordering
+                _ => a.cmp(&b),
+            },
             ord => ord,
         }
     }

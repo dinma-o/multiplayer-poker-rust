@@ -388,8 +388,6 @@ impl AccountStore {
         self.save()?;
         Ok(removed)
     }
-
-
 }
 
 fn is_valid_pin(pin: &str) -> bool {
