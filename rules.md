@@ -114,7 +114,7 @@ Bet sizing is **in increments of BET_INCREMENT** (default: **5 chips**) with a *
 
 ## 7. Draw Phase
 
-- Players may discard **0 to 3 cards**
+- Players may discard **0 to 4 cards**
 - Discards are replaced from the deck
 - Draw order begins with the player **to the left of the dealer**
 - Replacement cards are dealt face down
