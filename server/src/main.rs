@@ -10,6 +10,7 @@ use std::fs;
 use std::io::{self, Write};
 use std::path::Path;
 
+use common::constants::five_card_draw;
 use common::protocol::{Command, Event, LobbyCmd, AccountCmd, ActionCmd, PokerVariant};
 
 use crate::account_store::AccountStore;
@@ -27,7 +28,7 @@ fn main() {
     let table = crate::table::FiveCardTable::new();
     let mut engine = ServerEngine::new(store, table);
 
-    println!("PokerDUD CLI. Type 'help' for commands.");
+    println!("PokerDUD CLI. Type 'help' or 'help <command>' for details.");
 
     loop {
         print!("> ");
@@ -45,12 +46,14 @@ fn main() {
         if line.eq_ignore_ascii_case("quit") || line.eq_ignore_ascii_case("exit") {
             break;
         }
-        if line.eq_ignore_ascii_case("help") {
-            print_help();
+
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        if parts[0].eq_ignore_ascii_case("help") {
+            print_help_for(&parts);
             continue;
         }
 
-        match parse_command(line) {
+        match parse_command(&parts) {
             Ok(cmd) => {
                 let events = engine.apply(cmd);
                 print_events(&events);
@@ -68,6 +71,7 @@ fn main() {
 
 fn print_help() {
     println!("Commands:");
+    println!("  help [command] [subcommand]");
     println!("  join <player_name> <pin>");
     println!("  leave <player_name> (during hand = fold + leave after hand)");
     println!("  sitout <player_name> | sitin <player_name>");
@@ -75,18 +79,202 @@ fn print_help() {
     println!("  variant five|holdem|stud");
     println!("  seed <u64> | seed clear");
     println!("  lobbystate");
+    println!("  handstate | view state");
+    println!("  view hand <player_name>");
     println!("  acct get <player_name>");
     println!("  acct create <name> <pin> <balance>");
     println!("  acct deposit <player_name> <amount>");
     println!("  acct withdraw <player_name> <amount>");
+    println!("  acct delete <player_name> <pin>");
     println!("  check <player_name> | call <player_name> | fold <player_name>");
     println!("  bet <player_name> <amount> | raise <player_name> <amount> (raise-by)");
     println!("  draw <player_name> <i1> <i2> ...");
-    println!("  help | quit");
+    println!("  help | quit | exit");
+    println!("Tip: use 'help <command>' for detailed usage (e.g., 'help bet').");
 }
 
-fn parse_command(line: &str) -> Result<Command, String> {
-    let parts: Vec<&str> = line.split_whitespace().collect();
+fn print_help_for(parts: &[&str]) {
+    if parts.len() == 1 {
+        print_help();
+        return;
+    }
+
+    let cmd = parts[1].to_lowercase();
+    match cmd.as_str() {
+        "join" => {
+            println!("Usage: join <player_name> <pin>");
+            println!("  Log in and seat a player at the table.");
+            println!("  Only allowed while waiting for players.");
+            println!("Example: join alice 1234");
+        }
+        "leave" => {
+            println!("Usage: leave <player_name>");
+            println!("  If no hand is in progress, leaves immediately.");
+            println!("  If a hand is in progress, folds and leaves after the hand.");
+        }
+        "sitout" => {
+            println!("Usage: sitout <player_name>");
+            println!("  Marks the player to sit out the next hand.");
+            println!("  Only allowed while waiting for players.");
+        }
+        "sitin" => {
+            println!("Usage: sitin <player_name>");
+            println!("  Clears a pending sit-out so the player participates next hand.");
+            println!("  Only allowed while waiting for players.");
+        }
+        "start" => {
+            println!("Usage: start");
+            println!(
+                "  Starts a new hand with {}-{} eligible seated players.",
+                five_card_draw::MIN_PLAYERS,
+                five_card_draw::MAX_PLAYERS
+            );
+            println!("  Each player must have at least {} chips for the ante.", five_card_draw::ANTE_AMOUNT);
+            println!("  Shuffles, deals, and prompts the first player to act.");
+        }
+        "variant" => {
+            println!("Usage: variant five|holdem|stud");
+            println!("  Sets the lobby variant for future hands.");
+            println!("  Note: current server rules are Five Card Draw only (variant is informational).");
+        }
+        "seed" => {
+            println!("Usage: seed <u64> | seed clear");
+            println!("  Sets a deterministic RNG seed for shuffles.");
+            println!("  Use 'seed clear' to return to random shuffles.");
+        }
+        "lobbystate" => {
+            println!("Usage: lobbystate");
+            println!("  Prints seated players, balances, and basic stats.");
+        }
+        "handstate" => {
+            println!("Usage: handstate | view state");
+            println!("  Prints a friendly summary of the current hand state.");
+        }
+        "view" => {
+            print_help_view(parts.get(2).copied());
+        }
+        "acct" | "account" => {
+            print_help_account(parts.get(2).copied());
+        }
+        "check" => {
+            println!("Usage: check <player_name>");
+            println!("  Pass your turn without betting. Only allowed when call amount is 0.");
+        }
+        "call" => {
+            println!("Usage: call <player_name>");
+            println!("  Match the current bet amount.");
+        }
+        "fold" => {
+            println!("Usage: fold <player_name>");
+            println!("  Fold your hand and stop participating in this hand.");
+        }
+        "bet" => {
+            println!("Usage: bet <player_name> <amount>");
+            println!("  Place the first bet in a betting round.");
+            println!(
+                "  Amount must be between {} and {} and a multiple of {}.",
+                five_card_draw::MIN_BET_PER_ROUND,
+                five_card_draw::MAX_BET_PER_ROUND,
+                five_card_draw::BET_INCREMENT
+            );
+        }
+        "raise" => {
+            println!("Usage: raise <player_name> <amount>");
+            println!("  Raise an existing bet. Amount is raise-by, not total.");
+            println!(
+                "  Min raise {} (multiple of {}). Max total bet {}.",
+                five_card_draw::MIN_RAISE_AMOUNT,
+                five_card_draw::RAISE_INCREMENT,
+                five_card_draw::MAX_RAISE_TO_AMOUNT
+            );
+            println!(
+                "  Max raises per round: {}.",
+                five_card_draw::MAX_RAISES_PER_ROUND
+            );
+        }
+        "draw" => {
+            println!("Usage: draw <player_name> [i1 i2 ...]");
+            println!("  Discard the listed card indices (0-4) and draw replacements.");
+            println!("  Max discards: {}. No duplicate indices.", five_card_draw::MAX_DISCARDS);
+            println!("  Provide no indices to stand pat.");
+        }
+        "help" => {
+            println!("Usage: help [command] [subcommand]");
+            println!("  Show command list or detailed help for a specific command.");
+        }
+        "quit" | "exit" => {
+            println!("Usage: quit | exit");
+            println!("  Exit the CLI (accounts are flushed on exit).");
+        }
+        _ => {
+            println!("No detailed help for '{}'. Type 'help' to list commands.", parts[1]);
+        }
+    }
+}
+
+fn print_help_account(sub: Option<&str>) {
+    match sub.map(|s| s.to_lowercase()) {
+        None => {
+            println!("Account commands:");
+            println!("  acct get <player_name>");
+            println!("  acct create <name> <pin> <balance>");
+            println!("  acct deposit <player_name> <amount>");
+            println!("  acct withdraw <player_name> <amount>");
+            println!("  acct delete <player_name> <pin>");
+            println!("Tip: use 'help acct <subcommand>' for details.");
+        }
+        Some(ref s) if s == "get" => {
+            println!("Usage: acct get <player_name>");
+            println!("  Show account summary and stats for a player.");
+        }
+        Some(ref s) if s == "create" => {
+            println!("Usage: acct create <name> <pin> <balance>");
+            println!("  Create a new account with the given starting balance.");
+            println!("  Typical starting balance: {} chips.", five_card_draw::INITIAL_CHIPS);
+        }
+        Some(ref s) if s == "deposit" => {
+            println!("Usage: acct deposit <player_name> <amount>");
+            println!("  Add chips to the player's account balance.");
+        }
+        Some(ref s) if s == "withdraw" => {
+            println!("Usage: acct withdraw <player_name> <amount>");
+            println!("  Remove chips from the player's account balance.");
+        }
+        Some(ref s) if s == "delete" => {
+            println!("Usage: acct delete <player_name> <pin>");
+            println!("  Delete an account. Requires the correct PIN.");
+        }
+        Some(other) => {
+            println!("Unknown acct subcommand '{}'.", other);
+            println!("Type 'help acct' to list subcommands.");
+        }
+    }
+}
+
+fn print_help_view(sub: Option<&str>) {
+    match sub.map(|s| s.to_lowercase()) {
+        None => {
+            println!("View commands:");
+            println!("  view hand <player_name>");
+            println!("  view state");
+            println!("Tip: use 'help view hand' or 'help view state' for details.");
+        }
+        Some(ref s) if s == "hand" => {
+            println!("Usage: view hand <player_name>");
+            println!("  Prints the player's current private hand (if dealt).");
+        }
+        Some(ref s) if s == "state" || s == "handstate" => {
+            println!("Usage: view state");
+            println!("  Same as 'handstate' - shows a friendly summary of the hand.");
+        }
+        Some(other) => {
+            println!("Unknown view subcommand '{}'.", other);
+            println!("Type 'help view' to list subcommands.");
+        }
+    }
+}
+
+fn parse_command(parts: &[&str]) -> Result<Command, String> {
     let head = parts[0].to_lowercase();
 
     match head.as_str() {
@@ -128,6 +316,8 @@ fn parse_command(line: &str) -> Result<Command, String> {
             }
         }
         "lobbystate" => Ok(Command::Lobby(LobbyCmd::GetLobbyState)),
+        "handstate" => Ok(Command::Lobby(LobbyCmd::GetHandState)),
+        "view" => parse_view_cmd(&parts),
 
         "acct" => parse_account_cmd(&parts),
 
@@ -154,7 +344,7 @@ fn parse_command(line: &str) -> Result<Command, String> {
             Ok(Command::Action(ActionCmd::Draw { player_name: pname, discard }))
         }
 
-        _ => Err("unknown command (type 'help')".into()),
+        _ => Err("unknown command (type 'help' or 'help <command>')".into()),
     }
 }
 
@@ -192,6 +382,18 @@ fn parse_i64(v: Option<&&str>) -> Result<i64, String> {
     v.ok_or("missing amount")?
         .parse::<i64>()
         .map_err(|_| "invalid amount".into())
+}
+
+fn parse_view_cmd(parts: &[&str]) -> Result<Command, String> {
+    let sub = parts.get(1).ok_or("missing view subcommand")?.to_lowercase();
+    match sub.as_str() {
+        "hand" => {
+            let pname = parts.get(2).ok_or("missing player_name")?.to_string();
+            Ok(Command::Lobby(LobbyCmd::ViewHand { player_name: pname }))
+        }
+        "state" | "handstate" => Ok(Command::Lobby(LobbyCmd::GetHandState)),
+        _ => Err("unknown view subcommand (hand|state)".into()),
+    }
 }
 
 fn print_events(events: &[Event]) {

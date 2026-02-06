@@ -66,6 +66,114 @@ impl ServerEngine {
         Event::LobbyState { seated }
     }
 
+    pub fn hand_state_summary_event(&self) -> Event {
+        Event::Info { message: self.hand_state_summary() }
+    }
+
+    fn hand_state_summary(&self) -> String {
+        let step = self.table.current_step();
+        let mut lines = Vec::new();
+
+        lines.push(format!("Hand state: {:?}", step));
+        lines.push(format!("Dealer seat: {}", self.table.dealer_position()));
+        lines.push(format!("Pot: {}", self.table.hand_state().pot_size()));
+        lines.push(format!("Current bet: {}", self.table.hand_state().current_bet()));
+
+        if matches!(step, HandStep::WaitingForPlayers) {
+            lines.push("No active hand in progress.".into());
+        }
+
+        let seated = self.table.seated_players();
+        if seated.is_empty() {
+            lines.push("Seated players: none".into());
+        } else {
+            lines.push("Seated players:".into());
+            for (seat, pid) in seated {
+                let name = self.accounts.name_from_id(pid).unwrap_or("Unknown".into());
+                let balance = self.accounts.get_by_id(pid).map(|a| a.balance).unwrap_or(0);
+                let in_hand = self.table.hand_state().player_hand(&pid).is_some();
+                let folded = self.table.hand_state().has_player_folded(&pid);
+
+                let mut tags = Vec::new();
+                if in_hand {
+                    tags.push("in hand");
+                }
+                if folded {
+                    tags.push("folded");
+                }
+                if self.sit_out_next.contains(&pid) {
+                    tags.push("sitout next");
+                }
+                if tags.is_empty() {
+                    tags.push("seated");
+                }
+
+                lines.push(format!(
+                    "  seat {}: {} | bal {} | {}",
+                    seat,
+                    name,
+                    balance,
+                    tags.join(", ")
+                ));
+            }
+        }
+
+        match step {
+            HandStep::BettingRound1 | HandStep::BettingRound2 => {
+                if let Some(br) = self.table.hand_state().betting() {
+                    let pid = br.current_player();
+                    let pname = self.accounts.name_from_id(pid).unwrap_or("Unknown".into());
+                    if
+                        let Event::ActionRequested { allowed, call_amount, min_raise, .. } =
+                            self.action_requested_event_for(pid, &pname)
+                    {
+                        let allow_call = allowed.iter().any(|a| matches!(a, AllowedAction::Call));
+                        let allow_raise =
+                            allowed.iter().any(|a| matches!(a, AllowedAction::Raise));
+                        let call_text = if allow_call {
+                            Self::format_opt_chips(call_amount)
+                        } else {
+                            "n/a".into()
+                        };
+                        let min_raise_text = if allow_raise {
+                            Self::format_opt_chips(min_raise)
+                        } else {
+                            "n/a".into()
+                        };
+
+                        lines.push(format!(
+                            "To act: {} | allowed: {} | call: {} | min_raise: {}",
+                            pname,
+                            Self::format_allowed_actions(&allowed),
+                            call_text,
+                            min_raise_text
+                        ));
+                    } else {
+                        lines.push(format!("To act: {}", pname));
+                    }
+                } else {
+                    lines.push("Betting round not initialized.".into());
+                }
+            }
+            HandStep::DrawPhase => {
+                if let Some(dr) = self.table.hand_state().draw() {
+                    let pid = dr.current_player();
+                    let pname = self.accounts.name_from_id(pid).unwrap_or("Unknown".into());
+                    lines.push(format!(
+                        "To draw: {} | max_discards: {}",
+                        pname,
+                        five_card_draw::MAX_DISCARDS
+                    ));
+                } else {
+                    lines.push("Draw round not initialized.".into());
+                }
+            }
+            _ => {}
+        }
+
+        lines.join("\n")
+    }
+
     pub fn apply(&mut self, cmd: Command) -> Vec<Event> {
         match cmd {
             Command::Account(ac) => self.apply_account_cmd(ac),
@@ -124,6 +232,33 @@ impl ServerEngine {
             LobbyCmd::SetVariant { variant } => {
                 // Nothing fancy yet
                 vec![Event::Info { message: format!("Set poker variant to {:?}", variant) }]
+            }
+
+            LobbyCmd::GetHandState => vec![self.hand_state_summary_event()],
+
+            LobbyCmd::ViewHand { player_name } => {
+                let pid = match self.accounts.get_by_name(&player_name) {
+                    Ok(pa) => pa.id,
+                    Err(e) => {
+                        return vec![Event::Error {
+                            message: format!("Get account failed: {:?}", e),
+                        }];
+                    }
+                };
+
+                let hand = match self.table.hand_state().player_hand(&pid) {
+                    Some(h) => h.clone(),
+                    None => {
+                        return vec![Event::Error {
+                            message: format!("No active hand for {}", player_name),
+                        }];
+                    }
+                };
+
+                vec![Event::PrivateHand {
+                    player_name,
+                    cards: hand.cards().to_vec(),
+                }]
             }
 
             LobbyCmd::SetRngSeed { seed } => {
@@ -1143,6 +1278,32 @@ impl ServerEngine {
             allowed: allowed_actions,
             call_amount: Some(call_amount as i64),
             min_raise: Some(five_card_draw::RAISE_INCREMENT as i64),
+        }
+    }
+
+    fn format_allowed_actions(allowed: &[AllowedAction]) -> String {
+        let items: Vec<&'static str> = allowed
+            .iter()
+            .map(|a| match a {
+                AllowedAction::Check => "check",
+                AllowedAction::Bet => "bet",
+                AllowedAction::Call => "call",
+                AllowedAction::Raise => "raise",
+                AllowedAction::Fold => "fold",
+                AllowedAction::Draw => "draw",
+            })
+            .collect();
+        if items.is_empty() {
+            "none".into()
+        } else {
+            items.join(", ")
+        }
+    }
+
+    fn format_opt_chips(v: Option<i64>) -> String {
+        match v {
+            Some(amount) => amount.to_string(),
+            None => "n/a".into(),
         }
     }
 
