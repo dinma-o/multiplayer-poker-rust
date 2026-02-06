@@ -16,6 +16,7 @@ use common::{
         ShowdownLine,
     },
 };
+use std::cmp::Ordering;
 use std::collections::{ HashMap, HashSet };
 
 use crate::{ account_store::AccountStore, game_states::BettingRoundState, table::FiveCardTable };
@@ -145,28 +146,30 @@ impl ServerEngine {
             }
 
             LobbyCmd::Leave { player_name } => {
-                if self.table.current_step() != HandStep::WaitingForPlayers {
-                    return vec![Event::Error { message: "Cannot leave table during hand".into() }];
-                }
-
-                match self.accounts.get_by_name(&player_name) {
-                    Ok(pa) => {
-                        match self.table.leave_table(pa.id) {
-                            Ok(_) =>
-                                vec![
-                                    Event::PlayerLeft {
-                                        player_id: pa.id,
-                                        player_name: pa.name.clone(),
-                                    },
-                                    self.lobby_state_event()
-                                ],
-                            Err(e) =>
-                                vec![Event::Error { message: format!("Leave failed: {:?}", e) }],
-                        }
-                    }
+                let pa = match self.accounts.get_by_name(&player_name) {
+                    Ok(pa) => pa,
                     Err(e) => {
-                        vec![Event::Error { message: format!("Get account failed: {:?}", e) }]
+                        return vec![Event::Error {
+                            message: format!("Get account failed: {:?}", e),
+                        }];
                     }
+                };
+
+                if self.table.current_step() == HandStep::WaitingForPlayers {
+                    match self.table.leave_table(pa.id) {
+                        Ok(_) =>
+                            vec![
+                                Event::PlayerLeft {
+                                    player_id: pa.id,
+                                    player_name: pa.name.clone(),
+                                },
+                                self.lobby_state_event()
+                            ],
+                        Err(e) =>
+                            vec![Event::Error { message: format!("Leave failed: {:?}", e) }],
+                    }
+                } else {
+                    self.handle_midhand_leave(pa.id, &pa.name)
                 }
             }
 
@@ -192,6 +195,9 @@ impl ServerEngine {
                         }];
                     }
                 }
+
+                // Ensure dealer is on a valid seat before action order is used
+                self.table.ensure_dealer_in_seats();
 
                 self.deck = Deck::new_shuffled();
 
@@ -298,6 +304,9 @@ impl ServerEngine {
                     }];
                 }
                 // validate amount min/max here
+                if amount <= 0 {
+                    return vec![Event::Error { message: "Bet amount must be positive".into() }];
+                }
                 if
                     amount < (five_card_draw::MIN_BET_PER_ROUND as i64) ||
                     amount > (five_card_draw::MAX_BET_PER_ROUND as i64)
@@ -307,6 +316,14 @@ impl ServerEngine {
                             "Bet amount must be between {} and {}",
                             five_card_draw::MIN_BET_PER_ROUND,
                             five_card_draw::MAX_BET_PER_ROUND
+                        ),
+                    }];
+                }
+                if (amount as u32) % five_card_draw::BET_INCREMENT != 0 {
+                    return vec![Event::Error {
+                        message: format!(
+                            "Bet amount must be a multiple of {}",
+                            five_card_draw::BET_INCREMENT
                         ),
                     }];
                 }
@@ -343,18 +360,13 @@ impl ServerEngine {
             }
 
             ActionCmd::Raise { amount, .. } => {
-                // interpret as raise-to
-                let new_bet = amount as u32;
-
                 if current_bet == 0 {
                     return vec![Event::Error {
                         message: "Cannot raise when no bet exists; use bet".into(),
                     }];
                 }
-                if new_bet <= current_bet {
-                    return vec![Event::Error {
-                        message: "Raise amount must exceed current bet".into(),
-                    }];
+                if amount <= 0 {
+                    return vec![Event::Error { message: "Raise amount must be positive".into() }];
                 }
 
                 // raise cap
@@ -365,21 +377,30 @@ impl ServerEngine {
                     }
                 }
 
-                // Check that raise amount meets max /min
-                if new_bet > five_card_draw::MAX_RAISE_TO_AMOUNT {
+                // interpret as raise-by amount
+                let raise_by = amount as u32;
+                if raise_by < five_card_draw::MIN_RAISE_AMOUNT {
                     return vec![Event::Error {
                         message: format!(
-                            "Raise-to amount cannot exceed {}",
-                            five_card_draw::MAX_RAISE_TO_AMOUNT
+                            "Raise amount cannot be less than {}",
+                            five_card_draw::MIN_RAISE_AMOUNT
                         ),
                     }];
                 }
-
-                if new_bet - current_bet < five_card_draw::MIN_RAISE_AMOUNT {
+                if raise_by % five_card_draw::RAISE_INCREMENT != 0 {
                     return vec![Event::Error {
                         message: format!(
-                            "Raise-to amount cannot be less than {}",
-                            five_card_draw::MIN_RAISE_AMOUNT
+                            "Raise amount must be a multiple of {}",
+                            five_card_draw::RAISE_INCREMENT
+                        ),
+                    }];
+                }
+                let new_bet = current_bet + raise_by;
+                if new_bet > five_card_draw::MAX_RAISE_TO_AMOUNT {
+                    return vec![Event::Error {
+                        message: format!(
+                            "Resulting bet cannot exceed {}",
+                            five_card_draw::MAX_RAISE_TO_AMOUNT
                         ),
                     }];
                 }
@@ -560,6 +581,126 @@ impl ServerEngine {
         events
     }
 
+    fn handle_midhand_leave(&mut self, pid: PlayerId, pname: &str) -> Vec<Event> {
+        let mut events = Vec::new();
+
+        let is_seated = self.table.seated_players().iter().any(|(_, spid)| *spid == pid);
+        if !is_seated {
+            return vec![Event::Error {
+                message: format!("Player {} is not seated", pname),
+            }];
+        }
+
+        // Mark folded and queue leave for end of hand
+        self.table.hand_state_mut().set_player_fold_status(pid, true);
+        if let Some(br) = self.table.hand_state_mut().betting_mut() {
+            br.pending.remove(&pid);
+        }
+
+        let mut draw_removed_current = false;
+        let mut draw_done = false;
+        let mut next_draw_pid: Option<PlayerId> = None;
+        {
+            if let Some(dr) = self.table.hand_state_mut().draw_mut() {
+                draw_removed_current = dr.remove_player(pid);
+                draw_done = dr.is_done();
+                if draw_removed_current && !draw_done {
+                    next_draw_pid = Some(dr.current_player());
+                }
+            }
+        }
+
+        let _ = self.table.leave_table(pid); // queues leave if round in progress
+
+        events.push(Event::Info {
+            message: format!("{pname} disconnected: folded and will leave after the hand"),
+        });
+
+        // EARLY WIN: if only 1 active player remains, end hand
+        let active = self.active_players_in_hand();
+        if active.len() == 1 {
+            self.table.hand_state_mut().end_betting_round();
+
+            while
+                self.table.current_step() != HandStep::Showdown &&
+                self.table.current_step() != HandStep::Payout
+            {
+                self.table.advance_table_state();
+            }
+            events.push(Event::StepChanged { step: self.table.current_step() });
+            events.extend(self.run_automatic_steps());
+            return events;
+        }
+
+        match self.table.current_step() {
+            HandStep::BettingRound1 | HandStep::BettingRound2 => {
+                if let Some(br) = self.table.hand_state().betting() {
+                    if br.pending.is_empty() {
+                        self.table.hand_state_mut().end_betting_round();
+                        self.table.advance_table_state();
+                        events.push(Event::StepChanged { step: self.table.current_step() });
+                        events.extend(self.run_automatic_steps());
+                        return events;
+                    }
+
+                    if br.current_player() == pid {
+                        let seated_set: HashSet<PlayerId> = self.table
+                            .seated_players()
+                            .iter()
+                            .map(|(_, pid)| *pid)
+                            .collect();
+
+                        let folded_set: HashSet<PlayerId> = seated_set
+                            .iter()
+                            .copied()
+                            .filter(|pid| self.table.hand_state().has_player_folded(pid))
+                            .collect();
+
+                        let is_active = |pid: PlayerId| {
+                            seated_set.contains(&pid) && !folded_set.contains(&pid)
+                        };
+
+                        let br = self.table.hand_state_mut().betting_mut().unwrap();
+                        Self::advance_to_next_actor_local(br, &is_active);
+                        while !br.pending.is_empty() && !is_active(br.current_player()) {
+                            Self::advance_to_next_actor_local(br, &is_active);
+                        }
+
+                        let next_pid = br.current_player();
+                        let next_name = self.accounts
+                            .name_from_id(next_pid)
+                            .unwrap_or("Unknown".into());
+                        events.push(self.action_requested_event_for(next_pid, &next_name));
+                    }
+                }
+            }
+            HandStep::DrawPhase => {
+                if draw_done {
+                    self.table.hand_state_mut().end_draw_round();
+                    self.table.advance_table_state();
+                    events.push(Event::StepChanged { step: self.table.current_step() });
+                    events.extend(self.enter_betting_round());
+                    return events;
+                }
+
+                if draw_removed_current {
+                    if let Some(next_pid) = next_draw_pid {
+                        let next_name = self.accounts
+                            .name_from_id(next_pid)
+                            .unwrap_or("Unknown".into());
+                        events.push(Event::DrawRequested {
+                            player_name: next_name,
+                            max_discards: five_card_draw::MAX_DISCARDS,
+                        });
+                    }
+                }
+            }
+            _ => {}
+        }
+
+        events
+    }
+
     pub fn run_automatic_steps(&mut self) -> Vec<Event> {
         // Go through the steps in the state machine that don't require player input starting at the current step.
         let mut events = Vec::new();
@@ -602,9 +743,15 @@ impl ServerEngine {
                                 message: format!("Player {} kicked for insufficient funds", pid),
                             });
                         }
+                        // Reset table state so lobby can recover
+                        self.table.reset_to_waiting();
+                        self.table.apply_pending_requests();
+
                         events.push(Event::Error {
                             message: "Not enough players can pay ante to start hand".into(),
                         });
+                        events.push(Event::PotUpdated { pot: 0 });
+                        events.push(Event::StepChanged { step: HandStep::WaitingForPlayers });
                         events.push(self.lobby_state_event());
                         break;
                     }
@@ -635,11 +782,11 @@ impl ServerEngine {
                 HandStep::DealPrivate => {
                     self.table.hand_state_mut().reset_for_new_deal();
 
-                    let seated: Vec<PlayerId> = self.table
-                        .seated_players()
-                        .into_iter()
-                        .map(|(_seat, pid)| pid)
-                        .collect();
+                    // If dealer seat was vacated (e.g., insufficient ante), move to next occupied seat
+                    self.table.ensure_dealer_in_seats();
+
+                    // Deal in action order (left of dealer first)
+                    let seated: Vec<PlayerId> = self.table.action_order();
 
                     for pid in seated {
                         let name = self.accounts.name_from_id(pid).unwrap_or("Unknown".into());
@@ -975,7 +1122,7 @@ impl ServerEngine {
             return vec![Event::Error { message: "Payout: no active players".into() }];
         }
 
-        // Rank active hands and find max
+        // Rank active hands and find max (TA clarification on limited tie-breaking)
         let mut best_rank = None;
         let mut winners: Vec<PlayerId> = Vec::new();
 
@@ -994,11 +1141,15 @@ impl ServerEngine {
                     winners = vec![*pid];
                 }
                 Some(br) => {
-                    if r > br {
+                    match Self::compare_for_payout(r, br) {
+                        Ordering::Greater => {
                         best_rank = Some(r);
                         winners = vec![*pid];
-                    } else if r == br {
+                        }
+                        Ordering::Equal => {
                         winners.push(*pid);
+                        }
+                        Ordering::Less => {}
                     }
                 }
             }
@@ -1014,12 +1165,24 @@ impl ServerEngine {
         let n = winners.len() as i64;
 
         let share = pot / n;
-        // let remainder = pot % n;
+        let remainder = pot % n;
 
         let mut payout_pairs: Vec<(PlayerId, i64)> = Vec::new();
 
-        for (i, pid) in winners.iter().enumerate() {
+        for pid in winners.iter() {
             payout_pairs.push((*pid, share));
+        }
+
+        if remainder > 0 {
+            let order = self.table.action_order(); // left of dealer first
+            let remainder_pid = order
+                .into_iter()
+                .find(|pid| winners.contains(pid))
+                .unwrap_or(winners[0]);
+
+            if let Some(pair) = payout_pairs.iter_mut().find(|(pid, _)| *pid == remainder_pid) {
+                pair.1 += remainder;
+            }
         }
 
         // Stats updates
@@ -1070,9 +1233,38 @@ impl ServerEngine {
         self.table.hand_state_mut().reset_after_hand();
         self.table.hand_state_mut().end_betting_round(); // safe no-op if None
 
+        // Rotate dealer for next hand
+        self.table.advance_dealer();
+
+        // Apply any joins/leaves that were queued during the hand
+        self.table.apply_pending_requests();
+
         // Also: pot is now effectively 0; you can emit pot updated if you want
         events.push(Event::PotUpdated { pot: 0 });
 
         events
+    }
+
+    fn compare_for_payout(a: hand_rank::HandRank, b: hand_rank::HandRank) -> Ordering {
+        use hand_rank::HandCategory;
+
+        match a.category.cmp(&b.category) {
+            Ordering::Equal => match a.category {
+                // TA clarification: only partial tie-breaking for these categories
+                HandCategory::HighCard | HandCategory::OnePair => {
+                    a.tiebreakers[0].cmp(&b.tiebreakers[0])
+                }
+                HandCategory::TwoPair => {
+                    // Compare high pair, then low pair, ignore kicker
+                    match a.tiebreakers[0].cmp(&b.tiebreakers[0]) {
+                        Ordering::Equal => a.tiebreakers[1].cmp(&b.tiebreakers[1]),
+                        ord => ord,
+                    }
+                }
+                // Other categories use full ordering
+                _ => a.cmp(&b),
+            },
+            ord => ord,
+        }
     }
 }

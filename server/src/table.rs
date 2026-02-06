@@ -140,6 +140,13 @@ impl FiveCardTable {
         self.game_state_machine.advance_state();
     }
 
+    pub fn reset_to_waiting(&mut self) {
+        self.game_state_machine.reset();
+        self.hand_state.reset_after_hand();
+        self.hand_state.end_betting_round();
+        self.hand_state.end_draw_round();
+    }
+
     pub fn hand_state(&self) -> &HandState<5> {
         &self.hand_state
     }
@@ -159,6 +166,18 @@ impl FiveCardTable {
         }
 
         self.dealer_manager.get_action_order(&seat_ids)
+    }
+
+    pub fn ensure_dealer_in_seats(&mut self) {
+        self.dealer_manager.ensure_dealer_in_seats(&self.seats);
+    }
+
+    pub fn advance_dealer(&mut self) {
+        self.dealer_manager.advance_dealer(&self.seats);
+    }
+
+    pub fn dealer_position(&self) -> usize {
+        self.dealer_manager.get_dealer_position()
     }
 
     pub fn is_active_player(&self, player_id: PlayerId) -> bool {

@@ -15,7 +15,7 @@ use common::protocol::{Command, Event, LobbyCmd, AccountCmd, ActionCmd, PokerVar
 use crate::account_store::AccountStore;
 use crate::engine::ServerEngine;
 
-const ACCOUNTS_PATH: &str = "server/data/accounts.json";
+const ACCOUNTS_PATH: &str = "server/server/data/accounts.json";
 
 fn main() {
     if let Some(parent) = Path::new(ACCOUNTS_PATH).parent() {
@@ -69,7 +69,7 @@ fn main() {
 fn print_help() {
     println!("Commands:");
     println!("  join <player_name> <pin>");
-    println!("  leave <player_name>");
+    println!("  leave <player_name> (during hand = fold + leave after hand)");
     println!("  start");
     println!("  variant five|holdem|stud");
     println!("  lobbystate");
@@ -78,7 +78,7 @@ fn print_help() {
     println!("  acct deposit <player_name> <amount>");
     println!("  acct withdraw <player_name> <amount>");
     println!("  check <player_name> | call <player_name> | fold <player_name>");
-    println!("  bet <player_name> <amount> | raise <player_name> <amount>");
+    println!("  bet <player_name> <amount> | raise <player_name> <amount> (raise-by)");
     println!("  draw <player_name> <i1> <i2> ...");
     println!("  help | quit");
 }

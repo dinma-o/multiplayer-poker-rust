@@ -71,6 +71,18 @@ impl DrawRoundState {
     pub fn is_done(&self) -> bool {
         self.to_act_idx >= self.order.len()
     }
+
+    pub fn remove_player(&mut self, pid: PlayerId) -> bool {
+        if let Some(pos) = self.order.iter().position(|p| *p == pid) {
+            let current_pos = self.to_act_idx;
+            self.order.remove(pos);
+            if pos < self.to_act_idx {
+                self.to_act_idx = self.to_act_idx.saturating_sub(1);
+            }
+            return pos == current_pos;
+        }
+        false
+    }
 }
 
 #[derive(Debug, Clone)]
