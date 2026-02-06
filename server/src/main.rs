@@ -70,8 +70,10 @@ fn print_help() {
     println!("Commands:");
     println!("  join <player_name> <pin>");
     println!("  leave <player_name> (during hand = fold + leave after hand)");
+    println!("  sitout <player_name> | sitin <player_name>");
     println!("  start");
     println!("  variant five|holdem|stud");
+    println!("  seed <u64> | seed clear");
     println!("  lobbystate");
     println!("  acct get <player_name>");
     println!("  acct create <name> <pin> <balance>");
@@ -97,6 +99,14 @@ fn parse_command(line: &str) -> Result<Command, String> {
             let pname = parts.get(1).ok_or("missing player_name")?.to_string();
             Ok(Command::Lobby(LobbyCmd::Leave { player_name: pname }))
         }
+        "sitout" => {
+            let pname = parts.get(1).ok_or("missing player_name")?.to_string();
+            Ok(Command::Lobby(LobbyCmd::SitOutNext { player_name: pname }))
+        }
+        "sitin" => {
+            let pname = parts.get(1).ok_or("missing player_name")?.to_string();
+            Ok(Command::Lobby(LobbyCmd::SitIn { player_name: pname }))
+        }
         "start" => Ok(Command::Lobby(LobbyCmd::StartHand)),
         "variant" => {
             let v = parts.get(1).ok_or("missing variant")?;
@@ -107,6 +117,15 @@ fn parse_command(line: &str) -> Result<Command, String> {
                 _ => return Err("unknown variant (five|holdem|stud)".into()),
             };
             Ok(Command::Lobby(LobbyCmd::SetVariant { variant }))
+        }
+        "seed" => {
+            let arg = parts.get(1).ok_or("missing seed value or 'clear'")?;
+            if arg.eq_ignore_ascii_case("clear") {
+                Ok(Command::Lobby(LobbyCmd::ClearRngSeed))
+            } else {
+                let seed = arg.parse::<u64>().map_err(|_| "invalid seed (u64)")?;
+                Ok(Command::Lobby(LobbyCmd::SetRngSeed { seed }))
+            }
         }
         "lobbystate" => Ok(Command::Lobby(LobbyCmd::GetLobbyState)),
 

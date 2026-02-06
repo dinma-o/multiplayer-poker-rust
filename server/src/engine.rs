@@ -16,6 +16,7 @@ use common::{
         ShowdownLine,
     },
 };
+use rand::{ rngs::StdRng, SeedableRng };
 use std::cmp::Ordering;
 use std::collections::{ HashMap, HashSet };
 
@@ -25,6 +26,8 @@ pub struct ServerEngine {
     pub accounts: AccountStore,
     pub table: FiveCardTable,
     pub deck: Deck,
+    rng_seed: Option<u64>,
+    sit_out_next: HashSet<PlayerId>,
 }
 
 impl ServerEngine {
@@ -33,6 +36,8 @@ impl ServerEngine {
             accounts,
             table,
             deck: Deck::new_shuffled(),
+            rng_seed: None,
+            sit_out_next: HashSet::new(),
         }
     }
 
@@ -103,7 +108,10 @@ impl ServerEngine {
 
             AccountCmd::Get { player_name } => {
                 match self.accounts.get_by_name(&player_name) {
-                    Ok(acct) => vec![Event::Info { message: format!("Account info: {:?}", acct) }],
+                    Ok(acct) => {
+                        let summary = acct.summary();
+                        vec![Event::Info { message: format!("Account info:\n{summary}") }]
+                    }
                     Err(e) =>
                         vec![Event::Error { message: format!("Get account failed: {:?}", e) }],
                 }
@@ -116,6 +124,67 @@ impl ServerEngine {
             LobbyCmd::SetVariant { variant } => {
                 // Nothing fancy yet
                 vec![Event::Info { message: format!("Set poker variant to {:?}", variant) }]
+            }
+
+            LobbyCmd::SetRngSeed { seed } => {
+                self.rng_seed = Some(seed);
+                vec![Event::Info { message: format!("RNG seed set to {}", seed) }]
+            }
+
+            LobbyCmd::ClearRngSeed => {
+                self.rng_seed = None;
+                vec![Event::Info { message: "RNG seed cleared (random shuffle)".into() }]
+            }
+
+            LobbyCmd::SitOutNext { player_name } => {
+                if self.table.current_step() != HandStep::WaitingForPlayers {
+                    return vec![Event::Error {
+                        message: "Cannot sit out during a hand".into(),
+                    }];
+                }
+
+                let pa = match self.accounts.get_by_name(&player_name) {
+                    Ok(pa) => pa,
+                    Err(e) => {
+                        return vec![Event::Error {
+                            message: format!("Get account failed: {:?}", e),
+                        }];
+                    }
+                };
+
+                let seated = self.table.seated_players();
+                if !seated.iter().any(|(_, pid)| *pid == pa.id) {
+                    return vec![Event::Error {
+                        message: format!("Player {} is not seated", pa.name),
+                    }];
+                }
+
+                self.sit_out_next.insert(pa.id);
+                vec![Event::Info {
+                    message: format!("{} will sit out next hand", pa.name),
+                }]
+            }
+
+            LobbyCmd::SitIn { player_name } => {
+                if self.table.current_step() != HandStep::WaitingForPlayers {
+                    return vec![Event::Error {
+                        message: "Cannot change sit-out during a hand".into(),
+                    }];
+                }
+
+                let pa = match self.accounts.get_by_name(&player_name) {
+                    Ok(pa) => pa,
+                    Err(e) => {
+                        return vec![Event::Error {
+                            message: format!("Get account failed: {:?}", e),
+                        }];
+                    }
+                };
+
+                self.sit_out_next.remove(&pa.id);
+                vec![Event::Info {
+                    message: format!("{} will play the next hand", pa.name),
+                }]
             }
 
             LobbyCmd::GetLobbyState => { vec![self.lobby_state_event()] }
@@ -156,6 +225,7 @@ impl ServerEngine {
                 };
 
                 if self.table.current_step() == HandStep::WaitingForPlayers {
+                    self.sit_out_next.remove(&pa.id);
                     match self.table.leave_table(pa.id) {
                         Ok(_) =>
                             vec![
@@ -179,16 +249,21 @@ impl ServerEngine {
                 }
 
                 let seated = self.table.seated_players();
+                let eligible: Vec<PlayerId> = seated
+                    .iter()
+                    .map(|(_, pid)| *pid)
+                    .filter(|pid| !self.sit_out_next.contains(pid))
+                    .collect();
 
                 if
-                    seated.len() < (five_card_draw::MIN_PLAYERS as usize) ||
-                    seated.len() > (five_card_draw::MAX_PLAYERS as usize)
+                    eligible.len() < (five_card_draw::MIN_PLAYERS as usize) ||
+                    eligible.len() > (five_card_draw::MAX_PLAYERS as usize)
                 {
                     return vec![Event::Error { message: "need 2–5 players to start".into() }];
                 }
 
                 // Confirm that each player has enough balance to cover the ante
-                for (_seat, player_id) in seated {
+                for player_id in &eligible {
                     if !self.has_enough_for_ante(player_id) {
                         return vec![Event::Error {
                             message: format!("Player {} does not have enough balance for ante", player_id),
@@ -199,7 +274,13 @@ impl ServerEngine {
                 // Ensure dealer is on a valid seat before action order is used
                 self.table.ensure_dealer_in_seats();
 
-                self.deck = Deck::new_shuffled();
+                self.deck = Deck::new();
+                if let Some(seed) = self.rng_seed {
+                    let mut rng = StdRng::seed_from_u64(seed);
+                    self.deck.shuffle_with_rng(&mut rng);
+                } else {
+                    self.deck.shuffle();
+                }
 
                 self.table.advance_table_state();
                 let mut events = vec![Event::StepChanged { step: self.table.current_step() }];
@@ -611,6 +692,7 @@ impl ServerEngine {
         }
 
         let _ = self.table.leave_table(pid); // queues leave if round in progress
+        self.sit_out_next.remove(&pid);
 
         events.push(Event::Info {
             message: format!("{pname} disconnected: folded and will leave after the hand"),
@@ -715,10 +797,15 @@ impl ServerEngine {
                         .map(|(_seat, player_id)| player_id)
                         .collect::<Vec<PlayerId>>();
 
+                    let eligible_ids = seated_ids
+                        .into_iter()
+                        .filter(|pid| !self.sit_out_next.contains(pid))
+                        .collect::<Vec<PlayerId>>();
+
                     let mut kicked = Vec::new();
                     let mut payers = Vec::new();
 
-                    for pid in &seated_ids {
+                    for pid in &eligible_ids {
                         let bal = self.accounts
                             .get_by_id(*pid)
                             .map(|a| a.balance)
@@ -787,8 +874,13 @@ impl ServerEngine {
 
                     // Deal in action order (left of dealer first)
                     let seated: Vec<PlayerId> = self.table.action_order();
+                    let sit_out = self.sit_out_next.clone();
 
                     for pid in seated {
+                        if sit_out.contains(&pid) {
+                            self.table.hand_state_mut().set_player_fold_status(pid, true);
+                            continue;
+                        }
                         let name = self.accounts.name_from_id(pid).unwrap_or("Unknown".into());
                         let hand = Hand::<5>::draw_from_deck(&mut self.deck).unwrap();
 
@@ -800,6 +892,9 @@ impl ServerEngine {
                             cards: hand.cards().to_vec(), // or hand.cards().to_vec() depending on your API
                         });
                     }
+
+                    // Sit-out applies to this hand only
+                    self.sit_out_next.clear();
 
                     // advance state at end of step
                     self.table.advance_table_state();

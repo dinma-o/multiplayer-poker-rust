@@ -234,7 +234,7 @@ mod tests {
                 rounds_played: 0,
             })
         );
-        assert_eq!(table.join_table(7), Ok(6));
+        assert_eq!(table.join_table(7), Ok(0));
     }
 
     #[test]

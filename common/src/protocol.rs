@@ -50,6 +50,10 @@ pub enum LobbyCmd {
     StartHand,
     EndSession, // optional convenience for CLI
     GetLobbyState,
+    SetRngSeed { seed: u64 },
+    ClearRngSeed,
+    SitOutNext { player_name: String },
+    SitIn { player_name: String },
 }
 
 #[derive(Debug, Clone)]

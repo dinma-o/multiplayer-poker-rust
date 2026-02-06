@@ -127,7 +127,15 @@ impl AccountStore {
             accounts: self.accounts.clone(),
         };
         let json = serde_json::to_string_pretty(&data)?;
-        fs::write(&self.path, json)?;
+        // Atomic-ish write: write to temp, then rename into place.
+        let tmp_path = self.path.with_extension("tmp");
+        fs::write(&tmp_path, json)?;
+
+        // On Windows, rename fails if destination exists.
+        if self.path.exists() {
+            fs::remove_file(&self.path)?;
+        }
+        fs::rename(&tmp_path, &self.path)?;
         Ok(())
     }
 
