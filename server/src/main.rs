@@ -193,7 +193,7 @@ fn print_events(events: &[Event]) {
                 }
             }
             Event::PotUpdated { pot } => println!("pot: {pot}"),
-            Event::PrivateHand { player_name, cards } => println!("hand({player_name}): {:?}", cards),
+            Event::PrivateHand { player_name, cards } => println!("hand({player_name}): {:?}", cards.iter().map(|c| c.to_string()).collect::<Vec<_>>()),
             Event::ActionRequested { player_name, allowed, call_amount, min_raise } => {
                 println!("action requested for {player_name}: allowed={allowed:?} call={call_amount:?} min_raise={min_raise:?}");
             }

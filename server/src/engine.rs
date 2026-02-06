@@ -2,6 +2,7 @@ use common::{
     card_deck::Deck,
     constants::five_card_draw::{ self, ANTE_AMOUNT },
     hand::Hand,
+    hand_rank::{ self, rank_five_card_hand },
     protocol::{
         AccountCmd,
         ActionCmd,
@@ -12,15 +13,12 @@ use common::{
         LobbyCmd,
         PlayerId,
         PlayerSummary,
+        ShowdownLine,
     },
 };
 use std::collections::{ HashMap, HashSet };
 
-use crate::{
-    account_store::{ AccountError, AccountStore },
-    game_states::BettingRoundState,
-    table::FiveCardTable,
-};
+use crate::{ account_store::AccountStore, game_states::BettingRoundState, table::FiveCardTable };
 
 pub struct ServerEngine {
     pub accounts: AccountStore,
@@ -270,8 +268,27 @@ impl ServerEngine {
             }
 
             ActionCmd::Fold { .. } => {
+                // mark folded
                 self.table.hand_state_mut().set_player_fold_status(pid, true);
                 self.table.hand_state_mut().betting_mut().unwrap().pending.remove(&pid);
+
+                // EARLY WIN: if only 1 active player remains, end round + fast-forward
+                let active = self.active_players_in_hand();
+                if active.len() == 1 {
+                    self.table.hand_state_mut().end_betting_round();
+
+                    // Skip straight to Showdown/Payout
+                    while
+                        self.table.current_step() != HandStep::Showdown &&
+                        self.table.current_step() != HandStep::Payout
+                    {
+                        self.table.advance_table_state();
+                    }
+                    events.push(Event::StepChanged { step: self.table.current_step() });
+
+                    events.extend(self.run_automatic_steps());
+                    return events;
+                }
             }
 
             ActionCmd::Bet { amount, .. } => {
@@ -348,6 +365,25 @@ impl ServerEngine {
                     }
                 }
 
+                // Check that raise amount meets max /min
+                if new_bet > five_card_draw::MAX_RAISE_TO_AMOUNT {
+                    return vec![Event::Error {
+                        message: format!(
+                            "Raise-to amount cannot exceed {}",
+                            five_card_draw::MAX_RAISE_TO_AMOUNT
+                        ),
+                    }];
+                }
+
+                if new_bet - current_bet < five_card_draw::MIN_RAISE_AMOUNT {
+                    return vec![Event::Error {
+                        message: format!(
+                            "Raise-to amount cannot be less than {}",
+                            five_card_draw::MIN_RAISE_AMOUNT
+                        ),
+                    }];
+                }
+
                 let br_contrib = self.table
                     .hand_state()
                     .betting()
@@ -391,11 +427,29 @@ impl ServerEngine {
             return events;
         }
 
-        // Otherwise, advance to next actor (skip folded)
+        let seated_set: HashSet<PlayerId> = self.table
+            .seated_players()
+            .iter()
+            .map(|(_, pid)| *pid)
+            .collect();
+
+        let folded_set: HashSet<PlayerId> = seated_set
+            .iter()
+            .copied()
+            .filter(|pid| self.table.hand_state().has_player_folded(pid))
+            .collect();
+
+        let is_active = |pid: PlayerId| seated_set.contains(&pid) && !folded_set.contains(&pid);
+
+        // Move to next actor after a successful action
         {
             let br = self.table.hand_state_mut().betting_mut().unwrap();
-            let to_act_idx = br.to_act_idx;
-            self.advance_to_next_actor_impl(to_act_idx, &active);
+            Self::advance_to_next_actor_local(br, &is_active);
+        }
+
+        let br = self.table.hand_state_mut().betting_mut().unwrap();
+        while !br.pending.is_empty() && !is_active(br.current_player()) {
+            Self::advance_to_next_actor_local(br, &is_active);
         }
 
         // Prompt next player
@@ -407,8 +461,103 @@ impl ServerEngine {
     }
 
     pub fn apply_draw_action(&mut self, cmd: ActionCmd) -> Vec<Event> {
-        // To be implemented: process draw actions
-        vec![Event::Error { message: "Draw actions not implemented yet".into() }]
+        let mut events = Vec::new();
+
+        // Check that we are in a draw phase/step
+        if self.table.current_step() != HandStep::DrawPhase {
+            return vec![Event::Error { message: "Not in draw phase".into() }];
+        }
+
+        // Resolve name -> pid
+        let (player_name, discard) = match cmd {
+            ActionCmd::Draw { player_name, discard } => (player_name, discard),
+            _ => {
+                return vec![Event::Error { message: "Only Draw is allowed in DrawPhase".into() }];
+            }
+        };
+
+        let pid = match self.accounts.get_by_name(&player_name) {
+            Ok(acct) => acct.id,
+            Err(e) => {
+                return vec![Event::Error { message: format!("Get account failed: {:?}", e) }];
+            }
+        };
+
+        let expected = match self.table.hand_state().draw() {
+            Some(dr) => dr.current_player(),
+            None => {
+                return vec![Event::Error { message: "Draw round not initialized".into() }];
+            }
+        };
+
+        if pid != expected {
+            let expected_name = self.accounts.name_from_id(expected).unwrap_or("Unknown".into());
+            return vec![Event::Error {
+                message: format!("Not your draw turn. Expected {expected_name}"),
+            }];
+        }
+
+        // Validate discard list
+        if discard.len() > five_card_draw::MAX_DISCARDS {
+            return vec![Event::Error { message: "Too many discards".into() }];
+        }
+
+        let mut seen = std::collections::HashSet::new();
+        for &i in &discard {
+            if i >= 5 {
+                return vec![Event::Error { message: "Discard index out of range (0..4)".into() }];
+            }
+            if !seen.insert(i) {
+                return vec![Event::Error { message: "Duplicate discard index".into() }];
+            }
+        }
+
+        let hand = match self.table.hand_state().player_hand(&pid) {
+            Some(h) => h.clone(),
+            None => {
+                return vec![Event::Error { message: "Player hand not found".into() }];
+            }
+        };
+
+        let mut new_hand = hand.clone();
+        new_hand.replace_from_deck(&discard, &mut self.deck);
+
+        // Store updated hand
+        self.table.hand_state_mut().set_player_hand(pid, new_hand.clone());
+
+        // Emit private hand event
+        events.push(Event::PrivateHand {
+            player_name: player_name.clone(),
+            cards: new_hand.cards().to_vec(),
+        });
+
+        // Advance draw turn
+        {
+            let dr = self.table.hand_state_mut().draw_mut().unwrap();
+            dr.advance();
+            if dr.is_done() {
+                self.table.hand_state_mut().end_draw_round();
+
+                // Move to BettingRound2
+                self.table.advance_table_state();
+                events.push(Event::StepChanged { step: self.table.current_step() });
+
+                // Initialize betting round 2 and prompt
+                events.extend(self.enter_betting_round());
+                return events;
+            }
+        }
+
+        // Prompt next drawer
+        let next_pid = self.table.hand_state().draw().unwrap().current_player();
+        let next_name = self.accounts.name_from_id(next_pid).unwrap_or("Unknown".into());
+
+        events.push(Event::DrawRequested {
+            player_name: next_name,
+            max_discards: five_card_draw::MAX_DISCARDS,
+        });
+
+        events
     }
 
     pub fn run_automatic_steps(&mut self) -> Vec<Event> {
@@ -515,6 +664,24 @@ impl ServerEngine {
                     }
                 }
 
+                HandStep::DrawPhase | HandStep::BettingRound1 | HandStep::BettingRound2 => {
+                    events.extend(self.on_enter_decision_step(self.table.current_step()));
+                    break;
+                }
+
+                HandStep::Showdown => {
+                    events.extend(self.do_showdown());
+                    self.table.advance_table_state();
+                    events.push(Event::StepChanged { step: self.table.current_step() });
+                }
+
+                HandStep::Payout => {
+                    events.extend(self.do_payout());
+                    self.table.advance_table_state(); // should go back to WaitingForPlayers
+                    events.push(Event::StepChanged { step: self.table.current_step() });
+                    break; // stop auto-run after finishing a hand
+                }
+
                 _ => {
                     break;
                 }
@@ -555,6 +722,8 @@ impl ServerEngine {
             return vec![Event::Error { message: "No active players for draw".into() }];
         }
 
+        self.table.hand_state_mut().start_draw_round(active_in_order.clone());
+
         // store draw order + index somewhere (HandState) OR just request first for now
         let first_player = active_in_order[0];
         let pname = self.accounts.name_from_id(first_player).unwrap_or("Unknown".into());
@@ -584,6 +753,25 @@ impl ServerEngine {
         // Initialize betting round state
         self.table.hand_state_mut().start_betting_round(active_in_order);
 
+        let seated_set: HashSet<PlayerId> = self.table
+            .seated_players()
+            .iter()
+            .map(|(_, pid)| *pid)
+            .collect();
+
+        let folded_set: HashSet<PlayerId> = seated_set
+            .iter()
+            .copied()
+            .filter(|pid| self.table.hand_state().has_player_folded(pid))
+            .collect();
+
+        let is_active = |pid: PlayerId| seated_set.contains(&pid) && !folded_set.contains(&pid);
+
+        let br = self.table.hand_state_mut().betting_mut().unwrap();
+        while !br.pending.is_empty() && !is_active(br.current_player()) {
+            Self::advance_to_next_actor_local(br, &is_active);
+        }
+
         // Emit ActionRequested for the first player to act
         let first_player = self.table.hand_state().betting().unwrap().current_player();
         let pname = self.accounts.name_from_id(first_player).unwrap_or("Unknown".into());
@@ -610,6 +798,14 @@ impl ServerEngine {
         Ok(pid)
     }
 
+    fn is_in_hand_and_active(&self, pid: PlayerId) -> bool {
+        // seated AND not folded
+        self.table
+            .seated_players()
+            .iter()
+            .any(|(_, spid)| *spid == pid) && !self.table.hand_state().has_player_folded(&pid)
+    }
+
     fn active_players_in_order(&self) -> Vec<PlayerId> {
         let seated_set: HashSet<PlayerId> = self.table
             .seated_players()
@@ -627,16 +823,31 @@ impl ServerEngine {
             .collect()
     }
 
-    fn advance_to_next_actor_impl(&mut self, mut to_act_idx: usize, active: &[PlayerId]) {
-        let num_active = active.len();
-        for _ in 0..num_active {
-            to_act_idx = (to_act_idx + 1) % num_active;
-            let next_pid = active[to_act_idx];
-            if !self.table.hand_state().has_player_folded(&next_pid) {
-                break;
+    fn active_players_in_hand(&self) -> Vec<PlayerId> {
+        self.table
+            .seated_players()
+            .into_iter()
+            .map(|(_, pid)| pid)
+            .filter(|pid| !self.table.hand_state().has_player_folded(pid))
+            .collect()
+    }
+
+    fn advance_to_next_actor_local(
+        br: &mut BettingRoundState,
+        is_active: &impl Fn(PlayerId) -> bool
+    ) {
+        let n = br.order.len();
+        if n == 0 {
+            return;
+        }
+
+        for _ in 0..n {
+            br.to_act_idx = (br.to_act_idx + 1) % n;
+            if is_active(br.order[br.to_act_idx]) {
+                return;
             }
         }
-        self.table.hand_state_mut().betting_mut().unwrap().to_act_idx = to_act_idx;
+        br.pending.clear();
     }
 
     fn resolve_player_from_action(&self, cmd: &ActionCmd) -> Result<(PlayerId, String), Event> {
@@ -689,5 +900,179 @@ impl ServerEngine {
             call_amount: Some(call_amount as i64),
             min_raise: Some(five_card_draw::RAISE_INCREMENT as i64),
         }
+    }
+
+    fn do_showdown(&mut self) -> Vec<Event> {
+        use common::hand_rank::rank_five_card_hand;
+
+        // Active players = players who still have hands and did not fold
+        let active: Vec<PlayerId> = self.table
+            .hand_state()
+            .players_with_hands()
+            .into_iter()
+            .filter(|pid| !self.table.hand_state().has_player_folded(pid))
+            .collect();
+
+        if active.is_empty() {
+            return vec![Event::Error { message: "Showdown: no active players".into() }];
+        }
+
+        // Rank all active hands + build showdown lines
+        let mut ranked: Vec<(PlayerId, common::hand_rank::HandRank)> = Vec::new();
+        let mut lines: Vec<common::protocol::ShowdownLine> = Vec::new();
+
+        for pid in &active {
+            let hand = match self.table.hand_state().player_hand(pid) {
+                Some(h) => h,
+                None => {
+                    continue;
+                }
+            };
+
+            let r = rank_five_card_hand(hand); // Hand<5> alias matches
+            ranked.push((*pid, r));
+
+            // Minimal readable description for CLI
+            let desc = format!("{} => {:?} {:?}", hand, r.category, r.tiebreakers);
+            let pname = self.accounts.name_from_id(*pid).unwrap_or("Unknown".into());
+            lines.push(ShowdownLine {
+                player_id: *pid,
+                player_name: pname,
+                hand_desc: desc,
+            });
+        }
+
+        // If somehow ranked is empty
+        if ranked.is_empty() {
+            return vec![Event::Error { message: "Showdown: no hands to rank".into() }];
+        }
+
+        vec![Event::Showdown { results: lines }]
+    }
+
+    fn do_payout(&mut self) -> Vec<Event> {
+        use common::hand_rank::rank_five_card_hand;
+
+        let mut events = Vec::new();
+
+        // Players who participated in the hand = those we dealt to
+        let participants = self.table.hand_state().players_with_hands();
+        if participants.len() < 2 {
+            // hand can't really exist, but don't crash
+            self.table.hand_state_mut().reset_for_new_deal();
+            return vec![Event::Error { message: "Payout: not enough participants".into() }];
+        }
+
+        // Determine active (not folded)
+        let active: Vec<PlayerId> = participants
+            .iter()
+            .copied()
+            .filter(|pid| !self.table.hand_state().has_player_folded(pid))
+            .collect();
+
+        if active.is_empty() {
+            self.table.hand_state_mut().reset_for_new_deal();
+            return vec![Event::Error { message: "Payout: no active players".into() }];
+        }
+
+        // Rank active hands and find max
+        let mut best_rank = None;
+        let mut winners: Vec<PlayerId> = Vec::new();
+
+        for pid in &active {
+            let hand = match self.table.hand_state().player_hand(pid) {
+                Some(h) => h,
+                None => {
+                    continue;
+                }
+            };
+            let r = rank_five_card_hand(hand);
+
+            match best_rank {
+                None => {
+                    best_rank = Some(r);
+                    winners = vec![*pid];
+                }
+                Some(br) => {
+                    if r > br {
+                        best_rank = Some(r);
+                        winners = vec![*pid];
+                    } else if r == br {
+                        winners.push(*pid);
+                    }
+                }
+            }
+        }
+
+        if winners.is_empty() {
+            self.table.hand_state_mut().reset_for_new_deal();
+            return vec![Event::Error { message: "Payout: could not determine winner".into() }];
+        }
+
+        // Split pot
+        let pot = self.table.hand_state().pot_size() as i64;
+        let n = winners.len() as i64;
+
+        let share = pot / n;
+        // let remainder = pot % n;
+
+        let mut payout_pairs: Vec<(PlayerId, i64)> = Vec::new();
+
+        for (i, pid) in winners.iter().enumerate() {
+            payout_pairs.push((*pid, share));
+        }
+
+        // Stats updates
+        // games_played for participants
+        for pid in &participants {
+            let pname = self.accounts.name_from_id(*pid).unwrap_or("Unknown".into());
+
+            if let Some(name) = pname.into() {
+                let _ = self.accounts.record_game_played(&name);
+            }
+        }
+
+        // pot_won for winners + deposit money
+        for (pid, amt) in &payout_pairs {
+            let pname = self.accounts.name_from_id(*pid).unwrap_or("Unknown".into());
+
+            if let Some(name) = pname.into() {
+                if *amt > 0 {
+                    let _ = self.accounts.deposit(&name, *amt);
+                }
+                let _ = self.accounts.record_pot_won(&name);
+            }
+        }
+
+        // folds for those who folded
+        for pid in &participants {
+            if self.table.hand_state().has_player_folded(pid) {
+                let pname = self.accounts.name_from_id(*pid).unwrap_or("Unknown".into());
+
+                if let Some(name) = pname.into() {
+                    let _ = self.accounts.record_fold(&name);
+                }
+            }
+        }
+
+        // Emit payout event
+        events.push(Event::Payout {
+            winners: payout_pairs
+                .into_iter()
+                .map(|(pid, amt)| {
+                    let pname = self.accounts.name_from_id(pid).unwrap_or("Unknown".into());
+                    (pname, amt)
+                })
+                .collect(),
+        });
+
+        // Reset for next hand
+        self.table.hand_state_mut().reset_after_hand();
+        self.table.hand_state_mut().end_betting_round(); // safe no-op if None
+
+        // Also: pot is now effectively 0; you can emit pot updated if you want
+        events.push(Event::PotUpdated { pot: 0 });
+
+        events
     }
 }

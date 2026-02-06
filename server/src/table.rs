@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use crate::game_states::{ PokerStateMachine, HandState };
 use crate::dealer::DealerManager;
 use crate::variants::{ self };
-use common::constants::five_card_draw as five_card_draw_constants;
+use common::constants::five_card_draw::{self as five_card_draw_constants, MAX_PLAYERS};
 use common::protocol::{ HandStep, PlayerId };
 
 #[derive(Debug, Clone)]
@@ -149,11 +149,14 @@ impl FiveCardTable {
     }
 
     pub fn action_order(&self) -> Vec<PlayerId> {
-        let seat_ids: Vec<Option<PlayerId>> = self
-            .seated_players()
-            .iter()
-            .map(|(_, pid)| Some(pid.clone()))
-            .collect();
+        let mut seat_ids: Vec<Option<PlayerId>> = vec![None; MAX_PLAYERS as usize];
+
+        for (seat, pid) in self.seated_players().iter() {
+            let idx = *seat as usize;
+            if idx < seat_ids.len() {
+                seat_ids[idx] = Some(*pid);
+            }
+        }
 
         self.dealer_manager.get_action_order(&seat_ids)
     }

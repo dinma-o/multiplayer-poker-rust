@@ -103,7 +103,7 @@ pub enum Event {
     },
 
     Payout {
-        winners: Vec<(PlayerId, Chips)>,
+        winners: Vec<(String, Chips)>,
     },
 }
 
@@ -131,5 +131,6 @@ pub enum AllowedAction {
 #[derive(Debug, Clone)]
 pub struct ShowdownLine {
     pub player_name: String,
+    pub player_id: PlayerId,
     pub hand_desc: String, // keep string for now; we will add structured later
 }
