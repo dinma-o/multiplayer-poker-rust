@@ -215,8 +215,8 @@ impl ServerEngine {
             }
 
             LobbyCmd::Leave { player_name } => {
-                let pa = match self.accounts.get_by_name(&player_name) {
-                    Ok(pa) => pa,
+                let (pid, pname) = match self.accounts.get_by_name(&player_name) {
+                    Ok(pa) => (pa.id, pa.name.clone()),
                     Err(e) => {
                         return vec![Event::Error {
                             message: format!("Get account failed: {:?}", e),
@@ -225,21 +225,20 @@ impl ServerEngine {
                 };
 
                 if self.table.current_step() == HandStep::WaitingForPlayers {
-                    self.sit_out_next.remove(&pa.id);
-                    match self.table.leave_table(pa.id) {
+                    self.sit_out_next.remove(&pid);
+                    match self.table.leave_table(pid) {
                         Ok(_) =>
                             vec![
                                 Event::PlayerLeft {
-                                    player_id: pa.id,
-                                    player_name: pa.name.clone(),
+                                    player_id: pid,
+                                    player_name: pname.clone(),
                                 },
                                 self.lobby_state_event()
                             ],
-                        Err(e) =>
-                            vec![Event::Error { message: format!("Leave failed: {:?}", e) }],
+                        Err(e) => vec![Event::Error { message: format!("Leave failed: {:?}", e) }],
                     }
                 } else {
-                    self.handle_midhand_leave(pa.id, &pa.name)
+                    self.handle_midhand_leave(pid, &pname)
                 }
             }
 
@@ -264,7 +263,7 @@ impl ServerEngine {
 
                 // Confirm that each player has enough balance to cover the ante
                 for player_id in &eligible {
-                    if !self.has_enough_for_ante(player_id) {
+                    if !self.has_enough_for_ante(*player_id) {
                         return vec![Event::Error {
                             message: format!("Player {} does not have enough balance for ante", player_id),
                         }];
@@ -665,7 +664,10 @@ impl ServerEngine {
     fn handle_midhand_leave(&mut self, pid: PlayerId, pname: &str) -> Vec<Event> {
         let mut events = Vec::new();
 
-        let is_seated = self.table.seated_players().iter().any(|(_, spid)| *spid == pid);
+        let is_seated = self.table
+            .seated_players()
+            .iter()
+            .any(|(_, spid)| *spid == pid);
         if !is_seated {
             return vec![Event::Error {
                 message: format!("Player {} is not seated", pname),
@@ -1238,11 +1240,11 @@ impl ServerEngine {
                 Some(br) => {
                     match Self::compare_for_payout(r, br) {
                         Ordering::Greater => {
-                        best_rank = Some(r);
-                        winners = vec![*pid];
+                            best_rank = Some(r);
+                            winners = vec![*pid];
                         }
                         Ordering::Equal => {
-                        winners.push(*pid);
+                            winners.push(*pid);
                         }
                         Ordering::Less => {}
                     }
@@ -1344,21 +1346,22 @@ impl ServerEngine {
         use hand_rank::HandCategory;
 
         match a.category.cmp(&b.category) {
-            Ordering::Equal => match a.category {
-                // TA clarification: only partial tie-breaking for these categories
-                HandCategory::HighCard | HandCategory::OnePair => {
-                    a.tiebreakers[0].cmp(&b.tiebreakers[0])
-                }
-                HandCategory::TwoPair => {
-                    // Compare high pair, then low pair, ignore kicker
-                    match a.tiebreakers[0].cmp(&b.tiebreakers[0]) {
-                        Ordering::Equal => a.tiebreakers[1].cmp(&b.tiebreakers[1]),
-                        ord => ord,
+            Ordering::Equal =>
+                match a.category {
+                    // TA clarification: only partial tie-breaking for these categories
+                    HandCategory::HighCard | HandCategory::OnePair => {
+                        a.tiebreakers[0].cmp(&b.tiebreakers[0])
                     }
+                    HandCategory::TwoPair => {
+                        // Compare high pair, then low pair, ignore kicker
+                        match a.tiebreakers[0].cmp(&b.tiebreakers[0]) {
+                            Ordering::Equal => a.tiebreakers[1].cmp(&b.tiebreakers[1]),
+                            ord => ord,
+                        }
+                    }
+                    // Other categories use full ordering
+                    _ => a.cmp(&b),
                 }
-                // Other categories use full ordering
-                _ => a.cmp(&b),
-            },
             ord => ord,
         }
     }
