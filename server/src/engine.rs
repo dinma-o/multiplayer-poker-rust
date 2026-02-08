@@ -1208,6 +1208,8 @@ impl ServerEngine {
                     events.push(Event::StepChanged {
                         step: self.table.current_step(),
                     });
+                    // Now that we're back to WaitingForPlayers, process queued joins/leaves.
+                    self.table.apply_pending_requests();
                     break; // stop auto-run after finishing a hand
                 }
 
@@ -1683,9 +1685,6 @@ impl ServerEngine {
 
         // Rotate dealer for next hand
         self.table.advance_dealer();
-
-        // Apply any joins/leaves that were queued during the hand
-        self.table.apply_pending_requests();
 
         // Also: pot is now effectively 0; you can emit pot updated if you want
         events.push(Event::PotUpdated { pot: 0 });
