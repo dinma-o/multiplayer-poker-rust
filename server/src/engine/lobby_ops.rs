@@ -52,8 +52,8 @@ impl ServerEngine {
             Err(events) => return events,
         };
 
-        let hand = match self.table.hand_state().player_hand(&pid) {
-            Some(h) => h.clone(),
+        let cards = match self.table.hand_state().player_hole_cards(&pid) {
+            Some(cards) => cards.clone(),
             None => {
                 return vec![self.emit_error(format!("No active hand for {}", player_name))];
             }
@@ -61,7 +61,7 @@ impl ServerEngine {
 
         vec![Event::PrivateHand {
             player_name,
-            cards: hand.cards().to_vec(),
+            cards,
         }]
     }
 

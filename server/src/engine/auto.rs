@@ -1,5 +1,16 @@
 use super::*;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StepKind {
+    Waiting,
+    ForcedBets,
+    Deal,
+    Betting,
+    DrawDiscard,
+    Showdown,
+    Payout,
+}
+
 impl ServerEngine {
     pub fn run_automatic_steps(&mut self) -> Vec<Event> {
         // Go through the steps in the state machine that don't require player input starting at the current step.
@@ -161,9 +172,15 @@ impl ServerEngine {
             self.table.hand_state_mut().set_player_hand(pid, hand.clone());
             self.table.hand_state_mut().set_player_fold_status(pid, false);
 
+            let cards = self
+                .table
+                .hand_state()
+                .player_hole_cards(&pid)
+                .cloned()
+                .unwrap_or_else(|| hand.cards().to_vec());
             events.push(Event::PrivateHand {
                 player_name: name,
-                cards: hand.cards().to_vec(), // or hand.cards().to_vec() depending on your API
+                cards, // or hand.cards().to_vec() depending on your API
             });
         }
 
@@ -214,9 +231,21 @@ impl ServerEngine {
 
     pub fn is_decision_step(&self, step: HandStep) -> bool {
         matches!(
-            step,
-            HandStep::BettingRound1 | HandStep::BettingRound2 | HandStep::DrawPhase
+            Self::step_kind(step),
+            StepKind::Betting | StepKind::DrawDiscard
         )
+    }
+
+    fn step_kind(step: HandStep) -> StepKind {
+        match step {
+            HandStep::WaitingForPlayers => StepKind::Waiting,
+            HandStep::CollectForcedBets => StepKind::ForcedBets,
+            HandStep::DealPrivate | HandStep::DealCommunity => StepKind::Deal,
+            HandStep::BettingRound1 | HandStep::BettingRound2 => StepKind::Betting,
+            HandStep::DrawPhase => StepKind::DrawDiscard,
+            HandStep::Showdown => StepKind::Showdown,
+            HandStep::Payout => StepKind::Payout,
+        }
     }
 
     pub(super) fn on_enter_decision_step(&mut self, step: HandStep) -> Vec<Event> {

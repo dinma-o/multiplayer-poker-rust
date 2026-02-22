@@ -1,8 +1,5 @@
-use common::{
-    hand::Hand,
-    protocol::{HandStep, PlayerId},
-};
-use std::collections::{HashMap, HashSet};
+use common::{ card_deck::Card, hand::Hand, protocol::{ HandStep, PlayerId } };
+use std::collections::{ HashMap, HashSet };
 // Define the various states of a Five Card Draw Poker game.
 
 #[derive(Debug, Clone)]
@@ -13,11 +10,11 @@ pub struct PokerStateMachine {
 
 #[derive(Debug, Clone)]
 pub struct BettingRoundState {
-    pub order: Vec<PlayerId>,            // fixed action order
-    pub to_act_idx: usize,               // index into order
+    pub order: Vec<PlayerId>, // fixed action order
+    pub to_act_idx: usize, // index into order
     pub contrib: HashMap<PlayerId, u32>, // chips contributed this round
-    pub pending: HashSet<PlayerId>,      // players yet to act this round
-    pub raises_used: u32,                // number of raises used this round
+    pub pending: HashSet<PlayerId>, // players yet to act this round
+    pub raises_used: u32, // number of raises used this round
 }
 
 impl BettingRoundState {
@@ -97,10 +94,18 @@ impl DrawRoundState {
     }
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct VisibleHandCards {
+    pub hole_cards: HashMap<PlayerId, Vec<Card>>,
+    pub board_cards: Vec<Card>,
+    pub up_cards: HashMap<PlayerId, Vec<Card>>,
+}
+
 #[derive(Debug, Clone)]
 pub struct HandState<const HAND_SIZE: usize> {
     player_hands: HashMap<PlayerId, Hand<HAND_SIZE>>, // Map of player ID to their hand of cards
-    player_fold_status: HashMap<PlayerId, bool>,      // Map of player ID to their fold status
+    visible_cards: VisibleHandCards, // Variant-neutral visible card state
+    player_fold_status: HashMap<PlayerId, bool>, // Map of player ID to their fold status
     pot_size: u32,
     current_bet: u32,
     players_in_round: u32,
@@ -131,6 +136,7 @@ impl<const HandSize: usize> HandState<HandSize> {
     pub fn new(ante_amount: u32) -> Self {
         HandState {
             player_hands: HashMap::new(),
+            visible_cards: VisibleHandCards::default(),
             player_fold_status: HashMap::new(),
             pot_size: 0,
             current_bet: 0,
@@ -143,6 +149,9 @@ impl<const HandSize: usize> HandState<HandSize> {
 
     pub fn reset_for_new_deal(&mut self) {
         self.player_hands.clear();
+        self.visible_cards.hole_cards.clear();
+        self.visible_cards.board_cards.clear();
+        self.visible_cards.up_cards.clear();
         self.player_fold_status.clear();
         self.current_bet = 0;
         self.players_in_round = 0;
@@ -170,6 +179,7 @@ impl<const HandSize: usize> HandState<HandSize> {
     }
 
     pub fn set_player_hand(&mut self, player_id: PlayerId, hand: Hand<HandSize>) {
+        self.visible_cards.hole_cards.insert(player_id, hand.cards().iter().copied().collect());
         self.player_hands.insert(player_id, hand);
     }
 
@@ -177,8 +187,16 @@ impl<const HandSize: usize> HandState<HandSize> {
         self.player_hands.get(player_id)
     }
 
+    pub fn player_hole_cards(&self, player_id: &PlayerId) -> Option<&Vec<Card>> {
+        self.visible_cards.hole_cards.get(player_id)
+    }
+
+    pub fn visible_cards(&self) -> &VisibleHandCards {
+        &self.visible_cards
+    }
+
     pub fn players_with_hands(&self) -> Vec<PlayerId> {
-        self.player_hands.keys().copied().collect()
+        self.visible_cards.hole_cards.keys().copied().collect()
     }
 
     pub fn set_player_fold_status(&mut self, player_id: PlayerId, has_folded: bool) {
@@ -241,7 +259,7 @@ mod tests {
             HandStep::DrawPhase,
             HandStep::BettingRound2,
             HandStep::Showdown,
-            HandStep::Payout,
+            HandStep::Payout
         ];
         let mut fsm = PokerStateMachine::new(plan);
 

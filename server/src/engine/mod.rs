@@ -100,7 +100,7 @@ impl ServerEngine {
             for (seat, pid) in seated {
                 let name = self.accounts.name_from_id(pid).unwrap_or("Unknown".into());
                 let balance = self.accounts.get_by_id(pid).map(|a| a.balance).unwrap_or(0);
-                let in_hand = self.table.hand_state().player_hand(&pid).is_some();
+                let in_hand = self.table.hand_state().player_hole_cards(&pid).is_some();
                 let folded = self.table.hand_state().has_player_folded(&pid);
 
                 let mut tags = Vec::new();

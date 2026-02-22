@@ -61,9 +61,15 @@ impl ServerEngine {
             .set_player_hand(pid, new_hand.clone());
 
         // Emit private hand event
+        let cards = self
+            .table
+            .hand_state()
+            .player_hole_cards(&pid)
+            .cloned()
+            .unwrap_or_else(|| new_hand.cards().to_vec());
         events.push(Event::PrivateHand {
             player_name: player_name.clone(),
-            cards: new_hand.cards().to_vec(),
+            cards,
         });
 
         // Advance draw turn
