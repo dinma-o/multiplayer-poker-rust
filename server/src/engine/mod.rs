@@ -23,6 +23,8 @@ mod guards;
 mod lobby_ops;
 mod payout;
 mod showdown;
+#[cfg(test)]
+mod tests;
 
 pub struct ServerEngine {
     pub accounts: AccountStore,

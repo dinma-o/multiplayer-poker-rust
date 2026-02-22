@@ -1,5 +1,11 @@
 use super::*;
 
+struct MidhandRemovalState {
+    draw_removed_current: bool,
+    draw_done: bool,
+    next_draw_pid: Option<PlayerId>,
+}
+
 impl ServerEngine {
     pub fn apply_lobby_cmd(&mut self, cmd: LobbyCmd) -> Vec<Event> {
         match cmd {
@@ -199,16 +205,36 @@ impl ServerEngine {
     }
 
     fn handle_midhand_leave(&mut self, pid: PlayerId, pname: &str) -> Vec<Event> {
+        self.handle_player_removed_midhand(pid, pname)
+    }
+
+    // Single entry point for "player removed mid-hand" behavior.
+    fn handle_player_removed_midhand(&mut self, pid: PlayerId, pname: &str) -> Vec<Event> {
         let mut events = Vec::new();
 
         if let Err(events) = self.require_seated(pid, pname) {
             return events;
         }
 
-        // Mark folded and queue leave for end of hand
-        self.table
-            .hand_state_mut()
-            .set_player_fold_status(pid, true);
+        let removal = self.apply_midhand_fold_equivalent(pid);
+        self.update_midhand_leave_flags(pid);
+
+        events.push(self.emit_info(format!(
+            "{pname} disconnected: folded and will leave after the hand"
+        )));
+
+        if let Some(fast_forward_events) = self.fast_forward_if_single_active_player_remains() {
+            events.extend(fast_forward_events);
+            return events;
+        }
+
+        events.extend(self.continue_after_midhand_player_removed(pid, removal));
+        events
+    }
+
+    fn apply_midhand_fold_equivalent(&mut self, pid: PlayerId) -> MidhandRemovalState {
+        // Treat a disconnecting leave like a fold for the current hand.
+        self.table.hand_state_mut().set_player_fold_status(pid, true);
         if let Some(br) = self.table.hand_state_mut().betting_mut() {
             br.pending.remove(&pid);
         }
@@ -216,37 +242,52 @@ impl ServerEngine {
         let mut draw_removed_current = false;
         let mut draw_done = false;
         let mut next_draw_pid: Option<PlayerId> = None;
-        {
-            if let Some(dr) = self.table.hand_state_mut().draw_mut() {
-                draw_removed_current = dr.remove_player(pid);
-                draw_done = dr.is_done();
-                if draw_removed_current && !draw_done {
-                    next_draw_pid = Some(dr.current_player());
-                }
+        if let Some(dr) = self.table.hand_state_mut().draw_mut() {
+            draw_removed_current = dr.remove_player(pid);
+            draw_done = dr.is_done();
+            if draw_removed_current && !draw_done {
+                next_draw_pid = Some(dr.current_player());
             }
         }
 
+        MidhandRemovalState {
+            draw_removed_current,
+            draw_done,
+            next_draw_pid,
+        }
+    }
+
+    fn update_midhand_leave_flags(&mut self, pid: PlayerId) {
         let _ = self.table.leave_table(pid); // queues leave if round in progress
         self.sit_out_next.remove(&pid);
+    }
 
-        events.push(self.emit_info(format!(
-            "{pname} disconnected: folded and will leave after the hand"
-        )));
-
-        // EARLY WIN: if only 1 active player remains, end hand
+    fn fast_forward_if_single_active_player_remains(&mut self) -> Option<Vec<Event>> {
         let active = self.active_players_in_hand();
-        if active.len() == 1 {
-            self.table.hand_state_mut().end_betting_round();
-
-            while self.table.current_step() != HandStep::Showdown
-                && self.table.current_step() != HandStep::Payout
-            {
-                self.table.advance_table_state();
-            }
-            events.push(self.emit_step_changed());
-            events.extend(self.run_automatic_steps());
-            return events;
+        if active.len() != 1 {
+            return None;
         }
+
+        let mut events = Vec::new();
+        self.table.hand_state_mut().end_betting_round();
+
+        while self.table.current_step() != HandStep::Showdown
+            && self.table.current_step() != HandStep::Payout
+        {
+            self.table.advance_table_state();
+        }
+        events.push(self.emit_step_changed());
+        events.extend(self.run_automatic_steps());
+
+        Some(events)
+    }
+
+    fn continue_after_midhand_player_removed(
+        &mut self,
+        pid: PlayerId,
+        removal: MidhandRemovalState,
+    ) -> Vec<Event> {
+        let mut events = Vec::new();
 
         match self.table.current_step() {
             HandStep::BettingRound1 | HandStep::BettingRound2 => {
@@ -288,7 +329,7 @@ impl ServerEngine {
                 }
             }
             HandStep::DrawPhase => {
-                if draw_done {
+                if removal.draw_done {
                     self.table.hand_state_mut().end_draw_round();
                     self.table.advance_table_state();
                     events.push(self.emit_step_changed());
@@ -296,8 +337,8 @@ impl ServerEngine {
                     return events;
                 }
 
-                if draw_removed_current {
-                    if let Some(next_pid) = next_draw_pid {
+                if removal.draw_removed_current {
+                    if let Some(next_pid) = removal.next_draw_pid {
                         events.push(self.emit_draw_requested(next_pid));
                     }
                 }
