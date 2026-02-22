@@ -17,9 +17,7 @@ impl ServerEngine {
                 discard,
             } => (player_name, discard),
             _ => {
-                return vec![Event::Error {
-                    message: "Only Draw is allowed in DrawPhase".into(),
-                }];
+                return vec![self.emit_error("Only Draw is allowed in DrawPhase")];
             }
         };
 
@@ -34,31 +32,23 @@ impl ServerEngine {
 
         // Validate discard list
         if discard.len() > five_card_draw::MAX_DISCARDS {
-            return vec![Event::Error {
-                message: "Too many discards".into(),
-            }];
+            return vec![self.emit_error("Too many discards")];
         }
 
         let mut seen = std::collections::HashSet::new();
         for &i in &discard {
             if i >= 5 {
-                return vec![Event::Error {
-                    message: "Discard index out of range (0..4)".into(),
-                }];
+                return vec![self.emit_error("Discard index out of range (0..4)")];
             }
             if !seen.insert(i) {
-                return vec![Event::Error {
-                    message: "Duplicate discard index".into(),
-                }];
+                return vec![self.emit_error("Duplicate discard index")];
             }
         }
 
         let hand = match self.table.hand_state().player_hand(&pid) {
             Some(h) => h.clone(),
             None => {
-                return vec![Event::Error {
-                    message: "Player hand not found".into(),
-                }];
+                return vec![self.emit_error("Player hand not found")];
             }
         };
 
@@ -85,9 +75,7 @@ impl ServerEngine {
 
                 // Move to BettingRound2
                 self.table.advance_table_state();
-                events.push(Event::StepChanged {
-                    step: self.table.current_step(),
-                });
+                events.push(self.emit_step_changed());
 
                 // Initialize betting round 2 and prompt
                 events.extend(self.enter_betting_round());
@@ -97,15 +85,7 @@ impl ServerEngine {
 
         // Prompt next drawer
         let next_pid = self.table.hand_state().draw().unwrap().current_player();
-        let next_name = self
-            .accounts
-            .name_from_id(next_pid)
-            .unwrap_or("Unknown".into());
-
-        events.push(Event::DrawRequested {
-            player_name: next_name,
-            max_discards: five_card_draw::MAX_DISCARDS,
-        });
+        events.push(self.emit_draw_requested(next_pid));
 
         events
     }

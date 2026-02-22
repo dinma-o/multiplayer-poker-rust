@@ -36,9 +36,7 @@ impl ServerEngine {
         match cmd {
             ActionCmd::Check { .. } => {
                 if call_amount != 0 {
-                    return vec![Event::Error {
-                        message: "Cannot check when facing a bet".into(),
-                    }];
+                    return vec![self.emit_error("Cannot check when facing a bet")];
                 }
                 self.table
                     .hand_state_mut()
@@ -71,9 +69,7 @@ impl ServerEngine {
                     {
                         self.table.advance_table_state();
                     }
-                    events.push(Event::StepChanged {
-                        step: self.table.current_step(),
-                    });
+                    events.push(self.emit_step_changed());
 
                     events.extend(self.run_automatic_steps());
                     return events;
@@ -82,41 +78,31 @@ impl ServerEngine {
 
             ActionCmd::Bet { amount, .. } => {
                 if current_bet != 0 {
-                    return vec![Event::Error {
-                        message: "Cannot bet after betting has started; use raise".into(),
-                    }];
+                    return vec![self.emit_error("Cannot bet after betting has started; use raise")];
                 }
                 // validate amount min/max here
                 if amount <= 0 {
-                    return vec![Event::Error {
-                        message: "Bet amount must be positive".into(),
-                    }];
+                    return vec![self.emit_error("Bet amount must be positive")];
                 }
                 if amount < (five_card_draw::MIN_BET_PER_ROUND as i64)
                     || amount > (five_card_draw::MAX_BET_PER_ROUND as i64)
                 {
-                    return vec![Event::Error {
-                        message: format!(
-                            "Bet amount must be between {} and {}",
-                            five_card_draw::MIN_BET_PER_ROUND,
-                            five_card_draw::MAX_BET_PER_ROUND
-                        ),
-                    }];
+                    return vec![self.emit_error(format!(
+                        "Bet amount must be between {} and {}",
+                        five_card_draw::MIN_BET_PER_ROUND,
+                        five_card_draw::MAX_BET_PER_ROUND
+                    ))];
                 }
                 if (amount as u32) % five_card_draw::BET_INCREMENT != 0 {
-                    return vec![Event::Error {
-                        message: format!(
-                            "Bet amount must be a multiple of {}",
-                            five_card_draw::BET_INCREMENT
-                        ),
-                    }];
+                    return vec![self.emit_error(format!(
+                        "Bet amount must be a multiple of {}",
+                        five_card_draw::BET_INCREMENT
+                    ))];
                 }
 
                 // withdraw from accounts
                 if let Err(e) = self.accounts.withdraw(&pname, amount as i64) {
-                    return vec![Event::Error {
-                        message: format!("Withdraw failed: {:?}", e),
-                    }];
+                    return vec![self.emit_error(format!("Withdraw failed: {:?}", e))];
                 }
 
                 // update pot + current bet + contrib
@@ -131,15 +117,11 @@ impl ServerEngine {
 
             ActionCmd::Call { .. } => {
                 if call_amount == 0 {
-                    return vec![Event::Error {
-                        message: "Nothing to call".into(),
-                    }];
+                    return vec![self.emit_error("Nothing to call")];
                 }
 
                 if let Err(e) = self.accounts.withdraw(&pname, call_amount as i64) {
-                    return vec![Event::Error {
-                        message: format!("Withdraw failed: {:?}", e),
-                    }];
+                    return vec![self.emit_error(format!("Withdraw failed: {:?}", e))];
                 }
 
                 self.table.hand_state_mut().add_to_pot(call_amount);
@@ -151,52 +133,40 @@ impl ServerEngine {
 
             ActionCmd::Raise { amount, .. } => {
                 if current_bet == 0 {
-                    return vec![Event::Error {
-                        message: "Cannot raise when no bet exists; use bet".into(),
-                    }];
+                    return vec![self.emit_error("Cannot raise when no bet exists; use bet")];
                 }
                 if amount <= 0 {
-                    return vec![Event::Error {
-                        message: "Raise amount must be positive".into(),
-                    }];
+                    return vec![self.emit_error("Raise amount must be positive")];
                 }
 
                 // raise cap
                 {
                     let br = self.table.hand_state().betting().unwrap();
                     if br.raises_used >= five_card_draw::MAX_RAISES_PER_ROUND {
-                        return vec![Event::Error {
-                            message: "Raise cap reached".into(),
-                        }];
+                        return vec![self.emit_error("Raise cap reached")];
                     }
                 }
 
                 // interpret as raise-by amount
                 let raise_by = amount as u32;
                 if raise_by < five_card_draw::MIN_RAISE_AMOUNT {
-                    return vec![Event::Error {
-                        message: format!(
-                            "Raise amount cannot be less than {}",
-                            five_card_draw::MIN_RAISE_AMOUNT
-                        ),
-                    }];
+                    return vec![self.emit_error(format!(
+                        "Raise amount cannot be less than {}",
+                        five_card_draw::MIN_RAISE_AMOUNT
+                    ))];
                 }
                 if raise_by % five_card_draw::RAISE_INCREMENT != 0 {
-                    return vec![Event::Error {
-                        message: format!(
-                            "Raise amount must be a multiple of {}",
-                            five_card_draw::RAISE_INCREMENT
-                        ),
-                    }];
+                    return vec![self.emit_error(format!(
+                        "Raise amount must be a multiple of {}",
+                        five_card_draw::RAISE_INCREMENT
+                    ))];
                 }
                 let new_bet = current_bet + raise_by;
                 if new_bet > five_card_draw::MAX_RAISE_TO_AMOUNT {
-                    return vec![Event::Error {
-                        message: format!(
-                            "Resulting bet cannot exceed {}",
-                            five_card_draw::MAX_RAISE_TO_AMOUNT
-                        ),
-                    }];
+                    return vec![self.emit_error(format!(
+                        "Resulting bet cannot exceed {}",
+                        five_card_draw::MAX_RAISE_TO_AMOUNT
+                    ))];
                 }
 
                 let br_contrib = self
@@ -211,9 +181,7 @@ impl ServerEngine {
                 let delta = new_bet.saturating_sub(br_contrib);
 
                 if let Err(e) = self.accounts.withdraw(&pname, delta as i64) {
-                    return vec![Event::Error {
-                        message: format!("Withdraw failed: {:?}", e),
-                    }];
+                    return vec![self.emit_error(format!("Withdraw failed: {:?}", e))];
                 }
 
                 self.table.hand_state_mut().add_to_pot(delta);
@@ -227,16 +195,12 @@ impl ServerEngine {
             }
 
             _ => {
-                return vec![Event::Error {
-                    message: "Unsupported action in betting round".into(),
-                }];
+                return vec![self.emit_error("Unsupported action in betting round")];
             }
         }
 
         // Emit pot update after money actions (optional)
-        events.push(Event::PotUpdated {
-            pot: self.table.hand_state().pot_size() as i64,
-        });
+        events.push(self.emit_current_pot_updated());
 
         // Round complete?
         let pending_empty = self
@@ -249,9 +213,7 @@ impl ServerEngine {
         if pending_empty {
             self.table.hand_state_mut().end_betting_round();
             self.table.advance_table_state();
-            events.push(Event::StepChanged {
-                step: self.table.current_step(),
-            });
+            events.push(self.emit_step_changed());
 
             // Let automatic runner take it to the next prompt (draw phase / betting2)
             events.extend(self.run_automatic_steps());
@@ -286,11 +248,7 @@ impl ServerEngine {
 
         // Prompt next player
         let next_pid = self.table.hand_state().betting().unwrap().current_player();
-        let next_name = self
-            .accounts
-            .name_from_id(next_pid)
-            .unwrap_or("Unknown".into());
-        events.push(self.action_requested_event_for(next_pid, &next_name));
+        events.push(self.emit_action_requested(next_pid));
 
         events
     }
@@ -300,16 +258,18 @@ impl ServerEngine {
         let pid = match self.accounts.get_by_name(player_name) {
             Ok(acct) => acct.id,
             Err(e) => {
-                return Err(Event::Error {
-                    message: format!("Player lookup failed for {}: {:?}", player_name, e),
-                });
+                return Err(self.emit_error(format!(
+                    "Player lookup failed for {}: {:?}",
+                    player_name, e
+                )));
             }
         };
 
         if !self.table.is_active_player(pid) {
-            return Err(Event::Error {
-                message: format!("Player {} is not active at the table", player_name),
-            });
+            return Err(self.emit_error(format!(
+                "Player {} is not active at the table",
+                player_name
+            )));
         }
 
         Ok(pid)

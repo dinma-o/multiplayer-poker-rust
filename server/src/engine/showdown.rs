@@ -14,9 +14,7 @@ impl ServerEngine {
             .collect();
 
         if active.is_empty() {
-            return vec![Event::Error {
-                message: "Showdown: no active players".into(),
-            }];
+            return vec![self.emit_error("Showdown: no active players")];
         }
 
         // Rank all active hands + build showdown lines
@@ -46,9 +44,7 @@ impl ServerEngine {
 
         // If somehow ranked is empty
         if ranked.is_empty() {
-            return vec![Event::Error {
-                message: "Showdown: no hands to rank".into(),
-            }];
+            return vec![self.emit_error("Showdown: no hands to rank")];
         }
 
         vec![Event::Showdown { results: lines }]

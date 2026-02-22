@@ -7,9 +7,7 @@ impl ServerEngine {
         message: &'static str,
     ) -> Result<(), Vec<Event>> {
         if self.table.current_step() != expected_step {
-            return Err(vec![Event::Error {
-                message: message.into(),
-            }]);
+            return Err(vec![self.emit_error(message)]);
         }
 
         Ok(())
@@ -21,9 +19,7 @@ impl ServerEngine {
     ) -> Result<PlayerId, Vec<Event>> {
         match self.accounts.get_by_name(player_name) {
             Ok(acct) => Ok(acct.id),
-            Err(e) => Err(vec![Event::Error {
-                message: format!("Get account failed: {:?}", e),
-            }]),
+            Err(e) => Err(vec![self.emit_error(format!("Get account failed: {:?}", e))]),
         }
     }
 
@@ -33,9 +29,7 @@ impl ServerEngine {
     ) -> Result<(PlayerId, String), Vec<Event>> {
         match self.accounts.get_by_name(player_name) {
             Ok(acct) => Ok((acct.id, acct.name.clone())),
-            Err(e) => Err(vec![Event::Error {
-                message: format!("Get account failed: {:?}", e),
-            }]),
+            Err(e) => Err(vec![self.emit_error(format!("Get account failed: {:?}", e))]),
         }
     }
 
@@ -50,9 +44,10 @@ impl ServerEngine {
             .iter()
             .any(|(_, spid)| *spid == pid);
         if !is_seated {
-            return Err(vec![Event::Error {
-                message: format!("Player {} is not seated", player_name),
-            }]);
+            return Err(vec![self.emit_error(format!(
+                "Player {} is not seated",
+                player_name
+            ))]);
         }
 
         Ok(())
@@ -62,21 +57,17 @@ impl ServerEngine {
         let current_player = match self.table.hand_state().betting() {
             Some(br) => br.current_player(),
             None => {
-                return Err(vec![Event::Error {
-                    message: "Betting round not initialized".into(),
-                }]);
+                return Err(vec![self.emit_error("Betting round not initialized")]);
             }
         };
 
         if pid != current_player {
-            return Err(vec![Event::Error {
-                message: format!(
-                    "Not your turn. Expected {}",
-                    self.accounts
-                        .name_from_id(current_player)
-                        .unwrap_or("Unknown".into())
-                ),
-            }]);
+            return Err(vec![self.emit_error(format!(
+                "Not your turn. Expected {}",
+                self.accounts
+                    .name_from_id(current_player)
+                    .unwrap_or("Unknown".into())
+            ))]);
         }
 
         Ok(())
@@ -86,9 +77,7 @@ impl ServerEngine {
         let expected = match self.table.hand_state().draw() {
             Some(dr) => dr.current_player(),
             None => {
-                return Err(vec![Event::Error {
-                    message: "Draw round not initialized".into(),
-                }]);
+                return Err(vec![self.emit_error("Draw round not initialized")]);
             }
         };
 
@@ -97,9 +86,9 @@ impl ServerEngine {
                 .accounts
                 .name_from_id(expected)
                 .unwrap_or("Unknown".into());
-            return Err(vec![Event::Error {
-                message: format!("Not your draw turn. Expected {expected_name}"),
-            }]);
+            return Err(vec![self.emit_error(format!(
+                "Not your draw turn. Expected {expected_name}"
+            ))]);
         }
 
         Ok(())

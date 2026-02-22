@@ -47,22 +47,18 @@ impl ServerEngine {
                                     .name_from_id(*pid)
                                     .unwrap_or("Unknown".into()),
                             });
-                            events.push(Event::Info {
-                                message: format!("Player {} kicked for insufficient funds", pid),
-                            });
+                            events.push(
+                                self.emit_info(format!("Player {} kicked for insufficient funds", pid)),
+                            );
                         }
                         // Reset table state so lobby can recover
                         self.table.reset_to_waiting();
                         self.table.apply_pending_requests();
 
-                        events.push(Event::Error {
-                            message: "Not enough players can pay ante to start hand".into(),
-                        });
-                        events.push(Event::PotUpdated { pot: 0 });
-                        events.push(Event::StepChanged {
-                            step: HandStep::WaitingForPlayers,
-                        });
-                        events.push(self.lobby_state_event());
+                        events.push(self.emit_error("Not enough players can pay ante to start hand"));
+                        events.push(self.emit_pot_updated(0));
+                        events.push(self.emit_step_changed_to(HandStep::WaitingForPlayers));
+                        events.push(self.emit_lobby_state());
                         break;
                     }
 
@@ -75,9 +71,7 @@ impl ServerEngine {
                     for pid in &kicked {
                         let name = self.accounts.name_from_id(*pid).unwrap_or("Unknown".into());
                         let _ = self.table.leave_table(*pid);
-                        events.push(Event::Info {
-                            message: format!("{} removed: cannot pay ante", name),
-                        });
+                        events.push(self.emit_info(format!("{} removed: cannot pay ante", name)));
                         events.push(Event::PlayerLeft {
                             player_id: *pid,
                             player_name: name,
@@ -87,15 +81,11 @@ impl ServerEngine {
                     self.table
                         .hand_state_mut()
                         .add_to_pot((payers.len() as u32) * ante);
-                    events.push(Event::PotUpdated {
-                        pot: self.table.hand_state().pot_size() as i64,
-                    });
+                    events.push(self.emit_current_pot_updated());
 
                     // advance state at end of step
                     self.table.advance_table_state();
-                    events.push(Event::StepChanged {
-                        step: self.table.current_step(),
-                    });
+                    events.push(self.emit_step_changed());
                 }
 
                 HandStep::DealPrivate => {
@@ -136,9 +126,7 @@ impl ServerEngine {
 
                     // advance state at end of step
                     self.table.advance_table_state();
-                    events.push(Event::StepChanged {
-                        step: self.table.current_step(),
-                    });
+                    events.push(self.emit_step_changed());
 
                     if self.is_decision_step(self.table.current_step()) {
                         events.extend(self.on_enter_decision_step(self.table.current_step()));
@@ -154,17 +142,13 @@ impl ServerEngine {
                 HandStep::Showdown => {
                     events.extend(self.do_showdown());
                     self.table.advance_table_state();
-                    events.push(Event::StepChanged {
-                        step: self.table.current_step(),
-                    });
+                    events.push(self.emit_step_changed());
                 }
 
                 HandStep::Payout => {
                     events.extend(self.do_payout());
                     self.table.advance_table_state(); // should go back to WaitingForPlayers
-                    events.push(Event::StepChanged {
-                        step: self.table.current_step(),
-                    });
+                    events.push(self.emit_step_changed());
                     // Now that we're back to WaitingForPlayers, process queued joins/leaves.
                     self.table.apply_pending_requests();
                     break; // stop auto-run after finishing a hand
@@ -203,9 +187,7 @@ impl ServerEngine {
             .collect();
 
         if active_in_order.is_empty() {
-            return vec![Event::Error {
-                message: "No active players for draw".into(),
-            }];
+            return vec![self.emit_error("No active players for draw")];
         }
 
         self.table
@@ -214,15 +196,7 @@ impl ServerEngine {
 
         // store draw order + index somewhere (HandState) OR just request first for now
         let first_player = active_in_order[0];
-        let pname = self
-            .accounts
-            .name_from_id(first_player)
-            .unwrap_or("Unknown".into());
-
-        vec![Event::DrawRequested {
-            player_name: pname,
-            max_discards: five_card_draw::MAX_DISCARDS,
-        }]
+        vec![self.emit_draw_requested(first_player)]
     }
 
     pub(super) fn enter_betting_round(&mut self) -> Vec<Event> {
@@ -269,12 +243,7 @@ impl ServerEngine {
 
         // Emit ActionRequested for the first player to act
         let first_player = self.table.hand_state().betting().unwrap().current_player();
-        let pname = self
-            .accounts
-            .name_from_id(first_player)
-            .unwrap_or("Unknown".into());
-
-        vec![self.action_requested_event_for(first_player, &pname)]
+        vec![self.emit_action_requested(first_player)]
     }
 }
 

@@ -11,9 +11,7 @@ impl ServerEngine {
         if participants.len() < 2 {
             // hand can't really exist, but don't crash
             self.table.hand_state_mut().reset_for_new_deal();
-            return vec![Event::Error {
-                message: "Payout: not enough participants".into(),
-            }];
+            return vec![self.emit_error("Payout: not enough participants")];
         }
 
         // Determine active (not folded)
@@ -25,9 +23,7 @@ impl ServerEngine {
 
         if active.is_empty() {
             self.table.hand_state_mut().reset_for_new_deal();
-            return vec![Event::Error {
-                message: "Payout: no active players".into(),
-            }];
+            return vec![self.emit_error("Payout: no active players")];
         }
 
         // Rank active hands and find max (TA clarification on limited tie-breaking)
@@ -63,9 +59,7 @@ impl ServerEngine {
 
         if winners.is_empty() {
             self.table.hand_state_mut().reset_for_new_deal();
-            return vec![Event::Error {
-                message: "Payout: could not determine winner".into(),
-            }];
+            return vec![self.emit_error("Payout: could not determine winner")];
         }
 
         // Split pot
@@ -148,7 +142,7 @@ impl ServerEngine {
         self.table.advance_dealer();
 
         // Also: pot is now effectively 0; you can emit pot updated if you want
-        events.push(Event::PotUpdated { pot: 0 });
+        events.push(self.emit_pot_updated(0));
 
         events
     }

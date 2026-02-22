@@ -6,9 +6,7 @@ impl ServerEngine {
         match self.table.current_step() {
             HandStep::BettingRound1 | HandStep::BettingRound2 => self.apply_betting_action(cmd),
             HandStep::DrawPhase => self.apply_draw_action(cmd), // later
-            _ => vec![Event::Error {
-                message: "Actions not allowed in current step".into(),
-            }],
+            _ => vec![self.emit_error("Actions not allowed in current step")],
         }
     }
 }

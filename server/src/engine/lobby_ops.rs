@@ -20,13 +20,11 @@ impl ServerEngine {
 
     fn lobby_set_variant(&mut self, variant: common::protocol::PokerVariant) -> Vec<Event> {
         // Nothing fancy yet
-        vec![Event::Info {
-            message: format!("Set poker variant to {:?}", variant),
-        }]
+        vec![self.emit_info(format!("Set poker variant to {:?}", variant))]
     }
 
     fn lobby_view_state(&mut self) -> Vec<Event> {
-        vec![self.hand_state_summary_event()]
+        vec![self.emit_hand_summary()]
     }
 
     fn lobby_view_hand(&mut self, player_name: String) -> Vec<Event> {
@@ -38,9 +36,7 @@ impl ServerEngine {
         let hand = match self.table.hand_state().player_hand(&pid) {
             Some(h) => h.clone(),
             None => {
-                return vec![Event::Error {
-                    message: format!("No active hand for {}", player_name),
-                }];
+                return vec![self.emit_error(format!("No active hand for {}", player_name))];
             }
         };
 
@@ -52,16 +48,12 @@ impl ServerEngine {
 
     fn lobby_set_seed(&mut self, seed: u64) -> Vec<Event> {
         self.rng_seed = Some(seed);
-        vec![Event::Info {
-            message: format!("RNG seed set to {}", seed),
-        }]
+        vec![self.emit_info(format!("RNG seed set to {}", seed))]
     }
 
     fn lobby_clear_seed(&mut self) -> Vec<Event> {
         self.rng_seed = None;
-        vec![Event::Info {
-            message: "RNG seed cleared (random shuffle)".into(),
-        }]
+        vec![self.emit_info("RNG seed cleared (random shuffle)")]
     }
 
     fn lobby_sit_out_next(&mut self, player_name: String) -> Vec<Event> {
@@ -81,9 +73,7 @@ impl ServerEngine {
         }
 
         self.sit_out_next.insert(pid);
-        vec![Event::Info {
-            message: format!("{} will sit out next hand", pname),
-        }]
+        vec![self.emit_info(format!("{} will sit out next hand", pname))]
     }
 
     fn lobby_sit_in(&mut self, player_name: String) -> Vec<Event> {
@@ -100,13 +90,11 @@ impl ServerEngine {
         };
 
         self.sit_out_next.remove(&pid);
-        vec![Event::Info {
-            message: format!("{} will play the next hand", pname),
-        }]
+        vec![self.emit_info(format!("{} will play the next hand", pname))]
     }
 
     fn lobby_view_lobby_state(&mut self) -> Vec<Event> {
-        vec![self.lobby_state_event()]
+        vec![self.emit_lobby_state()]
     }
 
     fn lobby_join(&mut self, player_name: String, pin: String) -> Vec<Event> {
@@ -125,17 +113,11 @@ impl ServerEngine {
                         player_name: pa.name.clone(),
                         seat: seat,
                     },
-                    self.lobby_state_event(),
+                    self.emit_lobby_state(),
                 ],
-                Err(e) => vec![Event::Error {
-                    message: format!("Seating failed: {:?}", e),
-                }],
+                Err(e) => vec![self.emit_error(format!("Seating failed: {:?}", e))],
             },
-            Err(e) => {
-                vec![Event::Error {
-                    message: format!("Login failed: {:?}", e),
-                }]
-            }
+            Err(e) => vec![self.emit_error(format!("Login failed: {:?}", e))],
         }
     }
 
@@ -153,11 +135,9 @@ impl ServerEngine {
                         player_id: pid,
                         player_name: pname.clone(),
                     },
-                    self.lobby_state_event(),
+                    self.emit_lobby_state(),
                 ],
-                Err(e) => vec![Event::Error {
-                    message: format!("Leave failed: {:?}", e),
-                }],
+                Err(e) => vec![self.emit_error(format!("Leave failed: {:?}", e))],
             }
         } else {
             self.handle_midhand_leave(pid, &pname)
@@ -182,17 +162,16 @@ impl ServerEngine {
         if eligible.len() < (five_card_draw::MIN_PLAYERS as usize)
             || eligible.len() > (five_card_draw::MAX_PLAYERS as usize)
         {
-            return vec![Event::Error {
-                message: "need 2–5 players to start".into(),
-            }];
+            return vec![self.emit_error("need 2–5 players to start")];
         }
 
         // Confirm that each player has enough balance to cover the ante
         for player_id in &eligible {
             if !self.has_enough_for_ante(*player_id) {
-                return vec![Event::Error {
-                    message: format!("Player {} does not have enough balance for ante", player_id),
-                }];
+                return vec![self.emit_error(format!(
+                    "Player {} does not have enough balance for ante",
+                    player_id
+                ))];
             }
         }
 
@@ -208,9 +187,7 @@ impl ServerEngine {
         }
 
         self.table.advance_table_state();
-        let mut events = vec![Event::StepChanged {
-            step: self.table.current_step(),
-        }];
+        let mut events = vec![self.emit_step_changed()];
 
         events.extend(self.run_automatic_steps());
 
@@ -218,9 +195,7 @@ impl ServerEngine {
     }
 
     fn lobby_unimplemented(&mut self) -> Vec<Event> {
-        vec![Event::Error {
-            message: "Lobby command not implemented yet".into(),
-        }]
+        vec![self.emit_error("Lobby command not implemented yet")]
     }
 
     fn handle_midhand_leave(&mut self, pid: PlayerId, pname: &str) -> Vec<Event> {
@@ -254,9 +229,9 @@ impl ServerEngine {
         let _ = self.table.leave_table(pid); // queues leave if round in progress
         self.sit_out_next.remove(&pid);
 
-        events.push(Event::Info {
-            message: format!("{pname} disconnected: folded and will leave after the hand"),
-        });
+        events.push(self.emit_info(format!(
+            "{pname} disconnected: folded and will leave after the hand"
+        )));
 
         // EARLY WIN: if only 1 active player remains, end hand
         let active = self.active_players_in_hand();
@@ -268,9 +243,7 @@ impl ServerEngine {
             {
                 self.table.advance_table_state();
             }
-            events.push(Event::StepChanged {
-                step: self.table.current_step(),
-            });
+            events.push(self.emit_step_changed());
             events.extend(self.run_automatic_steps());
             return events;
         }
@@ -281,9 +254,7 @@ impl ServerEngine {
                     if br.pending.is_empty() {
                         self.table.hand_state_mut().end_betting_round();
                         self.table.advance_table_state();
-                        events.push(Event::StepChanged {
-                            step: self.table.current_step(),
-                        });
+                        events.push(self.emit_step_changed());
                         events.extend(self.run_automatic_steps());
                         return events;
                     }
@@ -312,11 +283,7 @@ impl ServerEngine {
                         }
 
                         let next_pid = br.current_player();
-                        let next_name = self
-                            .accounts
-                            .name_from_id(next_pid)
-                            .unwrap_or("Unknown".into());
-                        events.push(self.action_requested_event_for(next_pid, &next_name));
+                        events.push(self.emit_action_requested(next_pid));
                     }
                 }
             }
@@ -324,23 +291,14 @@ impl ServerEngine {
                 if draw_done {
                     self.table.hand_state_mut().end_draw_round();
                     self.table.advance_table_state();
-                    events.push(Event::StepChanged {
-                        step: self.table.current_step(),
-                    });
+                    events.push(self.emit_step_changed());
                     events.extend(self.enter_betting_round());
                     return events;
                 }
 
                 if draw_removed_current {
                     if let Some(next_pid) = next_draw_pid {
-                        let next_name = self
-                            .accounts
-                            .name_from_id(next_pid)
-                            .unwrap_or("Unknown".into());
-                        events.push(Event::DrawRequested {
-                            player_name: next_name,
-                            max_discards: five_card_draw::MAX_DISCARDS,
-                        });
+                        events.push(self.emit_draw_requested(next_pid));
                     }
                 }
             }
