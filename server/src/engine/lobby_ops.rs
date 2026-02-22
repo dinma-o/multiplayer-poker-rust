@@ -25,8 +25,21 @@ impl ServerEngine {
     }
 
     fn lobby_set_variant(&mut self, variant: common::protocol::PokerVariant) -> Vec<Event> {
-        // Nothing fancy yet
-        vec![self.emit_info(format!("Set poker variant to {:?}", variant))]
+        if let Err(events) = self.require_step_with_message(
+            HandStep::WaitingForPlayers,
+            "Cannot change variant during a hand",
+        ) {
+            return events;
+        }
+
+        let spec = crate::variants::spec_for(variant);
+        self.table.set_variant_spec(spec);
+
+        vec![self.emit_info(format!(
+            "Set poker variant to {:?} (active: {})",
+            variant,
+            self.table.variant_spec().name
+        ))]
     }
 
     fn lobby_view_state(&mut self) -> Vec<Event> {

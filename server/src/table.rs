@@ -6,7 +6,7 @@ use common::protocol::{HandStep, PlayerId};
 use std::collections::HashMap;
 
 #[derive(Debug, Clone)]
-pub struct FiveCardTable {
+pub struct PokerTable {
     game_state_machine: PokerStateMachine,
     hand_state: HandState<5>,
     dealer_manager: DealerManager,
@@ -37,10 +37,10 @@ pub enum LeaveError {
     RoundInProgress,
 }
 
-impl FiveCardTable {
+impl PokerTable {
     pub fn new() -> Self {
         let variant = variants::five_card_draw::SPEC;
-        FiveCardTable {
+        PokerTable {
             game_state_machine: PokerStateMachine::new(variant.steps.to_vec()),
             hand_state: HandState::new(five_card_draw_constants::ANTE_AMOUNT),
             dealer_manager: DealerManager::new(),
@@ -140,6 +140,15 @@ impl FiveCardTable {
         *self.game_state_machine.get_current_state()
     }
 
+    pub fn variant_spec(&self) -> VariantSpec {
+        self.variant
+    }
+
+    pub fn set_variant_spec(&mut self, variant: VariantSpec) {
+        self.variant = variant;
+        self.game_state_machine = PokerStateMachine::new(self.variant.steps.to_vec());
+    }
+
     pub fn advance_table_state(&mut self) {
         self.game_state_machine.advance_state();
     }
@@ -198,7 +207,7 @@ mod tests {
 
     #[test]
     fn test_join_and_leave_table() {
-        let mut table = FiveCardTable::new();
+        let mut table = PokerTable::new();
         assert_eq!(table.join_table(1), Ok(0));
         assert_eq!(table.join_table(1), Err(JoinError::PlayerAlreadyAtTable));
         assert_eq!(
@@ -215,7 +224,7 @@ mod tests {
 
     #[test]
     fn test_table_full() {
-        let mut table = FiveCardTable::new();
+        let mut table = PokerTable::new();
         for player_id in 1..=5 {
             assert_eq!(table.join_table(player_id), Ok((player_id - 1) as usize));
         }
@@ -224,7 +233,7 @@ mod tests {
 
     #[test]
     fn test_pending_requests() {
-        let mut table = FiveCardTable::new();
+        let mut table = PokerTable::new();
         for player_id in 1..=5 {
             assert_eq!(table.join_table(player_id), Ok((player_id - 1) as usize));
         }
@@ -243,7 +252,7 @@ mod tests {
 
     #[test]
     fn test_apply_pending_requests() {
-        let mut table = FiveCardTable::new();
+        let mut table = PokerTable::new();
         for player_id in 1..=5 {
             assert_eq!(table.join_table(player_id), Ok((player_id - 1) as usize));
         }

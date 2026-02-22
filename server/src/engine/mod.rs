@@ -12,7 +12,7 @@ use rand::{SeedableRng, rngs::StdRng};
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 
-use crate::{account_store::AccountStore, game_states::BettingRoundState, table::FiveCardTable};
+use crate::{account_store::AccountStore, game_states::BettingRoundState, table::PokerTable};
 
 mod action_ops;
 mod auto;
@@ -28,14 +28,14 @@ mod tests;
 
 pub struct ServerEngine {
     pub accounts: AccountStore,
-    pub table: FiveCardTable,
+    pub table: PokerTable,
     pub deck: Deck,
     rng_seed: Option<u64>,
     sit_out_next: HashSet<PlayerId>,
 }
 
 impl ServerEngine {
-    pub fn new(accounts: AccountStore, table: FiveCardTable) -> Self {
+    pub fn new(accounts: AccountStore, table: PokerTable) -> Self {
         Self {
             accounts,
             table,

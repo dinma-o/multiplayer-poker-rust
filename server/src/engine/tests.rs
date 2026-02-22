@@ -1,5 +1,5 @@
 use super::ServerEngine;
-use crate::{account_store::AccountStore, table::FiveCardTable};
+use crate::{account_store::AccountStore, table::PokerTable};
 use common::protocol::{ActionCmd, Command, Event, HandStep, LobbyCmd};
 use tempfile::TempDir;
 
@@ -21,7 +21,7 @@ impl EngineFixture {
             .create_account("bob", "1234", 1_000)
             .expect("create bob");
 
-        let table = FiveCardTable::new();
+        let table = PokerTable::new();
         let mut engine = ServerEngine::new(store, table);
 
         let join_alice = engine.apply(Command::Lobby(LobbyCmd::Join {

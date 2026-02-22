@@ -25,7 +25,7 @@ fn main() {
 
     let store = AccountStore::load(ACCOUNTS_PATH).expect("load accounts");
 
-    let table = crate::table::FiveCardTable::new();
+    let table = crate::table::PokerTable::new();
     let mut engine = ServerEngine::new(store, table);
 
     println!("PokerDUD CLI. Type 'help' or 'help <command>' for details.");
