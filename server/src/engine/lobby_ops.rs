@@ -30,13 +30,9 @@ impl ServerEngine {
     }
 
     fn lobby_view_hand(&mut self, player_name: String) -> Vec<Event> {
-        let pid = match self.accounts.get_by_name(&player_name) {
-            Ok(pa) => pa.id,
-            Err(e) => {
-                return vec![Event::Error {
-                    message: format!("Get account failed: {:?}", e),
-                }];
-            }
+        let pid = match self.require_pid_by_name_get_account(&player_name) {
+            Ok(pid) => pid,
+            Err(events) => return events,
         };
 
         let hand = match self.table.hand_state().player_hand(&pid) {
@@ -69,53 +65,43 @@ impl ServerEngine {
     }
 
     fn lobby_sit_out_next(&mut self, player_name: String) -> Vec<Event> {
-        if self.table.current_step() != HandStep::WaitingForPlayers {
-            return vec![Event::Error {
-                message: "Cannot sit out during a hand".into(),
-            }];
+        if let Err(events) =
+            self.require_step_with_message(HandStep::WaitingForPlayers, "Cannot sit out during a hand")
+        {
+            return events;
         }
 
-        let pa = match self.accounts.get_by_name(&player_name) {
-            Ok(pa) => pa,
-            Err(e) => {
-                return vec![Event::Error {
-                    message: format!("Get account failed: {:?}", e),
-                }];
-            }
+        let (pid, pname) = match self.require_pid_and_name_by_name_get_account(&player_name) {
+            Ok(x) => x,
+            Err(events) => return events,
         };
 
-        let seated = self.table.seated_players();
-        if !seated.iter().any(|(_, pid)| *pid == pa.id) {
-            return vec![Event::Error {
-                message: format!("Player {} is not seated", pa.name),
-            }];
+        if let Err(events) = self.require_seated(pid, &pname) {
+            return events;
         }
 
-        self.sit_out_next.insert(pa.id);
+        self.sit_out_next.insert(pid);
         vec![Event::Info {
-            message: format!("{} will sit out next hand", pa.name),
+            message: format!("{} will sit out next hand", pname),
         }]
     }
 
     fn lobby_sit_in(&mut self, player_name: String) -> Vec<Event> {
-        if self.table.current_step() != HandStep::WaitingForPlayers {
-            return vec![Event::Error {
-                message: "Cannot change sit-out during a hand".into(),
-            }];
+        if let Err(events) = self.require_step_with_message(
+            HandStep::WaitingForPlayers,
+            "Cannot change sit-out during a hand",
+        ) {
+            return events;
         }
 
-        let pa = match self.accounts.get_by_name(&player_name) {
-            Ok(pa) => pa,
-            Err(e) => {
-                return vec![Event::Error {
-                    message: format!("Get account failed: {:?}", e),
-                }];
-            }
+        let (pid, pname) = match self.require_pid_and_name_by_name_get_account(&player_name) {
+            Ok(x) => x,
+            Err(events) => return events,
         };
 
-        self.sit_out_next.remove(&pa.id);
+        self.sit_out_next.remove(&pid);
         vec![Event::Info {
-            message: format!("{} will play the next hand", pa.name),
+            message: format!("{} will play the next hand", pname),
         }]
     }
 
@@ -124,10 +110,11 @@ impl ServerEngine {
     }
 
     fn lobby_join(&mut self, player_name: String, pin: String) -> Vec<Event> {
-        if self.table.current_step() != HandStep::WaitingForPlayers {
-            return vec![Event::Error {
-                message: "Cannot join table during hand".into(),
-            }];
+        if let Err(events) = self.require_step_with_message(
+            HandStep::WaitingForPlayers,
+            "Cannot join table during hand",
+        ) {
+            return events;
         }
 
         match self.accounts.login(&player_name, &pin) {
@@ -153,13 +140,9 @@ impl ServerEngine {
     }
 
     fn lobby_leave(&mut self, player_name: String) -> Vec<Event> {
-        let (pid, pname) = match self.accounts.get_by_name(&player_name) {
-            Ok(pa) => (pa.id, pa.name.clone()),
-            Err(e) => {
-                return vec![Event::Error {
-                    message: format!("Get account failed: {:?}", e),
-                }];
-            }
+        let (pid, pname) = match self.require_pid_and_name_by_name_get_account(&player_name) {
+            Ok(x) => x,
+            Err(events) => return events,
         };
 
         if self.table.current_step() == HandStep::WaitingForPlayers {
@@ -182,10 +165,11 @@ impl ServerEngine {
     }
 
     fn lobby_start_hand(&mut self) -> Vec<Event> {
-        if self.table.current_step() != HandStep::WaitingForPlayers {
-            return vec![Event::Error {
-                message: "Hand already in progress".into(),
-            }];
+        if let Err(events) = self.require_step_with_message(
+            HandStep::WaitingForPlayers,
+            "Hand already in progress",
+        ) {
+            return events;
         }
 
         let seated = self.table.seated_players();
@@ -242,15 +226,8 @@ impl ServerEngine {
     fn handle_midhand_leave(&mut self, pid: PlayerId, pname: &str) -> Vec<Event> {
         let mut events = Vec::new();
 
-        let is_seated = self
-            .table
-            .seated_players()
-            .iter()
-            .any(|(_, spid)| *spid == pid);
-        if !is_seated {
-            return vec![Event::Error {
-                message: format!("Player {} is not seated", pname),
-            }];
+        if let Err(events) = self.require_seated(pid, pname) {
+            return events;
         }
 
         // Mark folded and queue leave for end of hand

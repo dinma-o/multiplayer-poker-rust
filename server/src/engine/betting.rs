@@ -12,25 +12,8 @@ impl ServerEngine {
             }
         };
 
-        // Must have betting state
-        let current_player = match self.table.hand_state().betting() {
-            Some(br) => br.current_player(),
-            None => {
-                return vec![Event::Error {
-                    message: "Betting round not initialized".into(),
-                }];
-            }
-        };
-
-        if pid != current_player {
-            return vec![Event::Error {
-                message: format!(
-                    "Not your turn. Expected {}",
-                    self.accounts
-                        .name_from_id(current_player)
-                        .unwrap_or("Unknown".into())
-                ),
-            }];
+        if let Err(events) = self.require_betting_turn(pid) {
+            return events;
         }
 
         // Active players in order (seated + not folded)

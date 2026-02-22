@@ -18,6 +18,7 @@ mod action_ops;
 mod auto;
 mod betting;
 mod draw;
+mod guards;
 mod lobby_ops;
 mod payout;
 mod showdown;

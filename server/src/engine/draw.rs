@@ -5,10 +5,9 @@ impl ServerEngine {
         let mut events = Vec::new();
 
         // Check that we are in a draw phase/step
-        if self.table.current_step() != HandStep::DrawPhase {
-            return vec![Event::Error {
-                message: "Not in draw phase".into(),
-            }];
+        if let Err(events) = self.require_step_with_message(HandStep::DrawPhase, "Not in draw phase")
+        {
+            return events;
         }
 
         // Resolve name -> pid
@@ -24,32 +23,13 @@ impl ServerEngine {
             }
         };
 
-        let pid = match self.accounts.get_by_name(&player_name) {
-            Ok(acct) => acct.id,
-            Err(e) => {
-                return vec![Event::Error {
-                    message: format!("Get account failed: {:?}", e),
-                }];
-            }
+        let pid = match self.require_pid_by_name_get_account(&player_name) {
+            Ok(pid) => pid,
+            Err(events) => return events,
         };
 
-        let expected = match self.table.hand_state().draw() {
-            Some(dr) => dr.current_player(),
-            None => {
-                return vec![Event::Error {
-                    message: "Draw round not initialized".into(),
-                }];
-            }
-        };
-
-        if pid != expected {
-            let expected_name = self
-                .accounts
-                .name_from_id(expected)
-                .unwrap_or("Unknown".into());
-            return vec![Event::Error {
-                message: format!("Not your draw turn. Expected {expected_name}"),
-            }];
+        if let Err(events) = self.require_draw_turn(pid) {
+            return events;
         }
 
         // Validate discard list
