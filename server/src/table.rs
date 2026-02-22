@@ -18,6 +18,12 @@ pub struct PokerTable {
     pub hand_size: usize,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Street {
+    FirstBetting,
+    SecondBetting,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PlayerAtTable {
     pub player_id: PlayerId,
@@ -179,6 +185,13 @@ impl PokerTable {
         }
 
         self.dealer_manager.get_action_order(&seat_ids)
+    }
+
+    pub fn betting_order(&self, street: Street) -> Vec<PlayerId> {
+        match street {
+            // Five Card Draw uses the same dealer-relative action order for both betting rounds.
+            Street::FirstBetting | Street::SecondBetting => self.action_order(),
+        }
     }
 
     pub fn ensure_dealer_in_seats(&mut self) {

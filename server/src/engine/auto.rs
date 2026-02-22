@@ -44,6 +44,16 @@ impl ServerEngine {
                 break;
             }
 
+            let (progressed, step_events) = self.auto_deal_community();
+            made_progress |= progressed;
+            events.extend(step_events);
+
+            let step = self.table.current_step();
+            if self.is_decision_step(step) {
+                events.extend(self.on_enter_decision_step(step));
+                break;
+            }
+
             let (progressed, step_events) = self.auto_showdown_if_ready();
             made_progress |= progressed;
             events.extend(step_events);
@@ -151,6 +161,14 @@ impl ServerEngine {
             return (false, vec![]);
         }
 
+        if self.table.variant_spec() == crate::variants::texas_holdem::SPEC {
+            return self.auto_deal_private_texas_holdem();
+        }
+
+        self.auto_deal_private_five_card_draw()
+    }
+
+    fn auto_deal_private_five_card_draw(&mut self) -> (bool, Vec<Event>) {
         let mut events = Vec::new();
         self.table.hand_state_mut().reset_for_new_deal();
 
@@ -186,6 +204,109 @@ impl ServerEngine {
 
         // Sit-out applies to this hand only
         self.sit_out_next.clear();
+
+        self.table.advance_table_state();
+        events.push(self.emit_step_changed());
+
+        (true, events)
+    }
+
+    fn auto_deal_private_texas_holdem(&mut self) -> (bool, Vec<Event>) {
+        let mut events = Vec::new();
+        self.table.hand_state_mut().reset_for_new_deal();
+
+        self.table.ensure_dealer_in_seats();
+
+        let seated: Vec<PlayerId> = self.table.action_order();
+        let sit_out = self.sit_out_next.clone();
+        let active: Vec<PlayerId> = seated
+            .iter()
+            .copied()
+            .filter(|pid| !sit_out.contains(pid))
+            .collect();
+
+        for pid in &seated {
+            if sit_out.contains(pid) {
+                self.table.hand_state_mut().set_player_fold_status(*pid, true);
+            } else {
+                self.table.hand_state_mut().set_player_fold_status(*pid, false);
+                self.table.hand_state_mut().set_player_hole_cards(*pid, Vec::new());
+            }
+        }
+
+        // Deal Hold'em hole cards round-robin (one card to each player, twice).
+        for _ in 0..2 {
+            for pid in &active {
+                if let Some(card) = self.deck.deal_card() {
+                    let mut cards = self
+                        .table
+                        .hand_state()
+                        .player_hole_cards(pid)
+                        .cloned()
+                        .unwrap_or_default();
+                    cards.push(card);
+                    self.table.hand_state_mut().set_player_hole_cards(*pid, cards);
+                }
+            }
+        }
+        // Hold'em hole cards are private: only shown via ViewHand.
+
+        self.sit_out_next.clear();
+
+        self.table.advance_table_state();
+        events.push(self.emit_step_changed());
+
+        (true, events)
+    }
+
+    fn auto_deal_community(&mut self) -> (bool, Vec<Event>) {
+        if self.table.current_step() != HandStep::DealCommunity {
+            return (false, vec![]);
+        }
+
+        if self.table.variant_spec() != crate::variants::texas_holdem::SPEC {
+            return (false, vec![]);
+        }
+
+        let mut events = Vec::new();
+        let board_len = self.table.hand_state().board_cards().len();
+
+        let (street_name, cards_to_deal) = match board_len {
+            0 => ("flop", 3usize),
+            3 => ("turn", 1usize),
+            4 => ("river", 1usize),
+            _ => {
+                return (
+                    false,
+                    vec![self.emit_error(format!(
+                        "Hold'em board progression invalid: {} board cards",
+                        board_len
+                    ))],
+                );
+            }
+        };
+
+        if let Some(burn) = self.deck.deal_card() {
+            self.deck.discard(burn);
+        }
+
+        for _ in 0..cards_to_deal {
+            if let Some(card) = self.deck.deal_card() {
+                self.table.hand_state_mut().push_board_card(card);
+            }
+        }
+
+        let board_text = self
+            .table
+            .hand_state()
+            .board_cards()
+            .iter()
+            .map(|c| c.to_string())
+            .collect::<Vec<_>>();
+        events.push(self.emit_info(format!(
+            "Board ({street_name}): {:?}",
+            board_text
+        )));
 
         self.table.advance_table_state();
         events.push(self.emit_step_changed());
@@ -278,7 +399,20 @@ impl ServerEngine {
     }
 
     pub(super) fn enter_betting_round(&mut self) -> Vec<Event> {
-        let order = self.table.action_order();
+        let street = match self.table.current_step() {
+            HandStep::BettingRound1 => Street::FirstBetting,
+            HandStep::BettingRound2 => Street::SecondBetting,
+            _ => {
+                // Preserve behavior for unexpected calls by falling back to default order.
+                let order = self.table.action_order();
+                return self.enter_betting_round_with_order(order);
+            }
+        };
+        let order = self.table.betting_order(street);
+        self.enter_betting_round_with_order(order)
+    }
+
+    fn enter_betting_round_with_order(&mut self, order: Vec<PlayerId>) -> Vec<Event> {
 
         // Filter out to have only active players (not folded and seated)
         let seated_set: HashSet<PlayerId> = self
