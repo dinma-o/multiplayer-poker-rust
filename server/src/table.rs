@@ -1,7 +1,7 @@
 use crate::dealer::DealerManager;
 use crate::game_states::{HandState, PokerStateMachine};
-use crate::variants::{self};
-use common::constants::five_card_draw::{self as five_card_draw_constants, MAX_PLAYERS};
+use crate::variants::{self, spec::VariantSpec};
+use common::constants::five_card_draw::{self as five_card_draw_constants};
 use common::protocol::{HandStep, PlayerId};
 use std::collections::HashMap;
 
@@ -14,6 +14,7 @@ pub struct FiveCardTable {
     player_lookup: HashMap<PlayerId, PlayerAtTable>,
     pending_join_requests: Vec<PlayerId>,
     pending_leave_requests: Vec<PlayerId>,
+    variant: VariantSpec,
     pub hand_size: usize,
 }
 
@@ -38,16 +39,16 @@ pub enum LeaveError {
 
 impl FiveCardTable {
     pub fn new() -> Self {
+        let variant = variants::five_card_draw::SPEC;
         FiveCardTable {
-            game_state_machine: PokerStateMachine::new(
-                variants::five_card_draw::five_card_draw_plan(),
-            ),
+            game_state_machine: PokerStateMachine::new(variant.steps.to_vec()),
             hand_state: HandState::new(five_card_draw_constants::ANTE_AMOUNT),
             dealer_manager: DealerManager::new(),
-            seats: vec![None; 5],
+            seats: vec![None; variant.max_players],
             player_lookup: HashMap::new(),
             pending_join_requests: Vec::new(),
             pending_leave_requests: Vec::new(),
+            variant,
             hand_size: 5,
         }
     }
@@ -159,7 +160,7 @@ impl FiveCardTable {
     }
 
     pub fn action_order(&self) -> Vec<PlayerId> {
-        let mut seat_ids: Vec<Option<PlayerId>> = vec![None; MAX_PLAYERS as usize];
+        let mut seat_ids: Vec<Option<PlayerId>> = vec![None; self.variant.max_players];
 
         for (seat, pid) in self.seated_players().iter() {
             let idx = *seat as usize;
