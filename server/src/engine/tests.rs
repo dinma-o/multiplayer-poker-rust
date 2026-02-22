@@ -1,6 +1,6 @@
 use super::ServerEngine;
 use crate::{account_store::AccountStore, table::PokerTable};
-use common::protocol::{ActionCmd, Command, Event, HandStep, LobbyCmd};
+use common::protocol::{ActionCmd, AllowedAction, Command, Event, HandStep, LobbyCmd, PokerVariant};
 use tempfile::TempDir;
 
 struct EngineFixture {
@@ -35,6 +35,38 @@ impl EngineFixture {
             pin: "1234".to_string(),
         }));
         assert_nonempty_no_error(&join_bob);
+
+        let seed_events = engine.apply(Command::Lobby(LobbyCmd::SetRngSeed { seed }));
+        assert_nonempty_no_error(&seed_events);
+
+        Self { _tmp: tmp, engine }
+    }
+
+    fn new_three_players_with_seed(seed: u64) -> Self {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let path = tmp.path().join("accounts.json");
+
+        let mut store = AccountStore::load(&path).expect("load account store");
+        store
+            .create_account("alice", "1234", 1_000)
+            .expect("create alice");
+        store
+            .create_account("bob", "1234", 1_000)
+            .expect("create bob");
+        store
+            .create_account("carol", "1234", 1_000)
+            .expect("create carol");
+
+        let table = PokerTable::new();
+        let mut engine = ServerEngine::new(store, table);
+
+        for name in ["alice", "bob", "carol"] {
+            let join_events = engine.apply(Command::Lobby(LobbyCmd::Join {
+                player_name: name.to_string(),
+                pin: "1234".to_string(),
+            }));
+            assert_nonempty_no_error(&join_events);
+        }
 
         let seed_events = engine.apply(Command::Lobby(LobbyCmd::SetRngSeed { seed }));
         assert_nonempty_no_error(&seed_events);
@@ -94,6 +126,17 @@ fn last_action_requested_player(events: &[Event]) -> String {
         .rev()
         .find_map(|e| match e {
             Event::ActionRequested { player_name, .. } => Some(player_name.clone()),
+            _ => None,
+        })
+        .expect("expected ActionRequested event")
+}
+
+fn last_action_requested_allowed(events: &[Event]) -> Vec<AllowedAction> {
+    events
+        .iter()
+        .rev()
+        .find_map(|e| match e {
+            Event::ActionRequested { allowed, .. } => Some(allowed.clone()),
             _ => None,
         })
         .expect("expected ActionRequested event")
@@ -205,4 +248,57 @@ fn golden_flow_draw_to_betting2_then_showdown_payout_waiting() {
         &b2_check2_events,
         &[HandStep::Showdown, HandStep::Payout, HandStep::WaitingForPlayers],
     );
+}
+
+#[test]
+fn holdem_preflop_blinds_and_betting_order() {
+    let mut fx = EngineFixture::new_three_players_with_seed(42);
+
+    let set_variant = fx.engine.apply(Command::Lobby(LobbyCmd::SetVariant {
+        variant: PokerVariant::TexasHoldEm,
+    }));
+    assert_nonempty_no_error(&set_variant);
+
+    let start_events = start_to_betting_round1(&mut fx.engine);
+    assert_nonempty_no_error(&start_events);
+    assert_eq!(fx.engine.table.current_step(), HandStep::BettingRound1);
+
+    let alice_id = fx.engine.accounts.get_by_name("alice").expect("alice").id;
+    let bob_id = fx.engine.accounts.get_by_name("bob").expect("bob").id;
+    let carol_id = fx.engine.accounts.get_by_name("carol").expect("carol").id;
+
+    // Dealer starts at seat 0 (alice); action order left of dealer is bob, carol, alice.
+    // Hold'em blinds: SB=bob, BB=carol, so UTG is alice.
+    assert_eq!(last_action_requested_player(&start_events), "alice");
+
+    let br = fx.engine.table.hand_state().betting().expect("betting round state");
+    assert_eq!(fx.engine.table.hand_state().pot_size(), 15);
+    assert_eq!(fx.engine.table.hand_state().current_bet(), 10);
+    assert_eq!(br.contrib.get(&bob_id).copied(), Some(5)); // bob (SB)
+    assert_eq!(br.contrib.get(&carol_id).copied(), Some(10)); // carol (BB)
+    assert_eq!(br.contrib.get(&alice_id).copied(), Some(0)); // alice (UTG)
+
+    let utg_call = fx.engine.apply(Command::Action(ActionCmd::Call {
+        player_name: "alice".into(),
+    }));
+    assert_nonempty_no_error(&utg_call);
+    assert_eq!(last_action_requested_player(&utg_call), "bob");
+
+    let sb_call = fx.engine.apply(Command::Action(ActionCmd::Call {
+        player_name: "bob".into(),
+    }));
+    assert_nonempty_no_error(&sb_call);
+    assert_eq!(last_action_requested_player(&sb_call), "carol");
+    assert!(
+        last_action_requested_allowed(&sb_call).contains(&AllowedAction::Check),
+        "big blind should be allowed to check when unraised"
+    );
+
+    let bb_check = fx.engine.apply(Command::Action(ActionCmd::Check {
+        player_name: "carol".into(),
+    }));
+    assert_nonempty_no_error(&bb_check);
+    assert_eq!(fx.engine.table.current_step(), HandStep::BettingRound2);
+    assert_eq!(last_action_requested_player(&bb_check), "bob"); // left of dealer postflop
+    assert_includes_steps(&bb_check, &[HandStep::DealCommunity, HandStep::BettingRound2]);
 }

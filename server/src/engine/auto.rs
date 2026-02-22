@@ -81,6 +81,10 @@ impl ServerEngine {
             return (false, vec![]);
         }
 
+        if self.table.variant_spec() == crate::variants::texas_holdem::SPEC {
+            return self.auto_collect_holdem_blinds();
+        }
+
         let mut events = Vec::new();
         let ante = five_card_draw::ANTE_AMOUNT;
 
@@ -154,6 +158,90 @@ impl ServerEngine {
         events.push(self.emit_step_changed());
 
         (true, events)
+    }
+
+    fn auto_collect_holdem_blinds(&mut self) -> (bool, Vec<Event>) {
+        let mut events = Vec::new();
+        let sb_amount = crate::variants::texas_holdem::SMALL_BLIND;
+        let bb_amount = crate::variants::texas_holdem::BIG_BLIND;
+
+        // Ensure the dealer button points to an occupied seat before deriving blind order.
+        self.table.ensure_dealer_in_seats();
+
+        let eligible_in_order: Vec<PlayerId> = self
+            .table
+            .action_order()
+            .into_iter()
+            .filter(|pid| !self.sit_out_next.contains(pid))
+            .collect();
+
+        if eligible_in_order.len() < (five_card_draw::MIN_PLAYERS as usize) {
+            self.table.reset_to_waiting();
+            self.table.apply_pending_requests();
+
+            events.push(self.emit_error("Not enough players to post blinds and start hand"));
+            events.push(self.emit_pot_updated(0));
+            events.push(self.emit_step_changed_to(HandStep::WaitingForPlayers));
+            events.push(self.emit_lobby_state());
+            return (true, events);
+        }
+
+        let (sb_pid, bb_pid) = Self::holdem_blind_payers_in_dealer_order(&eligible_in_order)
+            .expect("eligible_in_order length checked");
+
+        let sb_balance = self.accounts.get_by_id(sb_pid).map(|a| a.balance).unwrap_or(0);
+        if sb_balance < sb_amount as i64 {
+            self.table.reset_to_waiting();
+            self.table.apply_pending_requests();
+            return (
+                true,
+                vec![
+                    self.emit_error("Small blind post failed: insufficient funds"),
+                    self.emit_pot_updated(0),
+                    self.emit_step_changed_to(HandStep::WaitingForPlayers),
+                    self.emit_lobby_state(),
+                ],
+            );
+        }
+
+        let bb_balance = self.accounts.get_by_id(bb_pid).map(|a| a.balance).unwrap_or(0);
+        if bb_balance < bb_amount as i64 {
+            self.table.reset_to_waiting();
+            self.table.apply_pending_requests();
+            return (
+                true,
+                vec![
+                    self.emit_error("Big blind post failed: insufficient funds"),
+                    self.emit_pot_updated(0),
+                    self.emit_step_changed_to(HandStep::WaitingForPlayers),
+                    self.emit_lobby_state(),
+                ],
+            );
+        }
+
+        if let Err(e) = self.accounts.withdraw_by_id(sb_pid, sb_amount as i64) {
+            return (true, vec![self.emit_error(format!("Small blind post failed: {:?}", e))]);
+        }
+
+        if let Err(e) = self.accounts.withdraw_by_id(bb_pid, bb_amount as i64) {
+            return (true, vec![self.emit_error(format!("Big blind post failed: {:?}", e))]);
+        }
+
+        self.table.hand_state_mut().add_to_pot(sb_amount + bb_amount);
+        events.push(self.emit_current_pot_updated());
+
+        self.table.advance_table_state();
+        events.push(self.emit_step_changed());
+
+        (true, events)
+    }
+
+    fn holdem_blind_payers_in_dealer_order(order: &[PlayerId]) -> Option<(PlayerId, PlayerId)> {
+        match order.len() {
+            0 | 1 => None,
+            2 => Some((order[1], order[0])), // heads-up: dealer posts SB, other posts BB
+            _ => Some((order[0], order[1])),
+        }
     }
 
     fn auto_deal_private(&mut self) -> (bool, Vec<Event>) {
@@ -421,17 +509,43 @@ impl ServerEngine {
             .iter()
             .map(|(_, pid)| *pid)
             .collect();
-        let active_in_order = order
+        let mut active_in_order: Vec<PlayerId> = order
             .into_iter()
             .filter(|pid| {
                 seated_set.contains(pid) && !self.table.hand_state().has_player_folded(pid)
             })
             .collect();
 
+        let is_holdem_preflop =
+            self.table.variant_spec() == crate::variants::texas_holdem::SPEC
+            && self.table.current_step() == HandStep::BettingRound1;
+
+        let mut preflop_blinds = None;
+        if is_holdem_preflop {
+            if let Some((sb_pid, bb_pid)) = Self::holdem_blind_payers_in_dealer_order(&active_in_order)
+            {
+                preflop_blinds = Some((sb_pid, bb_pid));
+                if let Some(bb_idx) = active_in_order.iter().position(|pid| *pid == bb_pid) {
+                    let first_to_act_idx = (bb_idx + 1) % active_in_order.len();
+                    active_in_order.rotate_left(first_to_act_idx);
+                }
+            }
+        }
+
         // Initialize betting round state
         self.table
             .hand_state_mut()
             .start_betting_round(active_in_order);
+
+        if let Some((sb_pid, bb_pid)) = preflop_blinds {
+            self.table
+                .hand_state_mut()
+                .set_current_bet(crate::variants::texas_holdem::BIG_BLIND);
+            if let Some(br) = self.table.hand_state_mut().betting_mut() {
+                br.contrib.insert(sb_pid, crate::variants::texas_holdem::SMALL_BLIND);
+                br.contrib.insert(bb_pid, crate::variants::texas_holdem::BIG_BLIND);
+            }
+        }
 
         let seated_set: HashSet<PlayerId> = self
             .table

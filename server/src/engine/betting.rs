@@ -433,14 +433,20 @@ impl ServerEngine {
             .unwrap_or(0);
         let call_amount = current_bet.saturating_sub(contrib);
 
+        let raises_capped =
+            self.table.hand_state().betting().unwrap().raises_used >=
+            five_card_draw::MAX_RAISES_PER_ROUND;
+
         let allowed_actions: Vec<AllowedAction> = if current_bet == 0 {
             vec![AllowedAction::Check, AllowedAction::Bet, AllowedAction::Fold]
+        } else if call_amount == 0 {
+            if raises_capped {
+                vec![AllowedAction::Check, AllowedAction::Fold]
+            } else {
+                vec![AllowedAction::Check, AllowedAction::Raise, AllowedAction::Fold]
+            }
         } else {
-            // Check if we have passed raise cap
-            if
-                self.table.hand_state().betting().unwrap().raises_used >=
-                five_card_draw::MAX_RAISES_PER_ROUND
-            {
+            if raises_capped {
                 return Event::ActionRequested {
                     player_name: pname.to_string(),
                     allowed: vec![AllowedAction::Call, AllowedAction::Fold],

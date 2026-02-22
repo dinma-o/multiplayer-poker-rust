@@ -2,6 +2,9 @@ use common::protocol::HandStep;
 
 use super::spec::VariantSpec;
 
+pub const SMALL_BLIND: u32 = 5;
+pub const BIG_BLIND: u32 = 10;
+
 // Metadata + step plan only. Betting/showdown semantics are still mostly shared with the
 // current engine, but these steps drive Hold'em-style dealing progression.
 pub const TEXAS_HOLDEM_STEPS: &[HandStep] = &[
