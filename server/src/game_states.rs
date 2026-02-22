@@ -103,7 +103,6 @@ pub struct VisibleHandCards {
 
 #[derive(Debug, Clone)]
 pub struct HandState<const HAND_SIZE: usize> {
-    player_hands: HashMap<PlayerId, Hand<HAND_SIZE>>, // Map of player ID to their hand of cards
     visible_cards: VisibleHandCards, // Variant-neutral visible card state
     player_fold_status: HashMap<PlayerId, bool>, // Map of player ID to their fold status
     pot_size: u32,
@@ -135,7 +134,6 @@ impl PokerStateMachine {
 impl<const HandSize: usize> HandState<HandSize> {
     pub fn new(ante_amount: u32) -> Self {
         HandState {
-            player_hands: HashMap::new(),
             visible_cards: VisibleHandCards::default(),
             player_fold_status: HashMap::new(),
             pot_size: 0,
@@ -148,7 +146,6 @@ impl<const HandSize: usize> HandState<HandSize> {
     }
 
     pub fn reset_for_new_deal(&mut self) {
-        self.player_hands.clear();
         self.visible_cards.hole_cards.clear();
         self.visible_cards.board_cards.clear();
         self.visible_cards.up_cards.clear();
@@ -180,11 +177,12 @@ impl<const HandSize: usize> HandState<HandSize> {
 
     pub fn set_player_hand(&mut self, player_id: PlayerId, hand: Hand<HandSize>) {
         self.visible_cards.hole_cards.insert(player_id, hand.cards().iter().copied().collect());
-        self.player_hands.insert(player_id, hand);
     }
 
-    pub fn player_hand(&self, player_id: &PlayerId) -> Option<&Hand<HandSize>> {
-        self.player_hands.get(player_id)
+    pub fn player_hand(&self, player_id: &PlayerId) -> Option<Hand<HandSize>> {
+        let cards = self.visible_cards.hole_cards.get(player_id)?;
+        let arr: [Card; HandSize] = cards.clone().try_into().ok()?;
+        Some(Hand::new(arr))
     }
 
     pub fn player_hole_cards(&self, player_id: &PlayerId) -> Option<&Vec<Card>> {

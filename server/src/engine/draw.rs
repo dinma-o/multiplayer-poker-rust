@@ -46,7 +46,7 @@ impl ServerEngine {
         }
 
         let hand = match self.table.hand_state().player_hand(&pid) {
-            Some(h) => h.clone(),
+            Some(h) => h,
             None => {
                 return vec![self.emit_error("Player hand not found")];
             }

@@ -29,7 +29,7 @@ impl ServerEngine {
                 }
             };
 
-            let r = rank_five_card_hand(hand); // Hand<5> alias matches
+            let r = rank_five_card_hand(&hand); // Hand<5> alias matches
             ranked.push((*pid, r));
 
             // Minimal readable description for CLI

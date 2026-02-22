@@ -37,7 +37,7 @@ impl ServerEngine {
                     continue;
                 }
             };
-            let r = rank_five_card_hand(hand);
+            let r = rank_five_card_hand(&hand);
 
             match best_rank {
                 None => {
