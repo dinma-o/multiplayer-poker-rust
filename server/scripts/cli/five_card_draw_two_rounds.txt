@@ -1,0 +1,30 @@
+acct create simfcd_a_20260222 1234 1000
+acct create simfcd_b_20260222 1234 1000
+join simfcd_a_20260222 1234
+join simfcd_b_20260222 1234
+variant five
+
+seed 1101
+start
+check simfcd_b_20260222
+check simfcd_a_20260222
+draw simfcd_b_20260222
+draw simfcd_a_20260222
+check simfcd_b_20260222
+check simfcd_a_20260222
+
+seed 1102
+start
+check simfcd_a_20260222
+check simfcd_b_20260222
+draw simfcd_a_20260222
+draw simfcd_b_20260222
+check simfcd_a_20260222
+check simfcd_b_20260222
+
+lobbystate
+leave simfcd_a_20260222
+leave simfcd_b_20260222
+acct delete simfcd_a_20260222 1234
+acct delete simfcd_b_20260222 1234
+quit

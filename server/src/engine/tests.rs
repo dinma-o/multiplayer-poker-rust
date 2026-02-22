@@ -120,6 +120,11 @@ fn assert_includes_steps(events: &[Event], expected: &[HandStep]) {
     }
 }
 
+fn assert_steps_exact(events: &[Event], expected: &[HandStep]) {
+    let steps = step_transitions(events);
+    assert_eq!(steps, expected, "unexpected step transition sequence");
+}
+
 fn last_action_requested_player(events: &[Event]) -> String {
     events
         .iter()
@@ -153,6 +158,21 @@ fn last_draw_requested_player(events: &[Event]) -> String {
         .expect("expected DrawRequested event")
 }
 
+fn showdown_results(events: &[Event]) -> Vec<(String, String)> {
+    events
+        .iter()
+        .find_map(|e| match e {
+            Event::Showdown { results } => Some(
+                results
+                    .iter()
+                    .map(|r| (r.player_name.clone(), r.hand_desc.clone()))
+                    .collect(),
+            ),
+            _ => None,
+        })
+        .expect("expected Showdown event")
+}
+
 fn apply_check(engine: &mut ServerEngine, player_name: String) -> Vec<Event> {
     engine.apply(Command::Action(ActionCmd::Check { player_name }))
 }
@@ -166,6 +186,12 @@ fn apply_draw_pat(engine: &mut ServerEngine, player_name: String) -> Vec<Event> 
 
 fn start_to_betting_round1(engine: &mut ServerEngine) -> Vec<Event> {
     engine.apply(Command::Lobby(LobbyCmd::StartHand))
+}
+
+fn set_holdem_variant(engine: &mut ServerEngine) -> Vec<Event> {
+    engine.apply(Command::Lobby(LobbyCmd::SetVariant {
+        variant: PokerVariant::TexasHoldEm,
+    }))
 }
 
 fn advance_to_draw_phase(engine: &mut ServerEngine) -> (Vec<Event>, Vec<Event>, Vec<Event>) {
@@ -183,6 +209,45 @@ fn advance_to_draw_phase(engine: &mut ServerEngine) -> (Vec<Event>, Vec<Event>, 
     assert_eq!(engine.table.current_step(), HandStep::DrawPhase);
 
     (start_events, check1, check2)
+}
+
+fn advance_holdem_to_flop_betting(
+    engine: &mut ServerEngine,
+) -> (Vec<Event>, Vec<Event>, Vec<Event>) {
+    let start_events = start_to_betting_round1(engine);
+    assert_nonempty_no_error(&start_events);
+    assert_eq!(engine.table.current_step(), HandStep::BettingRound1);
+    assert_eq!(engine.table.hand_state().board_cards().len(), 0);
+
+    // Heads-up preflop: dealer/SB calls, BB checks.
+    let first = last_action_requested_player(&start_events);
+    let call_events = engine.apply(Command::Action(ActionCmd::Call { player_name: first }));
+    assert_nonempty_no_error(&call_events);
+
+    let second = last_action_requested_player(&call_events);
+    let check_events = engine.apply(Command::Action(ActionCmd::Check {
+        player_name: second,
+    }));
+    assert_nonempty_no_error(&check_events);
+    assert_eq!(engine.table.current_step(), HandStep::BettingRound2);
+    assert_eq!(engine.table.hand_state().board_cards().len(), 3);
+
+    (start_events, call_events, check_events)
+}
+
+fn complete_current_holdem_betting_street_by_checks(
+    engine: &mut ServerEngine,
+    events_with_prompt: &[Event],
+) -> (Vec<Event>, Vec<Event>) {
+    let p1 = last_action_requested_player(events_with_prompt);
+    let e1 = engine.apply(Command::Action(ActionCmd::Check { player_name: p1 }));
+    assert_nonempty_no_error(&e1);
+
+    let p2 = last_action_requested_player(&e1);
+    let e2 = engine.apply(Command::Action(ActionCmd::Check { player_name: p2 }));
+    assert_nonempty_no_error(&e2);
+
+    (e1, e2)
 }
 
 #[test]
@@ -301,4 +366,143 @@ fn holdem_preflop_blinds_and_betting_order() {
     assert_eq!(fx.engine.table.current_step(), HandStep::BettingRound2);
     assert_eq!(last_action_requested_player(&bb_check), "bob"); // left of dealer postflop
     assert_includes_steps(&bb_check, &[HandStep::DealCommunity, HandStep::BettingRound2]);
+}
+
+#[test]
+fn holdem_showdown_emits_board_and_hole_cards() {
+    let mut fx = EngineFixture::new_two_players_with_seed(42);
+
+    let set_variant = fx.engine.apply(Command::Lobby(LobbyCmd::SetVariant {
+        variant: PokerVariant::TexasHoldEm,
+    }));
+    assert_nonempty_no_error(&set_variant);
+
+    let start_events = start_to_betting_round1(&mut fx.engine);
+    assert_nonempty_no_error(&start_events);
+    assert_eq!(fx.engine.table.current_step(), HandStep::BettingRound1);
+
+    // Heads-up preflop: dealer/SB acts first, then BB may check.
+    let pre1 = last_action_requested_player(&start_events);
+    let pre1_events = fx.engine.apply(Command::Action(ActionCmd::Call { player_name: pre1 }));
+    assert_nonempty_no_error(&pre1_events);
+    let pre2 = last_action_requested_player(&pre1_events);
+    let pre2_events = fx.engine.apply(Command::Action(ActionCmd::Check { player_name: pre2 }));
+    assert_nonempty_no_error(&pre2_events);
+    assert_eq!(fx.engine.table.current_step(), HandStep::BettingRound2);
+
+    // Flop/turn/river betting rounds: both players check through.
+    let mut terminal_events = Vec::new();
+    for _ in 0..3 {
+        let p1 = last_action_requested_player(if terminal_events.is_empty() {
+            &pre2_events
+        } else {
+            &terminal_events
+        });
+        let e1 = fx.engine.apply(Command::Action(ActionCmd::Check { player_name: p1 }));
+        assert_nonempty_no_error(&e1);
+
+        let p2 = last_action_requested_player(&e1);
+        let e2 = fx.engine.apply(Command::Action(ActionCmd::Check { player_name: p2 }));
+        assert_nonempty_no_error(&e2);
+        terminal_events = e2;
+    }
+
+    assert_eq!(fx.engine.table.current_step(), HandStep::WaitingForPlayers);
+    assert_includes_steps(
+        &terminal_events,
+        &[HandStep::Showdown, HandStep::Payout, HandStep::WaitingForPlayers],
+    );
+
+    let showdown = showdown_results(&terminal_events);
+    assert_eq!(showdown.len(), 2);
+    for (_name, desc) in showdown {
+        assert!(desc.contains("board="), "missing board in showdown desc: {desc}");
+        assert!(desc.contains("hole="), "missing hole cards in showdown desc: {desc}");
+        assert!(desc.contains("=>"), "missing best hand result in showdown desc: {desc}");
+    }
+
+    assert!(
+        terminal_events
+            .iter()
+            .any(|e| matches!(e, Event::Payout { .. })),
+        "expected payout event"
+    );
+}
+
+#[test]
+fn holdem_golden_flow_start_hand_posts_blinds_stops_at_preflop_betting() {
+    let mut fx = EngineFixture::new_two_players_with_seed(42);
+    let set_variant_events = set_holdem_variant(&mut fx.engine);
+    assert_nonempty_no_error(&set_variant_events);
+
+    let start_events = start_to_betting_round1(&mut fx.engine);
+
+    assert_nonempty_no_error(&start_events);
+    assert_eq!(fx.engine.table.current_step(), HandStep::BettingRound1);
+    assert_non_negative_pot_and_contribs(&fx.engine);
+    assert_steps_exact(
+        &start_events,
+        &[
+            HandStep::CollectForcedBets,
+            HandStep::DealPrivate,
+            HandStep::BettingRound1,
+        ],
+    );
+    assert_eq!(fx.engine.table.hand_state().board_cards().len(), 0);
+}
+
+#[test]
+fn holdem_golden_flow_preflop_completes_flop_dealt_stops_at_flop_betting() {
+    let mut fx = EngineFixture::new_two_players_with_seed(42);
+    let set_variant_events = set_holdem_variant(&mut fx.engine);
+    assert_nonempty_no_error(&set_variant_events);
+
+    let (_start_events, _call_events, preflop_close_events) =
+        advance_holdem_to_flop_betting(&mut fx.engine);
+
+    assert_nonempty_no_error(&preflop_close_events);
+    assert_eq!(fx.engine.table.current_step(), HandStep::BettingRound2);
+    assert_non_negative_pot_and_contribs(&fx.engine);
+    assert_steps_exact(
+        &preflop_close_events,
+        &[HandStep::DealCommunity, HandStep::BettingRound2],
+    );
+    assert_eq!(fx.engine.table.hand_state().board_cards().len(), 3);
+}
+
+#[test]
+fn holdem_golden_flow_complete_streets_showdown_payout_waiting() {
+    let mut fx = EngineFixture::new_two_players_with_seed(42);
+    let set_variant_events = set_holdem_variant(&mut fx.engine);
+    assert_nonempty_no_error(&set_variant_events);
+
+    let (_start_events, _pre_call_events, flop_prompt_events) =
+        advance_holdem_to_flop_betting(&mut fx.engine);
+    assert_eq!(fx.engine.table.hand_state().board_cards().len(), 3);
+    assert_non_negative_pot_and_contribs(&fx.engine);
+
+    let (_flop_check1, flop_close_events) =
+        complete_current_holdem_betting_street_by_checks(&mut fx.engine, &flop_prompt_events);
+    assert_eq!(fx.engine.table.current_step(), HandStep::BettingRound2);
+    assert_steps_exact(&flop_close_events, &[HandStep::DealCommunity, HandStep::BettingRound2]);
+    assert_eq!(fx.engine.table.hand_state().board_cards().len(), 4);
+    assert_non_negative_pot_and_contribs(&fx.engine);
+
+    let (_turn_check1, turn_close_events) =
+        complete_current_holdem_betting_street_by_checks(&mut fx.engine, &flop_close_events);
+    assert_eq!(fx.engine.table.current_step(), HandStep::BettingRound2);
+    assert_steps_exact(&turn_close_events, &[HandStep::DealCommunity, HandStep::BettingRound2]);
+    assert_eq!(fx.engine.table.hand_state().board_cards().len(), 5);
+    assert_non_negative_pot_and_contribs(&fx.engine);
+
+    let (_river_check1, river_close_events) =
+        complete_current_holdem_betting_street_by_checks(&mut fx.engine, &turn_close_events);
+    assert_eq!(fx.engine.table.current_step(), HandStep::WaitingForPlayers);
+    assert_steps_exact(
+        &river_close_events,
+        &[HandStep::Showdown, HandStep::Payout, HandStep::WaitingForPlayers],
+    );
+    assert_non_negative_pot_and_contribs(&fx.engine);
+    // Board resets after payout when hand state is reset.
+    assert_eq!(fx.engine.table.hand_state().board_cards().len(), 0);
 }

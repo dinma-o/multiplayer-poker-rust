@@ -1,0 +1,34 @@
+acct create simhe_a_20260222 1234 1000
+acct create simhe_b_20260222 1234 1000
+join simhe_a_20260222 1234
+join simhe_b_20260222 1234
+variant holdem
+
+seed 2201
+start
+call simhe_a_20260222
+check simhe_b_20260222
+check simhe_b_20260222
+check simhe_a_20260222
+check simhe_b_20260222
+check simhe_a_20260222
+check simhe_b_20260222
+check simhe_a_20260222
+
+seed 2202
+start
+call simhe_b_20260222
+check simhe_a_20260222
+check simhe_a_20260222
+check simhe_b_20260222
+check simhe_a_20260222
+check simhe_b_20260222
+check simhe_a_20260222
+check simhe_b_20260222
+
+lobbystate
+leave simhe_a_20260222
+leave simhe_b_20260222
+acct delete simhe_a_20260222 1234
+acct delete simhe_b_20260222 1234
+quit

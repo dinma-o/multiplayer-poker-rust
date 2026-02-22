@@ -2,8 +2,6 @@ use super::*;
 
 impl ServerEngine {
     pub(super) fn do_showdown(&mut self) -> Vec<Event> {
-        use common::hand_rank::rank_five_card_hand;
-
         // Active players = players who still have hands and did not fold
         let active: Vec<PlayerId> = self
             .table
@@ -22,18 +20,21 @@ impl ServerEngine {
         let mut lines: Vec<common::protocol::ShowdownLine> = Vec::new();
 
         for pid in &active {
-            let hand = match self.table.hand_state().player_hand(pid) {
-                Some(h) => h,
-                None => {
-                    continue;
-                }
+            let r = match self.rank_player_for_current_variant(*pid) {
+                Some(rank) => rank,
+                None => continue,
             };
-
-            let r = rank_five_card_hand(&hand); // Hand<5> alias matches
             ranked.push((*pid, r));
 
-            // Minimal readable description for CLI
-            let desc = format!("{} => {:?} {:?}", hand, r.category, r.tiebreakers);
+            let desc = match self.table.variant_spec() == crate::variants::texas_holdem::SPEC {
+                true => self
+                    .holdem_showdown_desc(*pid, r)
+                    .unwrap_or_else(|| format!("best={:?}", r.category)),
+                false => match self.table.hand_state().player_hand(pid) {
+                    Some(hand) => format!("{} => {:?} {:?}", hand, r.category, r.tiebreakers),
+                    None => format!("{:?} {:?}", r.category, r.tiebreakers),
+                },
+            };
             let pname = self.accounts.name_from_id(*pid).unwrap_or("Unknown".into());
             lines.push(ShowdownLine {
                 player_id: *pid,
@@ -48,6 +49,45 @@ impl ServerEngine {
         }
 
         vec![Event::Showdown { results: lines }]
+    }
+
+    pub(super) fn rank_player_for_current_variant(&self, pid: PlayerId) -> Option<hand_rank::HandRank> {
+        if self.table.variant_spec() == crate::variants::texas_holdem::SPEC {
+            let seven = self.holdem_seven_cards_for_player(pid)?;
+            return Some(hand_rank::best_hand_from_seven_cards(&seven));
+        }
+
+        let hand = self.table.hand_state().player_hand(&pid)?;
+        Some(hand_rank::rank_five_card_hand(&hand))
+    }
+
+    fn holdem_seven_cards_for_player(&self, pid: PlayerId) -> Option<[common::card_deck::Card; 7]> {
+        let hole = self.table.hand_state().player_hole_cards(&pid)?.clone();
+        let board = self.table.hand_state().board_cards();
+
+        if hole.len() != 2 || board.len() != 5 {
+            return None;
+        }
+
+        let mut cards = Vec::with_capacity(7);
+        cards.extend(hole.iter().copied());
+        cards.extend(board.iter().copied());
+        cards.try_into().ok()
+    }
+
+    fn holdem_showdown_desc(&self, pid: PlayerId, rank: hand_rank::HandRank) -> Option<String> {
+        let hole = self.table.hand_state().player_hole_cards(&pid)?;
+        let board = self.table.hand_state().board_cards();
+        if hole.len() != 2 || board.len() != 5 {
+            return None;
+        }
+
+        let hole_text = hole.iter().map(|c| c.to_string()).collect::<Vec<_>>();
+        let board_text = board.iter().map(|c| c.to_string()).collect::<Vec<_>>();
+        Some(format!(
+            "board={:?} hole={:?} => {:?}",
+            board_text, hole_text, rank.category
+        ))
     }
 }
 

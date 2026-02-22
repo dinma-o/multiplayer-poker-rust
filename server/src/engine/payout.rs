@@ -2,8 +2,6 @@ use super::*;
 
 impl ServerEngine {
     pub(super) fn do_payout(&mut self) -> Vec<Event> {
-        use common::hand_rank::rank_five_card_hand;
-
         let mut events = Vec::new();
 
         // Players who participated in the hand = those we dealt to
@@ -31,13 +29,12 @@ impl ServerEngine {
         let mut winners: Vec<PlayerId> = Vec::new();
 
         for pid in &active {
-            let hand = match self.table.hand_state().player_hand(pid) {
-                Some(h) => h,
+            let r = match self.rank_player_for_current_variant(*pid) {
+                Some(rank) => rank,
                 None => {
                     continue;
                 }
             };
-            let r = rank_five_card_hand(&hand);
 
             match best_rank {
                 None => {
