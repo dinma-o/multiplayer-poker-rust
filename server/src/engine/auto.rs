@@ -317,28 +317,6 @@ impl ServerEngine {
             });
         }
 
-        /* for pid in seated {
-            if sit_out.contains(&pid) {
-                self.table.hand_state_mut().set_player_fold_status(pid, true);
-                continue;
-            }
-            let name = self.accounts.name_from_id(pid).unwrap_or("Unknown".into());
-            let hand = Hand::<5>::draw_from_deck(&mut self.deck).unwrap();
-
-            self.table.hand_state_mut().set_player_hand(pid, hand.clone());
-            self.table.hand_state_mut().set_player_fold_status(pid, false);
-
-            let cards = self.table
-                .hand_state()
-                .player_hole_cards(&pid)
-                .cloned()
-                .unwrap_or_else(|| hand.cards().to_vec());
-            events.push(Event::PrivateHand {
-                player_name: name,
-                cards, // or hand.cards().to_vec() depending on your API
-            });
-        } */
-
         // Sit-out applies to this hand only
         self.sit_out_next.clear();
 
