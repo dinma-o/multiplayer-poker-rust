@@ -63,7 +63,8 @@ impl ServerEngine {
             events.extend(step_events);
 
             if payout_progressed {
-                let (_progressed, step_events) = self.auto_apply_pending_joins_leaves_if_hand_over();
+                let (_progressed, step_events) =
+                    self.auto_apply_pending_joins_leaves_if_hand_over();
                 events.extend(step_events);
                 break; // stop auto-run after finishing a hand
             }
@@ -88,8 +89,7 @@ impl ServerEngine {
         let mut events = Vec::new();
         let ante = five_card_draw::ANTE_AMOUNT;
 
-        let seated_ids = self
-            .table
+        let seated_ids = self.table
             .seated_players()
             .into_iter()
             .map(|(_seat, player_id)| player_id)
@@ -104,7 +104,10 @@ impl ServerEngine {
         let mut payers = Vec::new();
 
         for pid in &eligible_ids {
-            let bal = self.accounts.get_by_id(*pid).map(|a| a.balance).unwrap_or(0);
+            let bal = self.accounts
+                .get_by_id(*pid)
+                .map(|a| a.balance)
+                .unwrap_or(0);
             if bal < ante.try_into().unwrap_or(5) {
                 kicked.push(*pid);
             } else {
@@ -119,10 +122,9 @@ impl ServerEngine {
                     player_id: *pid,
                     player_name: self.accounts.name_from_id(*pid).unwrap_or("Unknown".into()),
                 });
-                events.push(self.emit_info(format!(
-                    "Player {} kicked for insufficient funds",
-                    pid
-                )));
+                events.push(
+                    self.emit_info(format!("Player {} kicked for insufficient funds", pid))
+                );
             }
             // Reset table state so lobby can recover
             self.table.reset_to_waiting();
@@ -149,9 +151,7 @@ impl ServerEngine {
             });
         }
 
-        self.table
-            .hand_state_mut()
-            .add_to_pot((payers.len() as u32) * ante);
+        self.table.hand_state_mut().add_to_pot((payers.len() as u32) * ante);
         events.push(self.emit_current_pot_updated());
 
         self.table.advance_table_state();
@@ -168,8 +168,7 @@ impl ServerEngine {
         // Ensure the dealer button points to an occupied seat before deriving blind order.
         self.table.ensure_dealer_in_seats();
 
-        let eligible_in_order: Vec<PlayerId> = self
-            .table
+        let eligible_in_order: Vec<PlayerId> = self.table
             .action_order()
             .into_iter()
             .filter(|pid| !self.sit_out_next.contains(pid))
@@ -186,11 +185,15 @@ impl ServerEngine {
             return (true, events);
         }
 
-        let (sb_pid, bb_pid) = Self::holdem_blind_payers_in_dealer_order(&eligible_in_order)
-            .expect("eligible_in_order length checked");
+        let (sb_pid, bb_pid) = Self::holdem_blind_payers_in_dealer_order(&eligible_in_order).expect(
+            "eligible_in_order length checked"
+        );
 
-        let sb_balance = self.accounts.get_by_id(sb_pid).map(|a| a.balance).unwrap_or(0);
-        if sb_balance < sb_amount as i64 {
+        let sb_balance = self.accounts
+            .get_by_id(sb_pid)
+            .map(|a| a.balance)
+            .unwrap_or(0);
+        if sb_balance < (sb_amount as i64) {
             self.table.reset_to_waiting();
             self.table.apply_pending_requests();
             return (
@@ -199,13 +202,16 @@ impl ServerEngine {
                     self.emit_error("Small blind post failed: insufficient funds"),
                     self.emit_pot_updated(0),
                     self.emit_step_changed_to(HandStep::WaitingForPlayers),
-                    self.emit_lobby_state(),
+                    self.emit_lobby_state()
                 ],
             );
         }
 
-        let bb_balance = self.accounts.get_by_id(bb_pid).map(|a| a.balance).unwrap_or(0);
-        if bb_balance < bb_amount as i64 {
+        let bb_balance = self.accounts
+            .get_by_id(bb_pid)
+            .map(|a| a.balance)
+            .unwrap_or(0);
+        if bb_balance < (bb_amount as i64) {
             self.table.reset_to_waiting();
             self.table.apply_pending_requests();
             return (
@@ -214,7 +220,7 @@ impl ServerEngine {
                     self.emit_error("Big blind post failed: insufficient funds"),
                     self.emit_pot_updated(0),
                     self.emit_step_changed_to(HandStep::WaitingForPlayers),
-                    self.emit_lobby_state(),
+                    self.emit_lobby_state()
                 ],
             );
         }
@@ -272,26 +278,47 @@ impl ServerEngine {
         let seated: Vec<PlayerId> = self.table.action_order();
         let sit_out = self.sit_out_next.clone();
 
-        for pid in seated {
-            if sit_out.contains(&pid) {
-                self.table.hand_state_mut().set_player_fold_status(pid, true);
-                continue;
+        let active: Vec<PlayerId> = seated
+            .iter()
+            .copied()
+            .filter(|pid| !sit_out.contains(pid))
+            .collect();
+
+        for pid in &seated {
+            if sit_out.contains(pid) {
+                self.table.hand_state_mut().set_player_fold_status(*pid, true);
+            } else {
+                self.table.hand_state_mut().set_player_fold_status(*pid, false);
+                self.table.hand_state_mut().set_player_hole_cards(*pid, Vec::new());
             }
-            let name = self.accounts.name_from_id(pid).unwrap_or("Unknown".into());
-            let hand = Hand::<5>::draw_from_deck(&mut self.deck).unwrap();
+        }
 
-            self.table.hand_state_mut().set_player_hand(pid, hand.clone());
-            self.table.hand_state_mut().set_player_fold_status(pid, false);
+        // Deal 5 hole cards round-robin (one card to each player, five times).
+        for _ in 0..5 {
+            for pid in &active {
+                if let Some(card) = self.deck.deal_card() {
+                    let mut cards = self.table
+                        .hand_state()
+                        .player_hole_cards(pid)
+                        .cloned()
+                        .unwrap_or_default();
+                    cards.push(card);
+                    self.table.hand_state_mut().set_player_hole_cards(*pid, cards);
+                }
+            }
+        }
 
-            let cards = self
-                .table
+        // Emit PrivateHand events with hole cards for each player. For draw, hole cards are private until showdown, so only include them in the event for the respective player.
+        for pid in &active {
+            let name = self.accounts.name_from_id(*pid).unwrap_or("Unknown".into());
+            let cards = self.table
                 .hand_state()
-                .player_hole_cards(&pid)
+                .player_hole_cards(pid)
                 .cloned()
-                .unwrap_or_else(|| hand.cards().to_vec());
+                .unwrap_or_else(Vec::new);
             events.push(Event::PrivateHand {
                 player_name: name,
-                cards, // or hand.cards().to_vec() depending on your API
+                cards,
             });
         }
 
@@ -331,8 +358,7 @@ impl ServerEngine {
         for _ in 0..2 {
             for pid in &active {
                 if let Some(card) = self.deck.deal_card() {
-                    let mut cards = self
-                        .table
+                    let mut cards = self.table
                         .hand_state()
                         .player_hole_cards(pid)
                         .cloned()
@@ -507,10 +533,11 @@ impl ServerEngine {
             _ => {
                 return (
                     false,
-                    vec![self.emit_error(format!(
-                        "Hold'em board progression invalid: {} board cards",
-                        board_len
-                    ))],
+                    vec![
+                        self.emit_error(
+                            format!("Hold'em board progression invalid: {} board cards", board_len)
+                        )
+                    ],
                 );
             }
         };
@@ -525,17 +552,13 @@ impl ServerEngine {
             }
         }
 
-        let board_text = self
-            .table
+        let board_text = self.table
             .hand_state()
             .board_cards()
             .iter()
             .map(|c| c.to_string())
             .collect::<Vec<_>>();
-        events.push(self.emit_info(format!(
-            "Board ({street_name}): {:?}",
-            board_text
-        )));
+        events.push(self.emit_info(format!("Board ({street_name}): {:?}", board_text)));
 
         self.table.advance_table_state();
         events.push(self.emit_step_changed());
@@ -596,10 +619,7 @@ impl ServerEngine {
     }
 
     pub fn is_decision_step(&self, step: HandStep) -> bool {
-        matches!(
-            Self::step_kind(step),
-            StepKind::Betting | StepKind::DrawDiscard
-        )
+        matches!(Self::step_kind(step), StepKind::Betting | StepKind::DrawDiscard)
     }
 
     fn step_kind(step: HandStep) -> StepKind {
@@ -634,9 +654,7 @@ impl ServerEngine {
             return vec![self.emit_error("No active players for draw")];
         }
 
-        self.table
-            .hand_state_mut()
-            .start_draw_round(active_in_order.clone());
+        self.table.hand_state_mut().start_draw_round(active_in_order.clone());
 
         // store draw order + index somewhere (HandState) OR just request first for now
         let first_player = active_in_order[0];
@@ -661,10 +679,8 @@ impl ServerEngine {
     }
 
     fn enter_betting_round_with_order(&mut self, order: Vec<PlayerId>) -> Vec<Event> {
-
         // Filter out to have only active players (not folded and seated)
-        let seated_set: HashSet<PlayerId> = self
-            .table
+        let seated_set: HashSet<PlayerId> = self.table
             .seated_players()
             .iter()
             .map(|(_, pid)| *pid)
@@ -677,12 +693,15 @@ impl ServerEngine {
             .collect();
 
         let is_holdem_preflop =
-            self.table.variant_spec() == crate::variants::texas_holdem::SPEC
-            && self.table.current_step() == HandStep::BettingRound1;
+            self.table.variant_spec() == crate::variants::texas_holdem::SPEC &&
+            self.table.current_step() == HandStep::BettingRound1;
 
         let mut preflop_blinds = None;
         if is_holdem_preflop {
-            if let Some((sb_pid, bb_pid)) = Self::holdem_blind_payers_in_dealer_order(&active_in_order)
+            if
+                let Some((sb_pid, bb_pid)) = Self::holdem_blind_payers_in_dealer_order(
+                    &active_in_order
+                )
             {
                 preflop_blinds = Some((sb_pid, bb_pid));
                 if let Some(bb_idx) = active_in_order.iter().position(|pid| *pid == bb_pid) {
@@ -693,22 +712,17 @@ impl ServerEngine {
         }
 
         // Initialize betting round state
-        self.table
-            .hand_state_mut()
-            .start_betting_round(active_in_order);
+        self.table.hand_state_mut().start_betting_round(active_in_order);
 
         if let Some((sb_pid, bb_pid)) = preflop_blinds {
-            self.table
-                .hand_state_mut()
-                .set_current_bet(crate::variants::texas_holdem::BIG_BLIND);
+            self.table.hand_state_mut().set_current_bet(crate::variants::texas_holdem::BIG_BLIND);
             if let Some(br) = self.table.hand_state_mut().betting_mut() {
                 br.contrib.insert(sb_pid, crate::variants::texas_holdem::SMALL_BLIND);
                 br.contrib.insert(bb_pid, crate::variants::texas_holdem::BIG_BLIND);
             }
         }
 
-        let seated_set: HashSet<PlayerId> = self
-            .table
+        let seated_set: HashSet<PlayerId> = self.table
             .seated_players()
             .iter()
             .map(|(_, pid)| *pid)
@@ -732,4 +746,3 @@ impl ServerEngine {
         vec![self.emit_action_requested(first_player)]
     }
 }
-
