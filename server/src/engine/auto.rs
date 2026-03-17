@@ -253,6 +253,11 @@ impl ServerEngine {
             return self.auto_deal_private_texas_holdem();
         }
 
+        else if self.table.variant_spec() == crate::variants::seven_card_stud::SPEC {
+            // Stud is more complex and not fully implemented, so we'll skip auto-deal for now.
+            return self.auto_deal_private_seven_card_stud();
+        }
+
         self.auto_deal_private_five_card_draw()
     }
 
@@ -340,6 +345,142 @@ impl ServerEngine {
         // Hold'em hole cards are private: only shown via ViewHand.
 
         self.sit_out_next.clear();
+
+        self.table.advance_table_state();
+        events.push(self.emit_step_changed());
+
+        (true, events)
+    }
+
+    fn auto_deal_private_seven_card_stud(&mut self) -> (bool, Vec<Event>) {
+        // Placeholder for now since Stud implementation is incomplete. Just advance the state to allow testing of the flow.
+        let in_third_street = self.table.hand_state_mut().players_with_hands().is_empty();
+        if in_third_street {
+            return self.auto_deal_private_seven_card_stud_third_street();
+        }
+        else{
+            return self.auto_deal_private_seven_card_stud_seventh_street();
+        }
+    }
+
+    fn auto_deal_private_seven_card_stud_third_street(&mut self) -> (bool, Vec<Event>) {
+
+        let mut events: Vec<Event> = Vec::new();
+        self.table.hand_state_mut().reset_for_new_deal();
+
+        self.table.ensure_dealer_in_seats();
+
+        let seated: Vec<PlayerId> = self.table.action_order();
+        let sit_out = self.sit_out_next.clone();
+
+        let active: Vec<PlayerId> = seated
+            .iter()
+            .copied()
+            .filter(|pid| !sit_out.contains(pid))
+            .collect();
+
+        for pid in &seated {
+            if sit_out.contains(pid) {
+                self.table.hand_state_mut().set_player_fold_status(*pid, true);
+            } else {
+                self.table.hand_state_mut().set_player_fold_status(*pid, false);
+                self.table.hand_state_mut().set_player_hole_cards(*pid, Vec::new());
+                self.table.hand_state_mut().set_player_up_cards(*pid, Vec::new());
+            }
+        }
+
+        // Deal Stud third street cards: 2 down (private) + 1 up (public) to each active player.
+        for _ in 0..2 {
+            for pid in &active {
+                if let Some(card) = self.deck.deal_card() {
+                    let mut hole_cards = self
+                        .table
+                        .hand_state()
+                        .player_hole_cards(pid)
+                        .cloned()
+                        .unwrap_or_default();
+                    hole_cards.push(card);
+                    self.table.hand_state_mut().set_player_hole_cards(*pid, hole_cards);
+                }
+            }
+        }
+        for pid in &active {
+            if let Some(card) = self.deck.deal_card() {
+                let mut up_cards = self
+                    .table
+                    .hand_state()
+                    .player_up_cards(pid)
+                    .cloned()
+                    .unwrap_or_default();
+                up_cards.push(card);
+                self.table.hand_state_mut().set_player_up_cards(*pid, up_cards);
+            }
+        }
+
+        for pid in &active{
+            let name = self.accounts.name_from_id(*pid).unwrap_or("Unknown".into());
+            let hole_cards = self
+                .table
+                .hand_state()
+                .player_hole_cards(pid)
+                .cloned()
+                .unwrap_or_default();
+            events.push(Event::PrivateHand {
+                player_name: name,
+                cards: hole_cards,
+            });
+        }
+
+        events.push(self.emit_info(format!(
+            "Stud third street: {}",
+            self.stud_visible_boards_summary()
+        )));
+
+        self.sit_out_next.clear();
+        self.table.advance_table_state();
+        events.push(self.emit_step_changed());
+
+        (true, events)
+    }
+
+    fn auto_deal_private_seven_card_stud_seventh_street(&mut self) -> (bool, Vec<Event>){
+        let mut events: Vec<Event> = Vec::new();
+        self.table.ensure_dealer_in_seats();
+
+        let seated: Vec<PlayerId> = self.table.action_order();
+        let sit_out = self.sit_out_next.clone();
+
+        let active: Vec<PlayerId> = seated
+            .iter()
+            .copied()
+            .filter(|pid| !sit_out.contains(pid))
+            .collect();
+
+        for pid in &seated {
+            if sit_out.contains(pid) {
+                self.table.hand_state_mut().set_player_fold_status(*pid, true);
+            } else {
+                self.table.hand_state_mut().set_player_fold_status(*pid, false);
+            }
+        }
+
+        for pid in &active {
+            if let Some(card) = self.deck.deal_card() {
+                let mut hole_cards = self
+                    .table
+                    .hand_state()
+                    .player_hole_cards(pid)
+                    .cloned()
+                    .unwrap_or_default();
+                hole_cards.push(card);
+                self.table.hand_state_mut().set_player_hole_cards(*pid, hole_cards);
+            }
+        }
+
+        events.push(self.emit_info(format!(
+            "Stud seventh street: {}",
+            self.stud_visible_boards_summary()
+        )));
 
         self.table.advance_table_state();
         events.push(self.emit_step_changed());
@@ -438,6 +579,22 @@ impl ServerEngine {
         (true, vec![])
     }
 
+    fn stud_visible_boards_summary(&self) -> String {
+        let mut summary = String::new();
+        for pid in self.table.hand_state().players_with_hands() {
+            let name = self.accounts.name_from_id(pid).unwrap_or("Unknown".into());
+            let up_cards = self
+                .table
+                .hand_state()
+                .player_up_cards(&pid)
+                .cloned()
+                .unwrap_or_default();
+            let up_text = up_cards.iter().map(|c| c.to_string()).collect::<Vec<_>>().join(", ");
+            summary.push_str(&format!("{}: [{}] ", name, up_text));
+        }
+        summary
+    }
+
     pub fn is_decision_step(&self, step: HandStep) -> bool {
         matches!(
             Self::step_kind(step),
@@ -449,8 +606,8 @@ impl ServerEngine {
         match step {
             HandStep::WaitingForPlayers => StepKind::Waiting,
             HandStep::CollectForcedBets => StepKind::ForcedBets,
-            HandStep::DealPrivate | HandStep::DealCommunity => StepKind::Deal,
-            HandStep::BettingRound1 | HandStep::BettingRound2 => StepKind::Betting,
+            HandStep::DealPrivate | HandStep::DealCommunity | HandStep::DealFaceUp => StepKind::Deal,
+            HandStep::BettingRound1 | HandStep::BettingRound2 | HandStep::BettingRound3 | HandStep::BettingRound4 | HandStep::BettingRound5 => StepKind::Betting,
             HandStep::DrawPhase => StepKind::DrawDiscard,
             HandStep::Showdown => StepKind::Showdown,
             HandStep::Payout => StepKind::Payout,
@@ -459,7 +616,7 @@ impl ServerEngine {
 
     pub(super) fn on_enter_decision_step(&mut self, step: HandStep) -> Vec<Event> {
         match step {
-            HandStep::BettingRound1 | HandStep::BettingRound2 => self.enter_betting_round(),
+            HandStep::BettingRound1 | HandStep::BettingRound2 | HandStep::BettingRound3 | HandStep::BettingRound4 | HandStep::BettingRound5 => self.enter_betting_round(),
             HandStep::DrawPhase => self.enter_draw_phase(),
             _ => vec![],
         }
@@ -490,6 +647,9 @@ impl ServerEngine {
         let street = match self.table.current_step() {
             HandStep::BettingRound1 => Street::FirstBetting,
             HandStep::BettingRound2 => Street::SecondBetting,
+            HandStep::BettingRound3 => Street::ThirdBetting,
+            HandStep::BettingRound4 => Street::FourthBetting,
+            HandStep::BettingRound5 => Street::FifthBetting,
             _ => {
                 // Preserve behavior for unexpected calls by falling back to default order.
                 let order = self.table.action_order();

@@ -189,6 +189,10 @@ impl<const HandSize: usize> HandState<HandSize> {
         self.visible_cards.hole_cards.get(player_id)
     }
 
+    pub fn player_up_cards(&self, player_id: &PlayerId) -> Option<&Vec<Card>> {
+        self.visible_cards.up_cards.get(player_id)
+    }
+
     pub fn set_player_hole_cards(&mut self, player_id: PlayerId, cards: Vec<Card>) {
         self.visible_cards.hole_cards.insert(player_id, cards);
     }
