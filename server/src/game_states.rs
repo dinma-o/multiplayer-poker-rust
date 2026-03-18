@@ -209,6 +209,10 @@ impl<const HandSize: usize> HandState<HandSize> {
         self.visible_cards.up_cards.insert(player_id, cards);
     }
 
+    pub fn push_player_up_card(&mut self, player_id: PlayerId, card: Card) {
+        self.visible_cards.up_cards.entry(player_id).or_default().push(card);
+    }
+
     pub fn visible_cards(&self) -> &VisibleHandCards {
         &self.visible_cards
     }

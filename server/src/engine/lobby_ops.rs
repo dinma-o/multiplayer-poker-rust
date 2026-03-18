@@ -184,11 +184,11 @@ impl ServerEngine {
             return vec![self.emit_error("need 2–5 players to start")];
         }
 
-        // Confirm that each player has enough balance to cover the ante
+        // Confirm that each player has enough balance to cover the initial forced bet (ante or bring-in depending on variant)
         for player_id in &eligible {
-            if !self.has_enough_for_ante(*player_id) {
+            if !self.has_enough_to_start_hand(*player_id) {
                 return vec![self.emit_error(format!(
-                    "Player {} does not have enough balance for ante",
+                    "Player {} does not have enough balance for required forced beta",
                     player_id
                 ))];
             }
