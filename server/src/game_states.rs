@@ -218,7 +218,9 @@ impl<const HandSize: usize> HandState<HandSize> {
     }
 
     pub fn players_with_hands(&self) -> Vec<PlayerId> {
-        self.visible_cards.hole_cards.keys().copied().collect()
+        let mut players: Vec<PlayerId> = self.visible_cards.hole_cards.keys().copied().collect();
+        players.sort_unstable();
+        players
     }
 
     pub fn set_player_fold_status(&mut self, player_id: PlayerId, has_folded: bool) {

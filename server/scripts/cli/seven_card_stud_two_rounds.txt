@@ -1,0 +1,38 @@
+acct create simstud_a_20260318 1234 1000
+acct create simstud_b_20260318 1234 1000
+join simstud_a_20260318 1234
+join simstud_b_20260318 1234
+variant stud
+
+seed 3301
+start
+call simstud_b_20260318
+check simstud_a_20260318
+check simstud_b_20260318
+check simstud_a_20260318
+check simstud_b_20260318
+check simstud_a_20260318
+check simstud_b_20260318
+check simstud_a_20260318
+check simstud_b_20260318
+check simstud_a_20260318
+
+seed 3302
+start
+call simstud_a_20260318
+check simstud_b_20260318
+check simstud_a_20260318
+check simstud_b_20260318
+check simstud_a_20260318
+check simstud_b_20260318
+check simstud_a_20260318
+check simstud_b_20260318
+check simstud_a_20260318
+check simstud_b_20260318
+
+lobbystate
+leave simstud_a_20260318
+leave simstud_b_20260318
+acct delete simstud_a_20260318 1234
+acct delete simstud_b_20260318 1234
+quit

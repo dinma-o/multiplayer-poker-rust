@@ -1,132 +1,10 @@
-warning: use of deprecated function `rand::thread_rng`: Renamed to `rng`
-   --> common\src\card_deck.rs:138:19
-    |
-138 |         use rand::thread_rng;
-    |                   ^^^^^^^^^^
-    |
-    = note: `#[warn(deprecated)]` on by default
-
-warning: use of deprecated function `rand::thread_rng`: Renamed to `rng`
-   --> common\src\card_deck.rs:139:23
-    |
-139 |         let mut rng = thread_rng();
-    |                       ^^^^^^^^^^
-
-warning: unused imports: `ANTE_AMOUNT` and `rank_five_card_hand`
- --> server\src\engine\mod.rs:3:39
-  |
-3 |     constants::five_card_draw::{self, ANTE_AMOUNT},
-  |                                       ^^^^^^^^^^^
-4 |     hand::Hand,
-5 |     hand_rank::{self, rank_five_card_hand},
-  |                       ^^^^^^^^^^^^^^^^^^^
-  |
-  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
-
-warning: methods `set_dealer_position`, `reset_dealer`, and `is_dealer_seat` are never used
-  --> server\src\dealer.rs:27:12
-   |
- 8 | impl DealerManager {
-   | ------------------ methods in this implementation
-...
-27 |     pub fn set_dealer_position(&mut self, position: usize) {
-   |            ^^^^^^^^^^^^^^^^^^^
-...
-31 |     pub fn reset_dealer(&mut self) {
-   |            ^^^^^^^^^^^^
-...
-35 |     pub fn is_dealer_seat(&self, player_position: usize) -> bool {
-   |            ^^^^^^^^^^^^^^
-   |
-   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
-
-warning: method `is_in_hand_and_active` is never used
-   --> server\src\engine\betting.rs:359:8
-    |
- 26 | impl ServerEngine {
-    | ----------------- method in this implementation
-...
-359 |     fn is_in_hand_and_active(&self, pid: PlayerId) -> bool {
-    |        ^^^^^^^^^^^^^^^^^^^^^
-
-warning: methods `contrib_of`, `set_contrib`, `mark_done`, and `reset_pending_except` are never used
-  --> server\src\game_states.rs:40:12
-   |
-20 | impl BettingRoundState {
-   | ---------------------- methods in this implementation
-...
-40 |     pub fn contrib_of(&self, pid: PlayerId) -> u32 {
-   |            ^^^^^^^^^^
-...
-44 |     pub fn set_contrib(&mut self, pid: PlayerId, amount: u32) {
-   |            ^^^^^^^^^^^
-...
-48 |     pub fn mark_done(&mut self, pid: PlayerId) {
-   |            ^^^^^^^^^
-...
-52 |     pub fn reset_pending_except(&mut self, active: &[PlayerId], actor: PlayerId) {
-   |            ^^^^^^^^^^^^^^^^^^^^
-
-warning: field `ante_amount` is never read
-   --> server\src\game_states.rs:111:5
-    |
-105 | pub struct HandState<const HAND_SIZE: usize> {
-    |            --------- field in this struct
-...
-111 |     ante_amount: u32,
-    |     ^^^^^^^^^^^
-    |
-    = note: `HandState` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
-
-warning: methods `set_player_up_cards` and `visible_cards` are never used
-   --> server\src\game_states.rs:204:12
-    |
-134 | impl<const HandSize: usize> HandState<HandSize> {
-    | ----------------------------------------------- methods in this implementation
-...
-204 |     pub fn set_player_up_cards(&mut self, player_id: PlayerId, cards: Vec<Card>) {
-    |            ^^^^^^^^^^^^^^^^^^^
-...
-208 |     pub fn visible_cards(&self) -> &VisibleHandCards {
-    |            ^^^^^^^^^^^^^
-
-warning: field `hand_size` is never read
-  --> server\src\table.rs:18:9
-   |
- 9 | pub struct PokerTable {
-   |            ---------- field in this struct
-...
-18 |     pub hand_size: usize,
-   |         ^^^^^^^^^
-   |
-   = note: `PokerTable` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
-
-warning: function `five_card_draw_plan` is never used
-  --> server\src\variants\five_card_draw.rs:24:8
-   |
-24 | pub fn five_card_draw_plan() -> Vec<HandStep> {
-   |        ^^^^^^^^^^^^^^^^^^^
-
-warning: const parameter `HandSize` should have an upper case name
-   --> server\src\game_states.rs:134:12
-    |
-134 | impl<const HandSize: usize> HandState<HandSize> {
-    |            ^^^^^^^^
-    |
-    = note: `#[warn(non_upper_case_globals)]` (part of `#[warn(nonstandard_style)]`) on by default
-help: convert the identifier to upper case
-    |
-134 - impl<const HandSize: usize> HandState<HandSize> {
-134 + impl<const HAND_SIZE: usize> HandState<HandSize> {
-    |
-
 PokerDUD CLI. Type 'help' or 'help <command>' for details.
 > ok
 > ok
-> joined: simhe_a_20260222 (ID: 3) at seat 0
+> joined: simhe_a_20260222 (ID: 1) at seat 0
 seated players:
   seat 0: name simhe_a_20260222 | bal 1000 | GP 0 | PW 0 | F 0
-> joined: simhe_b_20260222 (ID: 4) at seat 1
+> joined: simhe_b_20260222 (ID: 2) at seat 1
 seated players:
   seat 0: name simhe_a_20260222 | bal 1000 | GP 0 | PW 0 | F 0
   seat 1: name simhe_b_20260222 | bal 1000 | GP 0 | PW 0 | F 0
@@ -163,8 +41,8 @@ action requested for simhe_a_20260222: allowed=[Check, Bet, Fold] call=Some(0) m
 > pot: 20
 step: Showdown
 showdown:
-  simhe_b_20260222 -> board=["5♥", "Q♦", "2♣", "6♣", "A♦"] hole=["4♣", "6♠"] => OnePair
   simhe_a_20260222 -> board=["5♥", "Q♦", "2♣", "6♣", "A♦"] hole=["6♦", "5♠"] => TwoPair
+  simhe_b_20260222 -> board=["5♥", "Q♦", "2♣", "6♣", "A♦"] hole=["4♣", "6♠"] => OnePair
 step: Payout
 payout:
   simhe_a_20260222 +20
@@ -202,8 +80,8 @@ action requested for simhe_b_20260222: allowed=[Check, Bet, Fold] call=Some(0) m
 > pot: 20
 step: Showdown
 showdown:
-  simhe_b_20260222 -> board=["6♣", "K♣", "2♠", "Q♦", "4♥"] hole=["A♣", "8♥"] => HighCard
   simhe_a_20260222 -> board=["6♣", "K♣", "2♠", "Q♦", "4♥"] hole=["7♦", "2♣"] => OnePair
+  simhe_b_20260222 -> board=["6♣", "K♣", "2♠", "Q♦", "4♥"] hole=["A♣", "8♥"] => HighCard
 step: Payout
 payout:
   simhe_a_20260222 +20
@@ -212,10 +90,10 @@ step: WaitingForPlayers
 > > seated players:
   seat 0: name simhe_a_20260222 | bal 1020 | GP 2 | PW 2 | F 0
   seat 1: name simhe_b_20260222 | bal 980 | GP 2 | PW 0 | F 0
-> left: simhe_a_20260222 (ID: 3)
+> left: simhe_a_20260222 (ID: 1)
 seated players:
   seat 1: name simhe_b_20260222 | bal 980 | GP 2 | PW 0 | F 0
-> left: simhe_b_20260222 (ID: 4)
+> left: simhe_b_20260222 (ID: 2)
 seated players:
 > ok
 > ok
