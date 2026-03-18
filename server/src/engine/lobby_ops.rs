@@ -188,7 +188,7 @@ impl ServerEngine {
         for player_id in &eligible {
             if !self.has_enough_to_start_hand(*player_id) {
                 return vec![self.emit_error(format!(
-                    "Player {} does not have enough balance for required forced beta",
+                    "Player {} does not have enough balance for required forced bets",
                     player_id
                 ))];
             }
