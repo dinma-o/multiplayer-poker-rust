@@ -28,5 +28,18 @@ pub mod five_card_draw {
 }
 
 // For Seven-card Stud
+pub mod seven_card_stud {
+    // Table start limits
+    pub const INITIAL_CHIPS: u32 = 200; // Starting stack for each player
+    pub const MIN_PLAYERS: u32 = 2; // Minimum number of players to start the game
+    pub const MAX_PLAYERS: u32 = 5; // Maximum number of players allowed at the table
+    pub const ANTE_AMOUNT: u32 = 5; // Ante amount each player must post before the hand starts
+    pub const BRING_IN_AMOUNT: u32 = 5; // Bring-in amount for the player with the lowest upcard
+
+    // Fixed betting limits
+    pub const SMALL_BET: u32 = 10; // Small bet amount for the first two betting rounds
+    pub const BIG_BET: u32 = 20; // Big bet amount for the subsequent betting rounds
+    pub const MAX_RAISES_PER_ROUND: u32 = 3; // Maximum number of raises allowed per betting round
+}
 
 // For Texas Hold’em

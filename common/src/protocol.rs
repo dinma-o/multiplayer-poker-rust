@@ -15,10 +15,14 @@ pub enum HandStep {
     WaitingForPlayers,
     CollectForcedBets, // ante or blinds later
     DealPrivate,       // draw5/hole cards/stud down cards
+    DealFaceUp,        // stud up cards later
     DealCommunity,     // hold'em later
     BettingRound1,
     DrawPhase, // draw5 only (no-op for others)
     BettingRound2,
+    BettingRound3,
+    BettingRound4,
+    BettingRound5,
     Showdown,
     Payout,
 }

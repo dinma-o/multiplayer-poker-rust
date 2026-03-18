@@ -139,7 +139,7 @@ fn print_help_for(parts: &[&str]) {
             println!("Usage: variant five|holdem|stud");
             println!("  Sets the lobby variant for future hands.");
             println!(
-                "  Note: current server rules are Five Card Draw only (variant is informational)."
+                "  Supported variants: five (Five-card Draw), holdem (Texas Hold'em), stud (Seven-card Stud)."
             );
         }
         "seed" => {

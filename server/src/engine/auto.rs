@@ -1,3 +1,5 @@
+use crate::variants;
+
 use super::*;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -35,6 +37,16 @@ impl ServerEngine {
             }
 
             let (progressed, step_events) = self.auto_deal_private();
+            made_progress |= progressed;
+            events.extend(step_events);
+
+            let step = self.table.current_step();
+            if self.is_decision_step(step) {
+                events.extend(self.on_enter_decision_step(step));
+                break;
+            }
+
+            let (progressed, step_events) = self.auto_deal_face_up();
             made_progress |= progressed;
             events.extend(step_events);
 
@@ -87,7 +99,7 @@ impl ServerEngine {
         }
 
         let mut events = Vec::new();
-        let ante = five_card_draw::ANTE_AMOUNT;
+        let ante = self.variant_ante_amount().unwrap_or(five_card_draw::ANTE_AMOUNT);
 
         let seated_ids = self.table
             .seated_players()
@@ -115,7 +127,7 @@ impl ServerEngine {
             }
         }
 
-        if payers.len() < (five_card_draw::MIN_PLAYERS as usize) {
+        if payers.len() < self.variant_min_players() {
             for pid in &kicked {
                 let _ = self.table.leave_table(*pid);
                 events.push(Event::PlayerLeft {
@@ -174,7 +186,7 @@ impl ServerEngine {
             .filter(|pid| !self.sit_out_next.contains(pid))
             .collect();
 
-        if eligible_in_order.len() < (five_card_draw::MIN_PLAYERS as usize) {
+        if eligible_in_order.len() < self.variant_min_players() {
             self.table.reset_to_waiting();
             self.table.apply_pending_requests();
 
@@ -255,7 +267,11 @@ impl ServerEngine {
             return (false, vec![]);
         }
 
-        if self.table.variant_spec() == crate::variants::texas_holdem::SPEC {
+        if self.is_stud_variant() {
+            return self.auto_deal_private_seven_card_stud();
+        }
+
+        if self.is_holdem_variant() {
             return self.auto_deal_private_texas_holdem();
         }
 
@@ -373,6 +389,163 @@ impl ServerEngine {
         (true, events)
     }
 
+    fn auto_deal_private_seven_card_stud(&mut self) -> (bool, Vec<Event>) {
+        let is_third_street = self.table.hand_state().players_with_hands().is_empty();
+        if is_third_street {
+            return self.auto_deal_private_seven_card_stud_third_street();
+        }
+
+        self.auto_deal_private_seven_card_stud_seventh_street()
+    }
+
+    fn auto_deal_private_seven_card_stud_third_street(&mut self) -> (bool, Vec<Event>) {
+        let mut events = Vec::new();
+        self.table.hand_state_mut().reset_for_new_deal();
+        self.table.ensure_dealer_in_seats();
+
+        let seated: Vec<PlayerId> = self.table.action_order();
+        let sit_out = self.sit_out_next.clone();
+        let active: Vec<PlayerId> = seated
+            .iter()
+            .copied()
+            .filter(|pid| !sit_out.contains(pid))
+            .collect();
+
+        for pid in &seated {
+            if sit_out.contains(pid) {
+                self.table.hand_state_mut().set_player_fold_status(*pid, true);
+            } else {
+                self.table.hand_state_mut().set_player_fold_status(*pid, false);
+                self.table.hand_state_mut().set_player_hole_cards(*pid, Vec::new());
+                self.table.hand_state_mut().set_player_up_cards(*pid, Vec::new());
+            }
+        }
+
+        for _ in 0..2 {
+            for pid in &active {
+                if let Some(card) = self.deck.deal_card() {
+                    self.push_card_to_player_hand(*pid, card);
+                }
+            }
+        }
+
+        for pid in &active {
+            if let Some(card) = self.deck.deal_card() {
+                self.push_card_to_player_hand(*pid, card);
+                self.table.hand_state_mut().push_player_up_card(*pid, card);
+            }
+        }
+
+        for pid in &active {
+            let name = self.accounts.name_from_id(*pid).unwrap_or("Unknown".into());
+            let cards = self.table
+                .hand_state()
+                .player_hole_cards(pid)
+                .cloned()
+                .unwrap_or_default();
+            events.push(Event::PrivateHand {
+                player_name: name,
+                cards,
+            });
+        }
+
+        events.push(self.emit_info(format!(
+            "Stud third visible street: {}",
+            self.stud_visible_boards_summary()
+        )));
+
+        self.sit_out_next.clear();
+
+        self.table.advance_table_state();
+        events.push(self.emit_step_changed());
+
+        (true, events)
+    }
+
+    fn auto_deal_private_seven_card_stud_seventh_street(&mut self) -> (bool, Vec<Event>) {
+        let mut events = Vec::new();
+        self.burn_one_card();
+
+        let active: Vec<PlayerId> = self.table
+            .action_order()
+            .into_iter()
+            .filter(|pid| self.table.is_active_player(*pid))
+            .collect();
+
+        for pid in &active {
+            if let Some(card) = self.deck.deal_card() {
+                self.push_card_to_player_hand(*pid, card);
+            }
+        }
+
+        for pid in &active {
+            let name = self.accounts.name_from_id(*pid).unwrap_or("Unknown".into());
+            let cards = self.table
+                .hand_state()
+                .player_hole_cards(pid)
+                .cloned()
+                .unwrap_or_default();
+            events.push(Event::PrivateHand {
+                player_name: name,
+                cards,
+            });
+        }
+
+        events.push(self.emit_info("Stud seventh street dealt"));
+
+        self.table.advance_table_state();
+        events.push(self.emit_step_changed());
+
+        (true, events)
+    }
+
+    fn auto_deal_face_up(&mut self) -> (bool, Vec<Event>) {
+        if self.table.current_step() != HandStep::DealFaceUp {
+            return (false, vec![]);
+        }
+
+        if !self.is_stud_variant() {
+            return (false, vec![]);
+        }
+
+        let mut events = Vec::new();
+        self.burn_one_card();
+
+        let active: Vec<PlayerId> = self.table
+            .action_order()
+            .into_iter()
+            .filter(|pid| self.table.is_active_player(*pid))
+            .collect();
+
+        for pid in &active {
+            if let Some(card) = self.deck.deal_card() {
+                self.push_card_to_player_hand(*pid, card);
+                self.table.hand_state_mut().push_player_up_card(*pid, card);
+            }
+        }
+
+        let street_name = match active
+            .first()
+            .and_then(|pid| self.table.hand_state().player_up_cards(pid))
+            .map(|cards| cards.len())
+        {
+            Some(2) => "fourth street",
+            Some(3) => "fifth street",
+            Some(4) => "sixth street",
+            _ => "next street",
+        };
+
+        events.push(self.emit_info(format!(
+            "Stud {street_name}: {}",
+            self.stud_visible_boards_summary()
+        )));
+
+        self.table.advance_table_state();
+        events.push(self.emit_step_changed());
+
+        (true, events)
+    }
+
     fn auto_deal_community(&mut self) -> (bool, Vec<Event>) {
         if self.table.current_step() != HandStep::DealCommunity {
             return (false, vec![]);
@@ -469,8 +642,12 @@ impl ServerEngine {
         match step {
             HandStep::WaitingForPlayers => StepKind::Waiting,
             HandStep::CollectForcedBets => StepKind::ForcedBets,
-            HandStep::DealPrivate | HandStep::DealCommunity => StepKind::Deal,
-            HandStep::BettingRound1 | HandStep::BettingRound2 => StepKind::Betting,
+            HandStep::DealPrivate | HandStep::DealFaceUp | HandStep::DealCommunity => StepKind::Deal,
+            HandStep::BettingRound1
+            | HandStep::BettingRound2
+            | HandStep::BettingRound3
+            | HandStep::BettingRound4
+            | HandStep::BettingRound5 => StepKind::Betting,
             HandStep::DrawPhase => StepKind::DrawDiscard,
             HandStep::Showdown => StepKind::Showdown,
             HandStep::Payout => StepKind::Payout,
@@ -479,7 +656,11 @@ impl ServerEngine {
 
     pub(super) fn on_enter_decision_step(&mut self, step: HandStep) -> Vec<Event> {
         match step {
-            HandStep::BettingRound1 | HandStep::BettingRound2 => self.enter_betting_round(),
+            HandStep::BettingRound1
+            | HandStep::BettingRound2
+            | HandStep::BettingRound3
+            | HandStep::BettingRound4
+            | HandStep::BettingRound5 => self.enter_betting_round(),
             HandStep::DrawPhase => self.enter_draw_phase(),
             _ => vec![],
         }
@@ -505,60 +686,110 @@ impl ServerEngine {
     }
 
     pub(super) fn enter_betting_round(&mut self) -> Vec<Event> {
-        let street = match self.table.current_step() {
-            HandStep::BettingRound1 => Street::FirstBetting,
-            HandStep::BettingRound2 => Street::SecondBetting,
-            _ => {
-                // Preserve behavior for unexpected calls by falling back to default order.
-                let order = self.table.action_order();
-                return self.enter_betting_round_with_order(order);
-            }
-        };
-        let order = self.table.betting_order(street);
-        self.enter_betting_round_with_order(order)
-    }
+        if self.is_stud_variant() {
+            return self.enter_stud_betting_round();
+        }
 
-    fn enter_betting_round_with_order(&mut self, order: Vec<PlayerId>) -> Vec<Event> {
-        // Filter out to have only active players (not folded and seated)
-        let seated_set: HashSet<PlayerId> = self.table
-            .seated_players()
-            .iter()
-            .map(|(_, pid)| *pid)
-            .collect();
-        let mut active_in_order: Vec<PlayerId> = order
+        let active_in_order: Vec<PlayerId> = self.table
+            .action_order()
             .into_iter()
-            .filter(|pid| {
-                seated_set.contains(pid) && !self.table.hand_state().has_player_folded(pid)
-            })
+            .filter(|pid| self.table.is_active_player(*pid))
             .collect();
 
-        let is_holdem_preflop =
-            self.table.variant_spec() == crate::variants::texas_holdem::SPEC &&
-            self.table.current_step() == HandStep::BettingRound1;
+        let mut order = active_in_order;
+        let mut seeded_current_bet = 0;
+        let mut seeded_contribs = Vec::new();
 
-        let mut preflop_blinds = None;
-        if is_holdem_preflop {
-            if
-                let Some((sb_pid, bb_pid)) = Self::holdem_blind_payers_in_dealer_order(
-                    &active_in_order
-                )
-            {
-                preflop_blinds = Some((sb_pid, bb_pid));
-                if let Some(bb_idx) = active_in_order.iter().position(|pid| *pid == bb_pid) {
-                    let first_to_act_idx = (bb_idx + 1) % active_in_order.len();
-                    active_in_order.rotate_left(first_to_act_idx);
+        if self.is_holdem_variant() && self.table.current_step() == HandStep::BettingRound1 {
+            if let Some((sb_pid, bb_pid)) = Self::holdem_blind_payers_in_dealer_order(&order) {
+                seeded_current_bet = variants::texas_holdem::BIG_BLIND;
+                seeded_contribs.push((sb_pid, variants::texas_holdem::SMALL_BLIND));
+                seeded_contribs.push((bb_pid, variants::texas_holdem::BIG_BLIND));
+
+                if let Some(bb_idx) = order.iter().position(|pid| *pid == bb_pid) {
+                    let first_to_act_idx = (bb_idx + 1) % order.len();
+                    order.rotate_left(first_to_act_idx);
                 }
             }
         }
 
-        // Initialize betting round state
-        self.table.hand_state_mut().start_betting_round(active_in_order);
+        self.enter_betting_round_with_seeded_state(order, seeded_current_bet, seeded_contribs)
+    }
 
-        if let Some((sb_pid, bb_pid)) = preflop_blinds {
-            self.table.hand_state_mut().set_current_bet(crate::variants::texas_holdem::BIG_BLIND);
-            if let Some(br) = self.table.hand_state_mut().betting_mut() {
-                br.contrib.insert(sb_pid, crate::variants::texas_holdem::SMALL_BLIND);
-                br.contrib.insert(bb_pid, crate::variants::texas_holdem::BIG_BLIND);
+    fn enter_stud_betting_round(&mut self) -> Vec<Event> {
+        let active_in_order: Vec<PlayerId> = self.table
+            .action_order()
+            .into_iter()
+            .filter(|pid| self.table.is_active_player(*pid))
+            .collect();
+
+        if active_in_order.is_empty() {
+            return vec![self.emit_error("No active players for stud betting round")];
+        }
+
+        match self.current_stud_street() {
+            Some(StudStreet::Third) => {
+                let Some(bring_in_pid) = self.stud_bring_in_player(&active_in_order) else {
+                    return vec![self.emit_error("Could not determine stud bring-in player")];
+                };
+
+                if let Err(e) = self.accounts.withdraw_by_id(bring_in_pid, seven_card_stud::BRING_IN_AMOUNT as i64) {
+                    return vec![self.emit_error(format!("Bring-in payment failed: {:?}", e))];
+                }
+
+                self.table.hand_state_mut().add_to_pot(seven_card_stud::BRING_IN_AMOUNT);
+
+                let mut order = active_in_order;
+                if let Some(bring_in_idx) = order.iter().position(|pid| *pid == bring_in_pid) {
+                    let first_to_act_idx = (bring_in_idx + 1) % order.len();
+                    order.rotate_left(first_to_act_idx);
+                }
+
+                let mut events = vec![self.emit_current_pot_updated()];
+                
+                events.extend( self.enter_betting_round_with_seeded_state(
+                    order,
+                    seven_card_stud::BRING_IN_AMOUNT,
+                    vec![(bring_in_pid, seven_card_stud::BRING_IN_AMOUNT)],
+                ));
+
+                events
+            }
+            Some(StudStreet::Fourth)
+            | Some(StudStreet::Fifth)
+            | Some(StudStreet::Sixth)
+            | Some(StudStreet::Seventh) => {
+                let Some(opener_pid) = self.stud_visible_opener(&active_in_order) else {
+                    return vec![self.emit_error("Could not determine stud opener")];
+                };
+
+                let mut order = active_in_order;
+                if let Some(opener_idx) = order.iter().position(|pid| *pid == opener_pid) {
+                    order.rotate_left(opener_idx);
+                }
+
+                self.enter_betting_round_with_seeded_state(order, 0, Vec::new())
+            }
+            None => vec![self.emit_error("Invalid stud betting street")],
+        }
+    }
+
+    fn enter_betting_round_with_seeded_state(
+        &mut self,
+        order: Vec<PlayerId>,
+        seeded_current_bet: u32,
+        seeded_contribs: Vec<(PlayerId, u32)>,
+    ) -> Vec<Event> {
+        if order.is_empty() {
+            return vec![self.emit_error("No active players for betting round")];
+        }
+
+        self.table.hand_state_mut().start_betting_round(order);
+        self.table.hand_state_mut().set_current_bet(seeded_current_bet);
+
+        if let Some(br) = self.table.hand_state_mut().betting_mut() {
+            for (pid, contrib) in seeded_contribs {
+                br.contrib.insert(pid, contrib);
             }
         }
 
@@ -584,5 +815,89 @@ impl ServerEngine {
         // Emit ActionRequested for the first player to act
         let first_player = self.table.hand_state().betting().unwrap().current_player();
         vec![self.emit_action_requested(first_player)]
+    }
+
+    fn push_card_to_player_hand(&mut self, player_id: PlayerId, card: common::card_deck::Card) {
+        let mut cards = self.table
+            .hand_state()
+            .player_hole_cards(&player_id)
+            .cloned()
+            .unwrap_or_default();
+        cards.push(card);
+        self.table.hand_state_mut().set_player_hole_cards(player_id, cards);
+    }
+
+    fn burn_one_card(&mut self) {
+        if let Some(card) = self.deck.deal_card() {
+            self.deck.discard(card);
+        }
+    }
+
+    fn stud_visible_boards_summary(&self) -> String {
+        let mut parts = Vec::new();
+        for (_seat, pid) in self.table.seated_players() {
+            if let Some(up_cards) = self.table.hand_state().player_up_cards(&pid) {
+                if !up_cards.is_empty() {
+                    let name = self.accounts.name_from_id(pid).unwrap_or("Unknown".into());
+                    let cards = up_cards
+                        .iter()
+                        .map(|card| card.to_string())
+                        .collect::<Vec<_>>();
+                    parts.push(format!("{name} {:?}", cards));
+                }
+            }
+        }
+
+        if parts.is_empty() {
+            "no up cards".into()
+        } else {
+            parts.join(" | ")
+        }
+    }
+
+    fn stud_bring_in_player(&self, active_in_order: &[PlayerId]) -> Option<PlayerId> {
+        active_in_order
+            .iter()
+            .copied()
+            .filter_map(|pid| {
+                let up_card = self.table.hand_state().player_up_cards(&pid)?.first().copied()?;
+                Some((pid, up_card.rank() as u8, Self::stud_suit_order(up_card.suit())))
+            })
+            .min_by(|a, b| (a.1, a.2).cmp(&(b.1, b.2)))
+            .map(|(pid, _, _)| pid)
+    }
+
+    fn stud_visible_opener(&self, active_in_order: &[PlayerId]) -> Option<PlayerId> {
+        let mut best_pid = None;
+        let mut best_rank = None;
+
+        for pid in active_in_order {
+            let Some(up_cards) = self.table.hand_state().player_up_cards(pid) else {
+                continue;
+            };
+            let rank = Self::stud_visible_rank(up_cards);
+            match best_rank {
+                None => {
+                    best_rank = Some(rank);
+                    best_pid = Some(*pid);
+                }
+                Some(current_best) if rank > current_best => {
+                    best_rank = Some(rank);
+                    best_pid = Some(*pid);
+                }
+                _ => {}
+            }
+        }
+
+        best_pid
+    }
+
+    fn stud_suit_order(suit: common::card_deck::Suit) -> u8 {
+        match suit {
+            common::card_deck::Suit::Clubs => 0,
+            common::card_deck::Suit::Diamonds => 1,
+            common::card_deck::Suit::Hearts => 2,
+            common::card_deck::Suit::Spades => 3,
+        }
     }
 }

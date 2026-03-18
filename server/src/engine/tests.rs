@@ -1,6 +1,9 @@
 use super::ServerEngine;
 use crate::{account_store::AccountStore, table::PokerTable};
-use common::protocol::{ActionCmd, AllowedAction, Command, Event, HandStep, LobbyCmd, PokerVariant};
+use common::constants::seven_card_stud;
+use common::protocol::{
+    ActionCmd, AllowedAction, Command, Event, HandStep, LobbyCmd, PlayerId, PokerVariant,
+};
 use tempfile::TempDir;
 
 struct EngineFixture {
@@ -192,6 +195,167 @@ fn set_holdem_variant(engine: &mut ServerEngine) -> Vec<Event> {
     engine.apply(Command::Lobby(LobbyCmd::SetVariant {
         variant: PokerVariant::TexasHoldEm,
     }))
+}
+
+fn set_stud_variant(engine: &mut ServerEngine) -> Vec<Event> {
+    engine.apply(Command::Lobby(LobbyCmd::SetVariant {
+        variant: PokerVariant::SevenCardStud,
+    }))
+}
+
+fn last_action_requested_min_raise(events: &[Event]) -> Option<i64> {
+    events
+        .iter()
+        .rev()
+        .find_map(|e| match e {
+            Event::ActionRequested { min_raise, .. } => *min_raise,
+            _ => None,
+        })
+}
+
+fn apply_passive_betting_action(engine: &mut ServerEngine, events_with_prompt: &[Event]) -> Vec<Event> {
+    let player_name = last_action_requested_player(events_with_prompt);
+    let allowed = last_action_requested_allowed(events_with_prompt);
+
+    if allowed.contains(&AllowedAction::Call) {
+        engine.apply(Command::Action(ActionCmd::Call { player_name }))
+    } else {
+        engine.apply(Command::Action(ActionCmd::Check { player_name }))
+    }
+}
+
+fn close_current_round_passively_two_players(
+    engine: &mut ServerEngine,
+    events_with_prompt: &[Event],
+) -> Vec<Event> {
+    let e1 = apply_passive_betting_action(engine, events_with_prompt);
+    assert_nonempty_no_error(&e1);
+
+    let e2 = apply_passive_betting_action(engine, &e1);
+    assert_nonempty_no_error(&e2);
+
+    e2
+}
+
+fn stud_suit_order_for_test(suit: common::card_deck::Suit) -> u8 {
+    match suit {
+        common::card_deck::Suit::Clubs => 0,
+        common::card_deck::Suit::Diamonds => 1,
+        common::card_deck::Suit::Hearts => 2,
+        common::card_deck::Suit::Spades => 3,
+    }
+}
+
+fn stud_bring_in_player_for_test(engine: &ServerEngine, active_in_order: &[PlayerId]) -> PlayerId {
+    active_in_order
+        .iter()
+        .copied()
+        .filter_map(|pid| {
+            let up_card = engine.table.hand_state().player_up_cards(&pid)?.first().copied()?;
+            Some((pid, up_card.rank() as u8, stud_suit_order_for_test(up_card.suit())))
+        })
+        .min_by(|a, b| (a.1, a.2).cmp(&(b.1, b.2)))
+        .map(|(pid, _, _)| pid)
+        .expect("bring-in player")
+}
+
+fn stud_visible_rank_for_test(cards: &[common::card_deck::Card]) -> (u8, [u8; 4]) {
+    use std::collections::HashMap;
+
+    let mut counts: HashMap<u8, u8> = HashMap::new();
+    for card in cards {
+        *counts.entry(card.rank() as u8).or_insert(0) += 1;
+    }
+
+    let mut groups: Vec<(u8, u8)> = counts.iter().map(|(&rank, &count)| (count, rank)).collect();
+    groups.sort_unstable_by(|a, b| b.cmp(a));
+
+    let singles_desc = |skip_ranks: &[u8]| -> Vec<u8> {
+        let mut singles: Vec<u8> = cards
+            .iter()
+            .map(|c| c.rank() as u8)
+            .filter(|rank| !skip_ranks.contains(rank))
+            .collect();
+        singles.sort_unstable_by(|a, b| b.cmp(a));
+        singles
+    };
+
+    if let Some(&(4, quad_rank)) = groups.first() {
+        return (4, [quad_rank, 0, 0, 0]);
+    }
+
+    if let Some(&(3, trip_rank)) = groups.first() {
+        let kickers = singles_desc(&[trip_rank]);
+        return (
+            3,
+            [
+                trip_rank,
+                *kickers.get(0).unwrap_or(&0),
+                *kickers.get(1).unwrap_or(&0),
+                0,
+            ],
+        );
+    }
+
+    if groups.len() >= 2 && groups[0].0 == 2 && groups[1].0 == 2 {
+        let high_pair = groups[0].1.max(groups[1].1);
+        let low_pair = groups[0].1.min(groups[1].1);
+        let kicker = singles_desc(&[high_pair, low_pair]).into_iter().next().unwrap_or(0);
+        return (2, [high_pair, low_pair, kicker, 0]);
+    }
+
+    if let Some(&(2, pair_rank)) = groups.first() {
+        let kickers = singles_desc(&[pair_rank]);
+        return (
+            1,
+            [
+                pair_rank,
+                *kickers.get(0).unwrap_or(&0),
+                *kickers.get(1).unwrap_or(&0),
+                *kickers.get(2).unwrap_or(&0),
+            ],
+        );
+    }
+
+    let mut ranks: Vec<u8> = cards.iter().map(|c| c.rank() as u8).collect();
+    ranks.sort_unstable_by(|a, b| b.cmp(a));
+    (
+        0,
+        [
+            *ranks.get(0).unwrap_or(&0),
+            *ranks.get(1).unwrap_or(&0),
+            *ranks.get(2).unwrap_or(&0),
+            *ranks.get(3).unwrap_or(&0),
+        ],
+    )
+}
+
+fn stud_visible_opener_for_test(engine: &ServerEngine, active_in_order: &[PlayerId]) -> PlayerId {
+    let mut best_pid = None;
+    let mut best_rank = None;
+
+    for pid in active_in_order {
+        let up_cards = engine
+            .table
+            .hand_state()
+            .player_up_cards(pid)
+            .expect("visible up cards");
+        let rank = stud_visible_rank_for_test(up_cards);
+
+        match best_rank {
+            None => {
+                best_rank = Some(rank);
+                best_pid = Some(*pid);
+            }
+            Some(current_best) if rank > current_best => {
+                best_rank = Some(rank);
+                best_pid = Some(*pid);
+            }
+            _ => {}
+        }
+    }
+
+    best_pid.expect("visible opener")
 }
 
 fn advance_to_draw_phase(engine: &mut ServerEngine) -> (Vec<Event>, Vec<Event>, Vec<Event>) {
@@ -505,4 +669,281 @@ fn holdem_golden_flow_complete_streets_showdown_payout_waiting() {
     assert_non_negative_pot_and_contribs(&fx.engine);
     // Board resets after payout when hand state is reset.
     assert_eq!(fx.engine.table.hand_state().board_cards().len(), 0);
+}
+
+#[test]
+fn stud_start_hand_deals_third_street_and_seeds_bring_in() {
+    let mut fx = EngineFixture::new_three_players_with_seed(42);
+    let set_variant_events = set_stud_variant(&mut fx.engine);
+    assert_nonempty_no_error(&set_variant_events);
+
+    let start_events = start_to_betting_round1(&mut fx.engine);
+    assert_nonempty_no_error(&start_events);
+    assert_eq!(fx.engine.table.current_step(), HandStep::BettingRound1);
+    assert_steps_exact(
+        &start_events,
+        &[
+            HandStep::CollectForcedBets,
+            HandStep::DealPrivate,
+            HandStep::BettingRound1,
+        ],
+    );
+
+    let active_in_order: Vec<PlayerId> = fx.engine
+        .table
+        .action_order()
+        .into_iter()
+        .filter(|pid| fx.engine.table.is_active_player(*pid))
+        .collect();
+    let bring_in_pid = stud_bring_in_player_for_test(&fx.engine, &active_in_order);
+    let bring_in_name = fx.engine
+        .accounts
+        .name_from_id(bring_in_pid)
+        .expect("bring-in name");
+
+    for pid in &active_in_order {
+        assert_eq!(
+            fx.engine
+                .table
+                .hand_state()
+                .player_hole_cards(pid)
+                .expect("third street cards")
+                .len(),
+            3
+        );
+        assert_eq!(
+            fx.engine
+                .table
+                .hand_state()
+                .player_up_cards(pid)
+                .expect("third street up card")
+                .len(),
+            1
+        );
+    }
+
+    let bring_in_idx = active_in_order
+        .iter()
+        .position(|pid| *pid == bring_in_pid)
+        .expect("bring-in index");
+    let expected_first_actor = active_in_order[(bring_in_idx + 1) % active_in_order.len()];
+    let expected_first_actor_name = fx.engine
+        .accounts
+        .name_from_id(expected_first_actor)
+        .expect("first actor name");
+
+    let br = fx.engine.table.hand_state().betting().expect("betting state");
+    assert_eq!(
+        fx.engine.table.hand_state().pot_size(),
+        15 + seven_card_stud::BRING_IN_AMOUNT
+    );
+    assert_eq!(fx.engine.table.hand_state().current_bet(), 5);
+    assert_eq!(br.contrib.get(&bring_in_pid).copied(), Some(5), "bring-in player should have forced contribution");
+    assert_eq!(last_action_requested_player(&start_events), expected_first_actor_name);
+    assert!(
+        !last_action_requested_allowed(&start_events).contains(&AllowedAction::Check),
+        "the player after the bring-in should not be allowed to check"
+    );
+    assert_ne!(bring_in_name, expected_first_actor_name);
+}
+
+#[test]
+fn stud_completion_moves_to_fourth_street_with_visible_best_opener() {
+    let mut fx = EngineFixture::new_three_players_with_seed(42);
+    let set_variant_events = set_stud_variant(&mut fx.engine);
+    assert_nonempty_no_error(&set_variant_events);
+
+    let start_events = start_to_betting_round1(&mut fx.engine);
+    assert_nonempty_no_error(&start_events);
+
+    let first_actor = last_action_requested_player(&start_events);
+    let complete_events = fx.engine.apply(Command::Action(ActionCmd::Raise {
+        player_name: first_actor,
+        amount: 5,
+    }));
+    assert_nonempty_no_error(&complete_events);
+
+    let second_actor = last_action_requested_player(&complete_events);
+    let second_call_events = fx.engine.apply(Command::Action(ActionCmd::Call {
+        player_name: second_actor,
+    }));
+    assert_nonempty_no_error(&second_call_events);
+
+    let third_actor = last_action_requested_player(&second_call_events);
+    let close_events = fx.engine.apply(Command::Action(ActionCmd::Call {
+        player_name: third_actor,
+    }));
+    assert_nonempty_no_error(&close_events);
+
+    assert_eq!(fx.engine.table.current_step(), HandStep::BettingRound2);
+    assert_steps_exact(&close_events, &[HandStep::DealFaceUp, HandStep::BettingRound2]);
+    assert_eq!(fx.engine.table.hand_state().current_bet(), 0);
+
+    let active_in_order: Vec<PlayerId> = fx.engine
+        .table
+        .action_order()
+        .into_iter()
+        .filter(|pid| fx.engine.table.is_active_player(*pid))
+        .collect();
+    let opener_pid = stud_visible_opener_for_test(&fx.engine, &active_in_order);
+    let opener_name = fx.engine
+        .accounts
+        .name_from_id(opener_pid)
+        .expect("opener name");
+
+    for pid in &active_in_order {
+        assert_eq!(
+            fx.engine
+                .table
+                .hand_state()
+                .player_hole_cards(pid)
+                .expect("fourth street total cards")
+                .len(),
+            4
+        );
+        assert_eq!(
+            fx.engine
+                .table
+                .hand_state()
+                .player_up_cards(pid)
+                .expect("fourth street up cards")
+                .len(),
+            2
+        );
+    }
+
+    assert_eq!(fx.engine.table.hand_state().pot_size(), 45);
+    assert_eq!(last_action_requested_player(&close_events), opener_name);
+    let allowed = last_action_requested_allowed(&close_events);
+    assert!(allowed.contains(&AllowedAction::Check));
+    assert!(allowed.contains(&AllowedAction::Bet));
+}
+
+#[test]
+fn stud_start_requires_enough_for_ante_and_possible_bring_in() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let path = tmp.path().join("accounts.json");
+
+    let mut store = AccountStore::load(&path).expect("load account store");
+    store
+        .create_account("alice", "1234", seven_card_stud::ANTE_AMOUNT as i64)
+        .expect("create alice");
+    store
+        .create_account("bob", "1234", 1_000)
+        .expect("create bob");
+
+    let table = PokerTable::new();
+    let mut engine = ServerEngine::new(store, table);
+
+    let set_variant = set_stud_variant(&mut engine);
+    assert_nonempty_no_error(&set_variant);
+
+    let join_alice = engine.apply(Command::Lobby(LobbyCmd::Join {
+        player_name: "alice".to_string(),
+        pin: "1234".to_string(),
+    }));
+    assert_nonempty_no_error(&join_alice);
+
+    let join_bob = engine.apply(Command::Lobby(LobbyCmd::Join {
+        player_name: "bob".to_string(),
+        pin: "1234".to_string(),
+    }));
+    assert_nonempty_no_error(&join_bob);
+
+    let start_events = engine.apply(Command::Lobby(LobbyCmd::StartHand));
+    assert!(
+        start_events.iter().any(|event| matches!(
+            event,
+            Event::Error { message }
+            if message.contains("required forced bets")
+        )),
+        "expected start-hand failure for insufficient stud bring-in coverage"
+    );
+}
+
+#[test]
+fn stud_big_bet_streets_and_seventh_street_private_card() {
+    let mut fx = EngineFixture::new_two_players_with_seed(42);
+    let set_variant_events = set_stud_variant(&mut fx.engine);
+    assert_nonempty_no_error(&set_variant_events);
+
+    let start_events = start_to_betting_round1(&mut fx.engine);
+    assert_nonempty_no_error(&start_events);
+
+    let fourth_prompt_events = close_current_round_passively_two_players(&mut fx.engine, &start_events);
+    assert_eq!(fx.engine.table.current_step(), HandStep::BettingRound2);
+    assert_eq!(last_action_requested_min_raise(&fourth_prompt_events), Some(10));
+
+    let fifth_prompt_events =
+        close_current_round_passively_two_players(&mut fx.engine, &fourth_prompt_events);
+    assert_eq!(fx.engine.table.current_step(), HandStep::BettingRound3);
+    assert_steps_exact(&fifth_prompt_events, &[HandStep::DealFaceUp, HandStep::BettingRound3]);
+    assert_eq!(last_action_requested_min_raise(&fifth_prompt_events), Some(20));
+
+    let sixth_prompt_events =
+        close_current_round_passively_two_players(&mut fx.engine, &fifth_prompt_events);
+    assert_eq!(fx.engine.table.current_step(), HandStep::BettingRound4);
+    assert_steps_exact(&sixth_prompt_events, &[HandStep::DealFaceUp, HandStep::BettingRound4]);
+    assert_eq!(last_action_requested_min_raise(&sixth_prompt_events), Some(20));
+
+    let seventh_prompt_events =
+        close_current_round_passively_two_players(&mut fx.engine, &sixth_prompt_events);
+    assert_eq!(fx.engine.table.current_step(), HandStep::BettingRound5);
+    assert_steps_exact(&seventh_prompt_events, &[HandStep::DealPrivate, HandStep::BettingRound5]);
+    assert_eq!(last_action_requested_min_raise(&seventh_prompt_events), Some(20));
+
+    for pid in fx.engine.active_players_in_hand() {
+        assert_eq!(
+            fx.engine
+                .table
+                .hand_state()
+                .player_hole_cards(&pid)
+                .expect("seventh street cards")
+                .len(),
+            7
+        );
+        assert_eq!(
+            fx.engine
+                .table
+                .hand_state()
+                .player_up_cards(&pid)
+                .expect("stud up cards")
+                .len(),
+            4
+        );
+    }
+}
+
+#[test]
+fn stud_showdown_and_payout_complete() {
+    let mut fx = EngineFixture::new_two_players_with_seed(42);
+    let set_variant_events = set_stud_variant(&mut fx.engine);
+    assert_nonempty_no_error(&set_variant_events);
+
+    let start_events = start_to_betting_round1(&mut fx.engine);
+    assert_nonempty_no_error(&start_events);
+
+    let fourth_prompt_events = close_current_round_passively_two_players(&mut fx.engine, &start_events);
+    let fifth_prompt_events =
+        close_current_round_passively_two_players(&mut fx.engine, &fourth_prompt_events);
+    let sixth_prompt_events =
+        close_current_round_passively_two_players(&mut fx.engine, &fifth_prompt_events);
+    let seventh_prompt_events =
+        close_current_round_passively_two_players(&mut fx.engine, &sixth_prompt_events);
+    let terminal_events =
+        close_current_round_passively_two_players(&mut fx.engine, &seventh_prompt_events);
+
+    assert_eq!(fx.engine.table.current_step(), HandStep::WaitingForPlayers);
+    assert_steps_exact(
+        &terminal_events,
+        &[HandStep::Showdown, HandStep::Payout, HandStep::WaitingForPlayers],
+    );
+
+    let showdown = showdown_results(&terminal_events);
+    assert_eq!(showdown.len(), 2);
+    for (_name, desc) in showdown {
+        assert!(desc.contains("cards="), "missing full stud cards in showdown desc: {desc}");
+        assert!(desc.contains("up="), "missing stud up cards in showdown desc: {desc}");
+        assert!(desc.contains("=>"), "missing best-hand marker in showdown desc: {desc}");
+    }
 }

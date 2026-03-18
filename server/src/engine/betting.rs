@@ -69,6 +69,10 @@ impl ServerEngine {
             .unwrap_or(0);
         let call_amount = current_bet.saturating_sub(contrib);
 
+        if self.is_stud_variant() {
+            return self.validate_stud_betting_action(pid, cmd, current_bet, call_amount);
+        }
+
         match cmd {
             ActionCmd::Check { .. } => {
                 if call_amount != 0 {
@@ -108,7 +112,7 @@ impl ServerEngine {
                     pid,
                     player_name: player_name.clone(),
                     amount: *amount,
-                    active_players: self.active_players_in_order(),
+                    active_players: self.active_players_for_current_betting_round(),
                 })
             }
 
@@ -136,7 +140,7 @@ impl ServerEngine {
 
                 {
                     let br = self.table.hand_state().betting().unwrap();
-                    if br.raises_used >= five_card_draw::MAX_RAISES_PER_ROUND {
+                    if br.raises_used >= self.max_raises_for_current_variant() {
                         return Err(vec![self.emit_error("Raise cap reached")]);
                     }
                 }
@@ -173,6 +177,106 @@ impl ServerEngine {
                     .copied()
                     .unwrap_or(0);
                 let delta = new_bet.saturating_sub(br_contrib);
+
+                Ok(ValidatedBet::Raise {
+                    pid,
+                    player_name: player_name.clone(),
+                    new_bet,
+                    delta,
+                    active_players: self.active_players_for_current_betting_round(),
+                })
+            }
+
+            _ => Err(vec![self.emit_error("Unsupported action in betting round")]),
+        }
+    }
+
+    fn validate_stud_betting_action(
+        &self,
+        pid: PlayerId,
+        cmd: &ActionCmd,
+        current_bet: u32,
+        call_amount: u32,
+    ) -> Result<ValidatedBet, Vec<Event>> {
+
+        let opening_bet = self.stud_opening_bet_size().ok_or_else(|| vec![self.emit_error("Invalid hand step for Stud betting")])?;
+
+        let raise_by = self.stud_raise_by_amount(current_bet).ok_or_else(|| vec![self.emit_error("Invalid raise amount for Stud betting")])?;
+
+        let raises_used = self.table.hand_state().betting().map(|br| br.raises_used).unwrap_or(0);
+
+        match cmd {
+            ActionCmd::Check { .. } => {
+                if call_amount != 0 {
+                    return Err(vec![self.emit_error("Cannot check when facing a bet")]);
+                }
+                Ok(ValidatedBet::Check { pid })
+            }
+            ActionCmd::Fold { .. } => Ok(ValidatedBet::Fold { pid }),
+            ActionCmd::Bet { player_name, amount} => {
+                if current_bet != 0 {
+                    return Err(vec![
+                        self.emit_error("Cannot bet after betting has started; use raise"),
+                    ]);
+                }
+
+                if *amount != opening_bet as i64 {
+                    return Err(vec![self.emit_error(format!(
+                        "Bet amount must be exactly {} in Stud",
+                        opening_bet
+                    ))]);
+                }
+
+                Ok(ValidatedBet::Bet {
+                    pid,
+                    player_name: player_name.clone(),
+                    amount: *amount,
+                    active_players: self.active_players_in_order(),
+                })
+            }
+
+            ActionCmd::Call { player_name } => {
+                if call_amount == 0 {
+                    return Err(vec![self.emit_error("Nothing to call")]);
+                }
+
+                Ok(ValidatedBet::Call {
+                    pid,
+                    player_name: player_name.clone(),
+                    call_amount,
+                })
+            }
+
+            ActionCmd::Raise { player_name, amount } => {
+                if current_bet == 0 {
+                    return Err(vec![
+                        self.emit_error("Cannot raise when no bet exists; use bet"),
+                    ]);
+                }
+
+                if raises_used >= seven_card_stud::MAX_RAISES_PER_ROUND {
+                    return Err(vec![self.emit_error("Raise cap reached")]);
+                }
+
+                if *amount != raise_by as i64 {
+                    return Err(vec![self.emit_error(format!(
+                        "Raise amount must be exactly {} in Stud",
+                        raise_by
+                    ))]);
+                }
+
+                let contrib = self
+                    .table
+                    .hand_state()
+                    .betting()
+                    .unwrap()
+                    .contrib
+                    .get(&pid)
+                    .copied()
+                    .unwrap_or(0);
+
+                let new_bet = current_bet + raise_by;
+                let delta = new_bet.saturating_sub(contrib);
 
                 Ok(ValidatedBet::Raise {
                     pid,
@@ -356,14 +460,6 @@ impl ServerEngine {
         Ok(pid)
     }
 
-    fn is_in_hand_and_active(&self, pid: PlayerId) -> bool {
-        // seated AND not folded
-        self.table
-            .seated_players()
-            .iter()
-            .any(|(_, spid)| *spid == pid) && !self.table.hand_state().has_player_folded(&pid)
-    }
-
     fn active_players_in_order(&self) -> Vec<PlayerId> {
         let seated_set: HashSet<PlayerId> = self.table
             .seated_players()
@@ -435,7 +531,17 @@ impl ServerEngine {
 
         let raises_capped =
             self.table.hand_state().betting().unwrap().raises_used >=
-            five_card_draw::MAX_RAISES_PER_ROUND;
+            self.max_raises_for_current_variant();
+
+        let min_raise = if self.is_stud_variant() {
+            if current_bet == 0 {
+                self.stud_opening_bet_size().map(|amount| amount as i64)
+            } else {
+                self.stud_raise_by_amount(current_bet).map(|am| am as i64)
+            }
+        } else {
+            Some(five_card_draw::MIN_RAISE_AMOUNT as i64)
+        };
 
         let allowed_actions: Vec<AllowedAction> = if current_bet == 0 {
             vec![AllowedAction::Check, AllowedAction::Bet, AllowedAction::Fold]
@@ -462,7 +568,7 @@ impl ServerEngine {
             player_name: pname.to_string(),
             allowed: allowed_actions,
             call_amount: Some(call_amount as i64),
-            min_raise: Some(five_card_draw::RAISE_INCREMENT as i64),
+            min_raise,
         }
     }
 }
