@@ -1,0 +1,126 @@
+PokerDUD CLI. Type 'help' or 'help <command>' for details.
+> ok
+> ok
+> joined: simstud_a_20260318 (ID: 1) at seat 0
+seated players:
+  seat 0: name simstud_a_20260318 | bal 1000 | GP 0 | PW 0 | F 0
+> joined: simstud_b_20260318 (ID: 2) at seat 1
+seated players:
+  seat 0: name simstud_a_20260318 | bal 1000 | GP 0 | PW 0 | F 0
+  seat 1: name simstud_b_20260318 | bal 1000 | GP 0 | PW 0 | F 0
+> info: Set poker variant to SevenCardStud (active: Seven Card Stud)
+> > info: RNG seed set to 3301
+> step: CollectForcedBets
+pot: 10
+step: DealPrivate
+hand(simstud_b_20260318): ["Q♥", "4♥", "Q♦"]
+hand(simstud_a_20260318): ["7♥", "7♣", "8♥"]
+info: Stud third visible street: simstud_a_20260318 ["8♥"] | simstud_b_20260318 ["Q♦"]
+step: BettingRound1
+pot: 15
+action requested for simstud_b_20260318: allowed=[Call, Raise, Fold] call=Some(5) min_raise=Some(5)
+> pot: 20
+action requested for simstud_a_20260318: allowed=[Check, Raise, Fold] call=Some(0) min_raise=Some(5)
+> pot: 20
+step: DealFaceUp
+info: Stud fourth street: simstud_a_20260318 ["8♥", "4♠"] | simstud_b_20260318 ["Q♦", "A♥"]
+step: BettingRound2
+action requested for simstud_b_20260318: allowed=[Check, Bet, Fold] call=Some(0) min_raise=Some(10)
+> pot: 20
+action requested for simstud_a_20260318: allowed=[Check, Bet, Fold] call=Some(0) min_raise=Some(10)
+> pot: 20
+step: DealFaceUp
+info: Stud fifth street: simstud_a_20260318 ["8♥", "4♠", "2♣"] | simstud_b_20260318 ["Q♦", "A♥", "2♦"]
+step: BettingRound3
+action requested for simstud_b_20260318: allowed=[Check, Bet, Fold] call=Some(0) min_raise=Some(20)
+> pot: 20
+action requested for simstud_a_20260318: allowed=[Check, Bet, Fold] call=Some(0) min_raise=Some(20)
+> pot: 20
+step: DealFaceUp
+info: Stud sixth street: simstud_a_20260318 ["8♥", "4♠", "2♣", "J♣"] | simstud_b_20260318 ["Q♦", "A♥", "2♦", "3♥"]
+step: BettingRound4
+action requested for simstud_b_20260318: allowed=[Check, Bet, Fold] call=Some(0) min_raise=Some(20)
+> pot: 20
+action requested for simstud_a_20260318: allowed=[Check, Bet, Fold] call=Some(0) min_raise=Some(20)
+> pot: 20
+step: DealPrivate
+hand(simstud_b_20260318): ["Q♥", "4♥", "Q♦", "A♥", "2♦", "3♥", "10♦"]
+hand(simstud_a_20260318): ["7♥", "7♣", "8♥", "4♠", "2♣", "J♣", "6♥"]
+info: Stud seventh street dealt
+step: BettingRound5
+action requested for simstud_b_20260318: allowed=[Check, Bet, Fold] call=Some(0) min_raise=Some(20)
+> pot: 20
+action requested for simstud_a_20260318: allowed=[Check, Bet, Fold] call=Some(0) min_raise=Some(20)
+> pot: 20
+step: Showdown
+showdown:
+  simstud_a_20260318 -> cards=["7♥", "7♣", "8♥", "4♠", "2♣", "J♣", "6♥"] up=["8♥", "4♠", "2♣", "J♣"] => OnePair
+  simstud_b_20260318 -> cards=["Q♥", "4♥", "Q♦", "A♥", "2♦", "3♥", "10♦"] up=["Q♦", "A♥", "2♦", "3♥"] => OnePair
+step: Payout
+payout:
+  simstud_b_20260318 +20
+pot: 0
+step: WaitingForPlayers
+> > info: RNG seed set to 3302
+> step: CollectForcedBets
+pot: 10
+step: DealPrivate
+hand(simstud_a_20260318): ["6♠", "Q♥", "K♥"]
+hand(simstud_b_20260318): ["4♠", "6♥", "9♣"]
+info: Stud third visible street: simstud_a_20260318 ["K♥"] | simstud_b_20260318 ["9♣"]
+step: BettingRound1
+pot: 15
+action requested for simstud_a_20260318: allowed=[Call, Raise, Fold] call=Some(5) min_raise=Some(5)
+> pot: 20
+action requested for simstud_b_20260318: allowed=[Check, Raise, Fold] call=Some(0) min_raise=Some(5)
+> pot: 20
+step: DealFaceUp
+info: Stud fourth street: simstud_a_20260318 ["K♥", "J♥"] | simstud_b_20260318 ["9♣", "3♠"]
+step: BettingRound2
+action requested for simstud_a_20260318: allowed=[Check, Bet, Fold] call=Some(0) min_raise=Some(10)
+> pot: 20
+action requested for simstud_b_20260318: allowed=[Check, Bet, Fold] call=Some(0) min_raise=Some(10)
+> pot: 20
+step: DealFaceUp
+info: Stud fifth street: simstud_a_20260318 ["K♥", "J♥", "4♥"] | simstud_b_20260318 ["9♣", "3♠", "4♣"]
+step: BettingRound3
+action requested for simstud_a_20260318: allowed=[Check, Bet, Fold] call=Some(0) min_raise=Some(20)
+> pot: 20
+action requested for simstud_b_20260318: allowed=[Check, Bet, Fold] call=Some(0) min_raise=Some(20)
+> pot: 20
+step: DealFaceUp
+info: Stud sixth street: simstud_a_20260318 ["K♥", "J♥", "4♥", "5♣"] | simstud_b_20260318 ["9♣", "3♠", "4♣", "2♠"]
+step: BettingRound4
+action requested for simstud_a_20260318: allowed=[Check, Bet, Fold] call=Some(0) min_raise=Some(20)
+> pot: 20
+action requested for simstud_b_20260318: allowed=[Check, Bet, Fold] call=Some(0) min_raise=Some(20)
+> pot: 20
+step: DealPrivate
+hand(simstud_a_20260318): ["6♠", "Q♥", "K♥", "J♥", "4♥", "5♣", "A♦"]
+hand(simstud_b_20260318): ["4♠", "6♥", "9♣", "3♠", "4♣", "2♠", "2♦"]
+info: Stud seventh street dealt
+step: BettingRound5
+action requested for simstud_a_20260318: allowed=[Check, Bet, Fold] call=Some(0) min_raise=Some(20)
+> pot: 20
+action requested for simstud_b_20260318: allowed=[Check, Bet, Fold] call=Some(0) min_raise=Some(20)
+> pot: 20
+step: Showdown
+showdown:
+  simstud_a_20260318 -> cards=["6♠", "Q♥", "K♥", "J♥", "4♥", "5♣", "A♦"] up=["K♥", "J♥", "4♥", "5♣"] => HighCard
+  simstud_b_20260318 -> cards=["4♠", "6♥", "9♣", "3♠", "4♣", "2♠", "2♦"] up=["9♣", "3♠", "4♣", "2♠"] => TwoPair
+step: Payout
+payout:
+  simstud_b_20260318 +20
+pot: 0
+step: WaitingForPlayers
+> > seated players:
+  seat 0: name simstud_a_20260318 | bal 980 | GP 2 | PW 0 | F 0
+  seat 1: name simstud_b_20260318 | bal 1020 | GP 2 | PW 2 | F 0
+> left: simstud_a_20260318 (ID: 1)
+seated players:
+  seat 1: name simstud_b_20260318 | bal 1020 | GP 2 | PW 2 | F 0
+> left: simstud_b_20260318 (ID: 2)
+seated players:
+> ok
+> ok
+> Bye.

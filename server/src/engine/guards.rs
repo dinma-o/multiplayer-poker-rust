@@ -1,6 +1,6 @@
 use super::*;
 
-impl ServerEngine {
+impl GameEngine {
     pub(super) fn require_step_with_message(
         &self,
         expected_step: HandStep,
@@ -17,9 +17,11 @@ impl ServerEngine {
         &self,
         player_name: &str,
     ) -> Result<PlayerId, Vec<Event>> {
-        match self.accounts.get_by_name(player_name) {
+        match self.account_by_name(player_name) {
             Ok(acct) => Ok(acct.id),
-            Err(e) => Err(vec![self.emit_error(format!("Get account failed: {:?}", e))]),
+            Err(e) => Err(vec![
+                self.emit_error(format!("Get account failed: {:?}", e)),
+            ]),
         }
     }
 
@@ -27,9 +29,11 @@ impl ServerEngine {
         &self,
         player_name: &str,
     ) -> Result<(PlayerId, String), Vec<Event>> {
-        match self.accounts.get_by_name(player_name) {
+        match self.account_by_name(player_name) {
             Ok(acct) => Ok((acct.id, acct.name.clone())),
-            Err(e) => Err(vec![self.emit_error(format!("Get account failed: {:?}", e))]),
+            Err(e) => Err(vec![
+                self.emit_error(format!("Get account failed: {:?}", e)),
+            ]),
         }
     }
 
@@ -44,10 +48,9 @@ impl ServerEngine {
             .iter()
             .any(|(_, spid)| *spid == pid);
         if !is_seated {
-            return Err(vec![self.emit_error(format!(
-                "Player {} is not seated",
-                player_name
-            ))]);
+            return Err(vec![
+                self.emit_error(format!("Player {} is not seated", player_name)),
+            ]);
         }
 
         Ok(())
@@ -64,9 +67,7 @@ impl ServerEngine {
         if pid != current_player {
             return Err(vec![self.emit_error(format!(
                 "Not your turn. Expected {}",
-                self.accounts
-                    .name_from_id(current_player)
-                    .unwrap_or("Unknown".into())
+                self.account_name(current_player)
             ))]);
         }
 
@@ -82,10 +83,7 @@ impl ServerEngine {
         };
 
         if pid != expected {
-            let expected_name = self
-                .accounts
-                .name_from_id(expected)
-                .unwrap_or("Unknown".into());
+            let expected_name = self.account_name(expected);
             return Err(vec![self.emit_error(format!(
                 "Not your draw turn. Expected {expected_name}"
             ))]);

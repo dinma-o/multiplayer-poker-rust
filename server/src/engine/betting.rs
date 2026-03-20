@@ -1,8 +1,12 @@
 use super::*;
 
 enum ValidatedBet {
-    Check { pid: PlayerId },
-    Fold { pid: PlayerId },
+    Check {
+        pid: PlayerId,
+    },
+    Fold {
+        pid: PlayerId,
+    },
     Bet {
         pid: PlayerId,
         player_name: String,
@@ -23,7 +27,7 @@ enum ValidatedBet {
     },
 }
 
-impl ServerEngine {
+impl GameEngine {
     pub(super) fn apply_betting_action(&mut self, cmd: ActionCmd) -> Vec<Event> {
         // Resolve name -> pid
         let (pid, _pname) = match self.resolve_player_from_action(&cmd) {
@@ -83,7 +87,10 @@ impl ServerEngine {
 
             ActionCmd::Fold { .. } => Ok(ValidatedBet::Fold { pid }),
 
-            ActionCmd::Bet { player_name, amount } => {
+            ActionCmd::Bet {
+                player_name,
+                amount,
+            } => {
                 if current_bet != 0 {
                     return Err(vec![
                         self.emit_error("Cannot bet after betting has started; use raise"),
@@ -128,7 +135,10 @@ impl ServerEngine {
                 })
             }
 
-            ActionCmd::Raise { player_name, amount } => {
+            ActionCmd::Raise {
+                player_name,
+                amount,
+            } => {
                 if current_bet == 0 {
                     return Err(vec![
                         self.emit_error("Cannot raise when no bet exists; use bet"),
@@ -198,12 +208,20 @@ impl ServerEngine {
         current_bet: u32,
         call_amount: u32,
     ) -> Result<ValidatedBet, Vec<Event>> {
+        let opening_bet = self
+            .stud_opening_bet_size()
+            .ok_or_else(|| vec![self.emit_error("Invalid hand step for Stud betting")])?;
 
-        let opening_bet = self.stud_opening_bet_size().ok_or_else(|| vec![self.emit_error("Invalid hand step for Stud betting")])?;
+        let raise_by = self
+            .stud_raise_by_amount(current_bet)
+            .ok_or_else(|| vec![self.emit_error("Invalid raise amount for Stud betting")])?;
 
-        let raise_by = self.stud_raise_by_amount(current_bet).ok_or_else(|| vec![self.emit_error("Invalid raise amount for Stud betting")])?;
-
-        let raises_used = self.table.hand_state().betting().map(|br| br.raises_used).unwrap_or(0);
+        let raises_used = self
+            .table
+            .hand_state()
+            .betting()
+            .map(|br| br.raises_used)
+            .unwrap_or(0);
 
         match cmd {
             ActionCmd::Check { .. } => {
@@ -213,7 +231,10 @@ impl ServerEngine {
                 Ok(ValidatedBet::Check { pid })
             }
             ActionCmd::Fold { .. } => Ok(ValidatedBet::Fold { pid }),
-            ActionCmd::Bet { player_name, amount} => {
+            ActionCmd::Bet {
+                player_name,
+                amount,
+            } => {
                 if current_bet != 0 {
                     return Err(vec![
                         self.emit_error("Cannot bet after betting has started; use raise"),
@@ -247,7 +268,10 @@ impl ServerEngine {
                 })
             }
 
-            ActionCmd::Raise { player_name, amount } => {
+            ActionCmd::Raise {
+                player_name,
+                amount,
+            } => {
                 if current_bet == 0 {
                     return Err(vec![
                         self.emit_error("Cannot raise when no bet exists; use bet"),
@@ -304,7 +328,9 @@ impl ServerEngine {
             }
 
             ValidatedBet::Fold { pid } => {
-                self.table.hand_state_mut().set_player_fold_status(pid, true);
+                self.table
+                    .hand_state_mut()
+                    .set_player_fold_status(pid, true);
                 self.table
                     .hand_state_mut()
                     .betting_mut()
@@ -336,7 +362,9 @@ impl ServerEngine {
                 amount,
                 active_players,
             } => {
-                if let Err(e) = self.accounts.withdraw(&player_name, amount as i64) {
+                if let Err(e) = self
+                    .with_accounts_mut(|accounts| accounts.withdraw(&player_name, amount as i64))
+                {
                     return vec![self.emit_error(format!("Withdraw failed: {:?}", e))];
                 }
 
@@ -355,7 +383,9 @@ impl ServerEngine {
                 player_name,
                 call_amount,
             } => {
-                if let Err(e) = self.accounts.withdraw(&player_name, call_amount as i64) {
+                if let Err(e) = self.with_accounts_mut(|accounts| {
+                    accounts.withdraw(&player_name, call_amount as i64)
+                }) {
                     return vec![self.emit_error(format!("Withdraw failed: {:?}", e))];
                 }
 
@@ -374,7 +404,9 @@ impl ServerEngine {
                 delta,
                 active_players,
             } => {
-                if let Err(e) = self.accounts.withdraw(&player_name, delta as i64) {
+                if let Err(e) =
+                    self.with_accounts_mut(|accounts| accounts.withdraw(&player_name, delta as i64))
+                {
                     return vec![self.emit_error(format!("Withdraw failed: {:?}", e))];
                 }
 
@@ -442,7 +474,7 @@ impl ServerEngine {
     }
 
     fn resolve_pid(&self, player_name: &str) -> Result<PlayerId, Event> {
-        let pid = match self.accounts.get_by_name(player_name) {
+        let pid = match self.account_by_name(player_name) {
             Ok(acct) => acct.id,
             Err(e) => {
                 return Err(
@@ -461,7 +493,8 @@ impl ServerEngine {
     }
 
     fn active_players_in_order(&self) -> Vec<PlayerId> {
-        let seated_set: HashSet<PlayerId> = self.table
+        let seated_set: HashSet<PlayerId> = self
+            .table
             .seated_players()
             .iter()
             .map(|(_, pid)| *pid)
@@ -488,7 +521,7 @@ impl ServerEngine {
 
     pub(super) fn advance_to_next_actor_local(
         br: &mut BettingRoundState,
-        is_active: &impl Fn(PlayerId) -> bool
+        is_active: &impl Fn(PlayerId) -> bool,
     ) {
         let n = br.order.len();
         if n == 0 {
@@ -506,7 +539,7 @@ impl ServerEngine {
 
     fn resolve_player_from_action(&self, cmd: &ActionCmd) -> Result<(PlayerId, String), Event> {
         match cmd {
-            | ActionCmd::Check { player_name }
+            ActionCmd::Check { player_name }
             | ActionCmd::Bet { player_name, .. }
             | ActionCmd::Call { player_name }
             | ActionCmd::Raise { player_name, .. }
@@ -520,18 +553,19 @@ impl ServerEngine {
 
     pub(super) fn action_requested_event_for(&self, pid: PlayerId, pname: &str) -> Event {
         let current_bet = self.table.hand_state().current_bet();
-        let contrib = self.table
+        let contrib = self
+            .table
             .hand_state()
             .betting()
             .unwrap()
-            .contrib.get(&pid)
+            .contrib
+            .get(&pid)
             .copied()
             .unwrap_or(0);
         let call_amount = current_bet.saturating_sub(contrib);
 
-        let raises_capped =
-            self.table.hand_state().betting().unwrap().raises_used >=
-            self.max_raises_for_current_variant();
+        let raises_capped = self.table.hand_state().betting().unwrap().raises_used
+            >= self.max_raises_for_current_variant();
 
         let min_raise = if self.is_stud_variant() {
             if current_bet == 0 {
@@ -544,12 +578,20 @@ impl ServerEngine {
         };
 
         let allowed_actions: Vec<AllowedAction> = if current_bet == 0 {
-            vec![AllowedAction::Check, AllowedAction::Bet, AllowedAction::Fold]
+            vec![
+                AllowedAction::Check,
+                AllowedAction::Bet,
+                AllowedAction::Fold,
+            ]
         } else if call_amount == 0 {
             if raises_capped {
                 vec![AllowedAction::Check, AllowedAction::Fold]
             } else {
-                vec![AllowedAction::Check, AllowedAction::Raise, AllowedAction::Fold]
+                vec![
+                    AllowedAction::Check,
+                    AllowedAction::Raise,
+                    AllowedAction::Fold,
+                ]
             }
         } else {
             if raises_capped {
@@ -561,7 +603,11 @@ impl ServerEngine {
                 };
             }
 
-            vec![AllowedAction::Call, AllowedAction::Raise, AllowedAction::Fold]
+            vec![
+                AllowedAction::Call,
+                AllowedAction::Raise,
+                AllowedAction::Fold,
+            ]
         };
 
         Event::ActionRequested {

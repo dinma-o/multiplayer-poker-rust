@@ -6,7 +6,7 @@ struct MidhandRemovalState {
     next_draw_pid: Option<PlayerId>,
 }
 
-impl ServerEngine {
+impl GameEngine {
     pub fn apply_lobby_cmd(&mut self, cmd: LobbyCmd) -> Vec<Event> {
         match cmd {
             LobbyCmd::SetVariant { variant } => self.lobby_set_variant(variant),
@@ -59,10 +59,7 @@ impl ServerEngine {
             }
         };
 
-        vec![Event::PrivateHand {
-            player_name,
-            cards,
-        }]
+        vec![Event::PrivateHand { player_name, cards }]
     }
 
     fn lobby_set_seed(&mut self, seed: u64) -> Vec<Event> {
@@ -76,8 +73,8 @@ impl ServerEngine {
     }
 
     fn lobby_sit_out_next(&mut self, player_name: String) -> Vec<Event> {
-        if let Err(events) =
-            self.require_step_with_message(HandStep::WaitingForPlayers, "Cannot sit out during a hand")
+        if let Err(events) = self
+            .require_step_with_message(HandStep::WaitingForPlayers, "Cannot sit out during a hand")
         {
             return events;
         }
@@ -117,14 +114,13 @@ impl ServerEngine {
     }
 
     fn lobby_join(&mut self, player_name: String, pin: String) -> Vec<Event> {
-        if let Err(events) = self.require_step_with_message(
-            HandStep::WaitingForPlayers,
-            "Cannot join table during hand",
-        ) {
+        if let Err(events) = self
+            .require_step_with_message(HandStep::WaitingForPlayers, "Cannot join table during hand")
+        {
             return events;
         }
 
-        match self.accounts.login(&player_name, &pin) {
+        match self.with_accounts(|accounts| accounts.login(&player_name, &pin)) {
             Ok(pa) => match self.table.join_table(pa.id) {
                 Ok(seat) => vec![
                     Event::PlayerJoined {
@@ -164,10 +160,9 @@ impl ServerEngine {
     }
 
     fn lobby_start_hand(&mut self) -> Vec<Event> {
-        if let Err(events) = self.require_step_with_message(
-            HandStep::WaitingForPlayers,
-            "Hand already in progress",
-        ) {
+        if let Err(events) =
+            self.require_step_with_message(HandStep::WaitingForPlayers, "Hand already in progress")
+        {
             return events;
         }
 
@@ -247,7 +242,9 @@ impl ServerEngine {
 
     fn apply_midhand_fold_equivalent(&mut self, pid: PlayerId) -> MidhandRemovalState {
         // Treat a disconnecting leave like a fold for the current hand.
-        self.table.hand_state_mut().set_player_fold_status(pid, true);
+        self.table
+            .hand_state_mut()
+            .set_player_fold_status(pid, true);
         if let Some(br) = self.table.hand_state_mut().betting_mut() {
             br.pending.remove(&pid);
         }
@@ -362,4 +359,3 @@ impl ServerEngine {
         events
     }
 }
-

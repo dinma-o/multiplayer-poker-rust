@@ -1,10 +1,12 @@
 mod account_store;
 mod accounts;
+mod app;
 mod dealer;
 mod engine;
 mod game_states;
 mod table;
-mod variants; // <-- your ServerEngine
+mod table_runtime;
+mod variants;
 
 use std::fs;
 use std::io::{self, Write};
@@ -14,7 +16,7 @@ use common::constants::five_card_draw;
 use common::protocol::{AccountCmd, ActionCmd, Command, Event, LobbyCmd, PokerVariant};
 
 use crate::account_store::AccountStore;
-use crate::engine::ServerEngine;
+use crate::app::ServerApp;
 
 const ACCOUNTS_PATH: &str = "server/server/data/accounts.json";
 
@@ -24,9 +26,7 @@ fn main() {
     }
 
     let store = AccountStore::load(ACCOUNTS_PATH).expect("load accounts");
-
-    let table = crate::table::PokerTable::new();
-    let mut engine = ServerEngine::new(store, table);
+    let mut app = ServerApp::new(store);
 
     println!("PokerDUD CLI. Type 'help' or 'help <command>' for details.");
 
@@ -55,7 +55,7 @@ fn main() {
 
         match parse_command(&parts) {
             Ok(cmd) => {
-                let events = engine.apply(cmd);
+                let events = app.apply(cmd);
                 print_events(&events);
             }
             Err(msg) => {
@@ -65,7 +65,7 @@ fn main() {
     }
 
     // flush accounts on exit
-    engine.accounts.flush().expect("flush accounts");
+    app.flush_accounts().expect("flush accounts");
     println!("Bye.");
 }
 

@@ -1,0 +1,100 @@
+PokerDUD CLI. Type 'help' or 'help <command>' for details.
+> ok
+> ok
+> joined: simhe_a_20260222 (ID: 1) at seat 0
+seated players:
+  seat 0: name simhe_a_20260222 | bal 1000 | GP 0 | PW 0 | F 0
+> joined: simhe_b_20260222 (ID: 2) at seat 1
+seated players:
+  seat 0: name simhe_a_20260222 | bal 1000 | GP 0 | PW 0 | F 0
+  seat 1: name simhe_b_20260222 | bal 1000 | GP 0 | PW 0 | F 0
+> info: Set poker variant to TexasHoldEm (active: Texas Hold'em)
+> > info: RNG seed set to 2201
+> step: CollectForcedBets
+pot: 15
+step: DealPrivate
+step: BettingRound1
+action requested for simhe_a_20260222: allowed=[Call, Raise, Fold] call=Some(5) min_raise=Some(5)
+> pot: 20
+action requested for simhe_b_20260222: allowed=[Check, Raise, Fold] call=Some(0) min_raise=Some(5)
+> pot: 20
+step: DealCommunity
+info: Board (flop): ["5♥", "Q♦", "2♣"]
+step: BettingRound2
+action requested for simhe_b_20260222: allowed=[Check, Bet, Fold] call=Some(0) min_raise=Some(5)
+> pot: 20
+action requested for simhe_a_20260222: allowed=[Check, Bet, Fold] call=Some(0) min_raise=Some(5)
+> pot: 20
+step: DealCommunity
+info: Board (turn): ["5♥", "Q♦", "2♣", "6♣"]
+step: BettingRound2
+action requested for simhe_b_20260222: allowed=[Check, Bet, Fold] call=Some(0) min_raise=Some(5)
+> pot: 20
+action requested for simhe_a_20260222: allowed=[Check, Bet, Fold] call=Some(0) min_raise=Some(5)
+> pot: 20
+step: DealCommunity
+info: Board (river): ["5♥", "Q♦", "2♣", "6♣", "A♦"]
+step: BettingRound2
+action requested for simhe_b_20260222: allowed=[Check, Bet, Fold] call=Some(0) min_raise=Some(5)
+> pot: 20
+action requested for simhe_a_20260222: allowed=[Check, Bet, Fold] call=Some(0) min_raise=Some(5)
+> pot: 20
+step: Showdown
+showdown:
+  simhe_a_20260222 -> board=["5♥", "Q♦", "2♣", "6♣", "A♦"] hole=["6♦", "5♠"] => TwoPair
+  simhe_b_20260222 -> board=["5♥", "Q♦", "2♣", "6♣", "A♦"] hole=["4♣", "6♠"] => OnePair
+step: Payout
+payout:
+  simhe_a_20260222 +20
+pot: 0
+step: WaitingForPlayers
+> > info: RNG seed set to 2202
+> step: CollectForcedBets
+pot: 15
+step: DealPrivate
+step: BettingRound1
+action requested for simhe_b_20260222: allowed=[Call, Raise, Fold] call=Some(5) min_raise=Some(5)
+> pot: 20
+action requested for simhe_a_20260222: allowed=[Check, Raise, Fold] call=Some(0) min_raise=Some(5)
+> pot: 20
+step: DealCommunity
+info: Board (flop): ["6♣", "K♣", "2♠"]
+step: BettingRound2
+action requested for simhe_a_20260222: allowed=[Check, Bet, Fold] call=Some(0) min_raise=Some(5)
+> pot: 20
+action requested for simhe_b_20260222: allowed=[Check, Bet, Fold] call=Some(0) min_raise=Some(5)
+> pot: 20
+step: DealCommunity
+info: Board (turn): ["6♣", "K♣", "2♠", "Q♦"]
+step: BettingRound2
+action requested for simhe_a_20260222: allowed=[Check, Bet, Fold] call=Some(0) min_raise=Some(5)
+> pot: 20
+action requested for simhe_b_20260222: allowed=[Check, Bet, Fold] call=Some(0) min_raise=Some(5)
+> pot: 20
+step: DealCommunity
+info: Board (river): ["6♣", "K♣", "2♠", "Q♦", "4♥"]
+step: BettingRound2
+action requested for simhe_a_20260222: allowed=[Check, Bet, Fold] call=Some(0) min_raise=Some(5)
+> pot: 20
+action requested for simhe_b_20260222: allowed=[Check, Bet, Fold] call=Some(0) min_raise=Some(5)
+> pot: 20
+step: Showdown
+showdown:
+  simhe_a_20260222 -> board=["6♣", "K♣", "2♠", "Q♦", "4♥"] hole=["7♦", "2♣"] => OnePair
+  simhe_b_20260222 -> board=["6♣", "K♣", "2♠", "Q♦", "4♥"] hole=["A♣", "8♥"] => HighCard
+step: Payout
+payout:
+  simhe_a_20260222 +20
+pot: 0
+step: WaitingForPlayers
+> > seated players:
+  seat 0: name simhe_a_20260222 | bal 1020 | GP 2 | PW 2 | F 0
+  seat 1: name simhe_b_20260222 | bal 980 | GP 2 | PW 0 | F 0
+> left: simhe_a_20260222 (ID: 1)
+seated players:
+  seat 1: name simhe_b_20260222 | bal 980 | GP 2 | PW 0 | F 0
+> left: simhe_b_20260222 (ID: 2)
+seated players:
+> ok
+> ok
+> Bye.

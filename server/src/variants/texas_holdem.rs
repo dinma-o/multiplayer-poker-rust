@@ -10,14 +10,14 @@ pub const BIG_BLIND: u32 = 10;
 pub const TEXAS_HOLDEM_STEPS: &[HandStep] = &[
     HandStep::WaitingForPlayers,
     HandStep::CollectForcedBets,
-    HandStep::DealPrivate,    // preflop hole cards
-    HandStep::BettingRound1,  // preflop betting
-    HandStep::DealCommunity,  // flop
-    HandStep::BettingRound2,  // flop betting
-    HandStep::DealCommunity,  // turn
-    HandStep::BettingRound2,  // turn betting
-    HandStep::DealCommunity,  // river
-    HandStep::BettingRound2,  // river betting
+    HandStep::DealPrivate,   // preflop hole cards
+    HandStep::BettingRound1, // preflop betting
+    HandStep::DealCommunity, // flop
+    HandStep::BettingRound2, // flop betting
+    HandStep::DealCommunity, // turn
+    HandStep::BettingRound2, // turn betting
+    HandStep::DealCommunity, // river
+    HandStep::BettingRound2, // river betting
     HandStep::Showdown,
     HandStep::Payout,
 ];

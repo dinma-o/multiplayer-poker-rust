@@ -1,14 +1,15 @@
-use super::ServerEngine;
+use super::GameEngine;
 use crate::{account_store::AccountStore, table::PokerTable};
 use common::constants::seven_card_stud;
 use common::protocol::{
     ActionCmd, AllowedAction, Command, Event, HandStep, LobbyCmd, PlayerId, PokerVariant,
 };
+use std::sync::{Arc, Mutex};
 use tempfile::TempDir;
 
 struct EngineFixture {
     _tmp: TempDir,
-    engine: ServerEngine,
+    engine: GameEngine,
 }
 
 impl EngineFixture {
@@ -25,7 +26,7 @@ impl EngineFixture {
             .expect("create bob");
 
         let table = PokerTable::new();
-        let mut engine = ServerEngine::new(store, table);
+        let mut engine = GameEngine::new(Arc::new(Mutex::new(store)), table);
 
         let join_alice = engine.apply(Command::Lobby(LobbyCmd::Join {
             player_name: "alice".to_string(),
@@ -61,7 +62,7 @@ impl EngineFixture {
             .expect("create carol");
 
         let table = PokerTable::new();
-        let mut engine = ServerEngine::new(store, table);
+        let mut engine = GameEngine::new(Arc::new(Mutex::new(store)), table);
 
         for name in ["alice", "bob", "carol"] {
             let join_events = engine.apply(Command::Lobby(LobbyCmd::Join {
@@ -87,7 +88,7 @@ fn assert_nonempty_no_error(events: &[Event]) {
     }
 }
 
-fn assert_non_negative_pot_and_contribs(engine: &ServerEngine) {
+fn assert_non_negative_pot_and_contribs(engine: &GameEngine) {
     let pot = engine.table.hand_state().pot_size() as i64;
     assert!(pot >= 0, "pot should not be negative");
 
@@ -176,44 +177,44 @@ fn showdown_results(events: &[Event]) -> Vec<(String, String)> {
         .expect("expected Showdown event")
 }
 
-fn apply_check(engine: &mut ServerEngine, player_name: String) -> Vec<Event> {
+fn apply_check(engine: &mut GameEngine, player_name: String) -> Vec<Event> {
     engine.apply(Command::Action(ActionCmd::Check { player_name }))
 }
 
-fn apply_draw_pat(engine: &mut ServerEngine, player_name: String) -> Vec<Event> {
+fn apply_draw_pat(engine: &mut GameEngine, player_name: String) -> Vec<Event> {
     engine.apply(Command::Action(ActionCmd::Draw {
         player_name,
         discard: vec![],
     }))
 }
 
-fn start_to_betting_round1(engine: &mut ServerEngine) -> Vec<Event> {
+fn start_to_betting_round1(engine: &mut GameEngine) -> Vec<Event> {
     engine.apply(Command::Lobby(LobbyCmd::StartHand))
 }
 
-fn set_holdem_variant(engine: &mut ServerEngine) -> Vec<Event> {
+fn set_holdem_variant(engine: &mut GameEngine) -> Vec<Event> {
     engine.apply(Command::Lobby(LobbyCmd::SetVariant {
         variant: PokerVariant::TexasHoldEm,
     }))
 }
 
-fn set_stud_variant(engine: &mut ServerEngine) -> Vec<Event> {
+fn set_stud_variant(engine: &mut GameEngine) -> Vec<Event> {
     engine.apply(Command::Lobby(LobbyCmd::SetVariant {
         variant: PokerVariant::SevenCardStud,
     }))
 }
 
 fn last_action_requested_min_raise(events: &[Event]) -> Option<i64> {
-    events
-        .iter()
-        .rev()
-        .find_map(|e| match e {
-            Event::ActionRequested { min_raise, .. } => *min_raise,
-            _ => None,
-        })
+    events.iter().rev().find_map(|e| match e {
+        Event::ActionRequested { min_raise, .. } => *min_raise,
+        _ => None,
+    })
 }
 
-fn apply_passive_betting_action(engine: &mut ServerEngine, events_with_prompt: &[Event]) -> Vec<Event> {
+fn apply_passive_betting_action(
+    engine: &mut GameEngine,
+    events_with_prompt: &[Event],
+) -> Vec<Event> {
     let player_name = last_action_requested_player(events_with_prompt);
     let allowed = last_action_requested_allowed(events_with_prompt);
 
@@ -225,7 +226,7 @@ fn apply_passive_betting_action(engine: &mut ServerEngine, events_with_prompt: &
 }
 
 fn close_current_round_passively_two_players(
-    engine: &mut ServerEngine,
+    engine: &mut GameEngine,
     events_with_prompt: &[Event],
 ) -> Vec<Event> {
     let e1 = apply_passive_betting_action(engine, events_with_prompt);
@@ -246,13 +247,22 @@ fn stud_suit_order_for_test(suit: common::card_deck::Suit) -> u8 {
     }
 }
 
-fn stud_bring_in_player_for_test(engine: &ServerEngine, active_in_order: &[PlayerId]) -> PlayerId {
+fn stud_bring_in_player_for_test(engine: &GameEngine, active_in_order: &[PlayerId]) -> PlayerId {
     active_in_order
         .iter()
         .copied()
         .filter_map(|pid| {
-            let up_card = engine.table.hand_state().player_up_cards(&pid)?.first().copied()?;
-            Some((pid, up_card.rank() as u8, stud_suit_order_for_test(up_card.suit())))
+            let up_card = engine
+                .table
+                .hand_state()
+                .player_up_cards(&pid)?
+                .first()
+                .copied()?;
+            Some((
+                pid,
+                up_card.rank() as u8,
+                stud_suit_order_for_test(up_card.suit()),
+            ))
         })
         .min_by(|a, b| (a.1, a.2).cmp(&(b.1, b.2)))
         .map(|(pid, _, _)| pid)
@@ -300,7 +310,10 @@ fn stud_visible_rank_for_test(cards: &[common::card_deck::Card]) -> (u8, [u8; 4]
     if groups.len() >= 2 && groups[0].0 == 2 && groups[1].0 == 2 {
         let high_pair = groups[0].1.max(groups[1].1);
         let low_pair = groups[0].1.min(groups[1].1);
-        let kicker = singles_desc(&[high_pair, low_pair]).into_iter().next().unwrap_or(0);
+        let kicker = singles_desc(&[high_pair, low_pair])
+            .into_iter()
+            .next()
+            .unwrap_or(0);
         return (2, [high_pair, low_pair, kicker, 0]);
     }
 
@@ -330,7 +343,7 @@ fn stud_visible_rank_for_test(cards: &[common::card_deck::Card]) -> (u8, [u8; 4]
     )
 }
 
-fn stud_visible_opener_for_test(engine: &ServerEngine, active_in_order: &[PlayerId]) -> PlayerId {
+fn stud_visible_opener_for_test(engine: &GameEngine, active_in_order: &[PlayerId]) -> PlayerId {
     let mut best_pid = None;
     let mut best_rank = None;
 
@@ -358,7 +371,7 @@ fn stud_visible_opener_for_test(engine: &ServerEngine, active_in_order: &[Player
     best_pid.expect("visible opener")
 }
 
-fn advance_to_draw_phase(engine: &mut ServerEngine) -> (Vec<Event>, Vec<Event>, Vec<Event>) {
+fn advance_to_draw_phase(engine: &mut GameEngine) -> (Vec<Event>, Vec<Event>, Vec<Event>) {
     let start_events = start_to_betting_round1(engine);
     assert_nonempty_no_error(&start_events);
     assert_eq!(engine.table.current_step(), HandStep::BettingRound1);
@@ -375,9 +388,7 @@ fn advance_to_draw_phase(engine: &mut ServerEngine) -> (Vec<Event>, Vec<Event>, 
     (start_events, check1, check2)
 }
 
-fn advance_holdem_to_flop_betting(
-    engine: &mut ServerEngine,
-) -> (Vec<Event>, Vec<Event>, Vec<Event>) {
+fn advance_holdem_to_flop_betting(engine: &mut GameEngine) -> (Vec<Event>, Vec<Event>, Vec<Event>) {
     let start_events = start_to_betting_round1(engine);
     assert_nonempty_no_error(&start_events);
     assert_eq!(engine.table.current_step(), HandStep::BettingRound1);
@@ -400,7 +411,7 @@ fn advance_holdem_to_flop_betting(
 }
 
 fn complete_current_holdem_betting_street_by_checks(
-    engine: &mut ServerEngine,
+    engine: &mut GameEngine,
     events_with_prompt: &[Event],
 ) -> (Vec<Event>, Vec<Event>) {
     let p1 = last_action_requested_player(events_with_prompt);
@@ -475,7 +486,11 @@ fn golden_flow_draw_to_betting2_then_showdown_payout_waiting() {
     assert_non_negative_pot_and_contribs(&fx.engine);
     assert_includes_steps(
         &b2_check2_events,
-        &[HandStep::Showdown, HandStep::Payout, HandStep::WaitingForPlayers],
+        &[
+            HandStep::Showdown,
+            HandStep::Payout,
+            HandStep::WaitingForPlayers,
+        ],
     );
 }
 
@@ -492,15 +507,22 @@ fn holdem_preflop_blinds_and_betting_order() {
     assert_nonempty_no_error(&start_events);
     assert_eq!(fx.engine.table.current_step(), HandStep::BettingRound1);
 
-    let alice_id = fx.engine.accounts.get_by_name("alice").expect("alice").id;
-    let bob_id = fx.engine.accounts.get_by_name("bob").expect("bob").id;
-    let carol_id = fx.engine.accounts.get_by_name("carol").expect("carol").id;
+    let accounts = fx.engine.accounts.lock().expect("account store lock");
+    let alice_id = accounts.get_by_name("alice").expect("alice").id;
+    let bob_id = accounts.get_by_name("bob").expect("bob").id;
+    let carol_id = accounts.get_by_name("carol").expect("carol").id;
+    drop(accounts);
 
     // Dealer starts at seat 0 (alice); action order left of dealer is bob, carol, alice.
     // Hold'em blinds: SB=bob, BB=carol, so UTG is alice.
     assert_eq!(last_action_requested_player(&start_events), "alice");
 
-    let br = fx.engine.table.hand_state().betting().expect("betting round state");
+    let br = fx
+        .engine
+        .table
+        .hand_state()
+        .betting()
+        .expect("betting round state");
     assert_eq!(fx.engine.table.hand_state().pot_size(), 15);
     assert_eq!(fx.engine.table.hand_state().current_bet(), 10);
     assert_eq!(br.contrib.get(&bob_id).copied(), Some(5)); // bob (SB)
@@ -529,7 +551,10 @@ fn holdem_preflop_blinds_and_betting_order() {
     assert_nonempty_no_error(&bb_check);
     assert_eq!(fx.engine.table.current_step(), HandStep::BettingRound2);
     assert_eq!(last_action_requested_player(&bb_check), "bob"); // left of dealer postflop
-    assert_includes_steps(&bb_check, &[HandStep::DealCommunity, HandStep::BettingRound2]);
+    assert_includes_steps(
+        &bb_check,
+        &[HandStep::DealCommunity, HandStep::BettingRound2],
+    );
 }
 
 #[test]
@@ -547,10 +572,14 @@ fn holdem_showdown_emits_board_and_hole_cards() {
 
     // Heads-up preflop: dealer/SB acts first, then BB may check.
     let pre1 = last_action_requested_player(&start_events);
-    let pre1_events = fx.engine.apply(Command::Action(ActionCmd::Call { player_name: pre1 }));
+    let pre1_events = fx
+        .engine
+        .apply(Command::Action(ActionCmd::Call { player_name: pre1 }));
     assert_nonempty_no_error(&pre1_events);
     let pre2 = last_action_requested_player(&pre1_events);
-    let pre2_events = fx.engine.apply(Command::Action(ActionCmd::Check { player_name: pre2 }));
+    let pre2_events = fx
+        .engine
+        .apply(Command::Action(ActionCmd::Check { player_name: pre2 }));
     assert_nonempty_no_error(&pre2_events);
     assert_eq!(fx.engine.table.current_step(), HandStep::BettingRound2);
 
@@ -562,11 +591,15 @@ fn holdem_showdown_emits_board_and_hole_cards() {
         } else {
             &terminal_events
         });
-        let e1 = fx.engine.apply(Command::Action(ActionCmd::Check { player_name: p1 }));
+        let e1 = fx
+            .engine
+            .apply(Command::Action(ActionCmd::Check { player_name: p1 }));
         assert_nonempty_no_error(&e1);
 
         let p2 = last_action_requested_player(&e1);
-        let e2 = fx.engine.apply(Command::Action(ActionCmd::Check { player_name: p2 }));
+        let e2 = fx
+            .engine
+            .apply(Command::Action(ActionCmd::Check { player_name: p2 }));
         assert_nonempty_no_error(&e2);
         terminal_events = e2;
     }
@@ -574,15 +607,28 @@ fn holdem_showdown_emits_board_and_hole_cards() {
     assert_eq!(fx.engine.table.current_step(), HandStep::WaitingForPlayers);
     assert_includes_steps(
         &terminal_events,
-        &[HandStep::Showdown, HandStep::Payout, HandStep::WaitingForPlayers],
+        &[
+            HandStep::Showdown,
+            HandStep::Payout,
+            HandStep::WaitingForPlayers,
+        ],
     );
 
     let showdown = showdown_results(&terminal_events);
     assert_eq!(showdown.len(), 2);
     for (_name, desc) in showdown {
-        assert!(desc.contains("board="), "missing board in showdown desc: {desc}");
-        assert!(desc.contains("hole="), "missing hole cards in showdown desc: {desc}");
-        assert!(desc.contains("=>"), "missing best hand result in showdown desc: {desc}");
+        assert!(
+            desc.contains("board="),
+            "missing board in showdown desc: {desc}"
+        );
+        assert!(
+            desc.contains("hole="),
+            "missing hole cards in showdown desc: {desc}"
+        );
+        assert!(
+            desc.contains("=>"),
+            "missing best hand result in showdown desc: {desc}"
+        );
     }
 
     assert!(
@@ -648,14 +694,20 @@ fn holdem_golden_flow_complete_streets_showdown_payout_waiting() {
     let (_flop_check1, flop_close_events) =
         complete_current_holdem_betting_street_by_checks(&mut fx.engine, &flop_prompt_events);
     assert_eq!(fx.engine.table.current_step(), HandStep::BettingRound2);
-    assert_steps_exact(&flop_close_events, &[HandStep::DealCommunity, HandStep::BettingRound2]);
+    assert_steps_exact(
+        &flop_close_events,
+        &[HandStep::DealCommunity, HandStep::BettingRound2],
+    );
     assert_eq!(fx.engine.table.hand_state().board_cards().len(), 4);
     assert_non_negative_pot_and_contribs(&fx.engine);
 
     let (_turn_check1, turn_close_events) =
         complete_current_holdem_betting_street_by_checks(&mut fx.engine, &flop_close_events);
     assert_eq!(fx.engine.table.current_step(), HandStep::BettingRound2);
-    assert_steps_exact(&turn_close_events, &[HandStep::DealCommunity, HandStep::BettingRound2]);
+    assert_steps_exact(
+        &turn_close_events,
+        &[HandStep::DealCommunity, HandStep::BettingRound2],
+    );
     assert_eq!(fx.engine.table.hand_state().board_cards().len(), 5);
     assert_non_negative_pot_and_contribs(&fx.engine);
 
@@ -664,7 +716,11 @@ fn holdem_golden_flow_complete_streets_showdown_payout_waiting() {
     assert_eq!(fx.engine.table.current_step(), HandStep::WaitingForPlayers);
     assert_steps_exact(
         &river_close_events,
-        &[HandStep::Showdown, HandStep::Payout, HandStep::WaitingForPlayers],
+        &[
+            HandStep::Showdown,
+            HandStep::Payout,
+            HandStep::WaitingForPlayers,
+        ],
     );
     assert_non_negative_pot_and_contribs(&fx.engine);
     // Board resets after payout when hand state is reset.
@@ -689,15 +745,19 @@ fn stud_start_hand_deals_third_street_and_seeds_bring_in() {
         ],
     );
 
-    let active_in_order: Vec<PlayerId> = fx.engine
+    let active_in_order: Vec<PlayerId> = fx
+        .engine
         .table
         .action_order()
         .into_iter()
         .filter(|pid| fx.engine.table.is_active_player(*pid))
         .collect();
     let bring_in_pid = stud_bring_in_player_for_test(&fx.engine, &active_in_order);
-    let bring_in_name = fx.engine
+    let bring_in_name = fx
+        .engine
         .accounts
+        .lock()
+        .expect("account store lock")
         .name_from_id(bring_in_pid)
         .expect("bring-in name");
 
@@ -727,19 +787,34 @@ fn stud_start_hand_deals_third_street_and_seeds_bring_in() {
         .position(|pid| *pid == bring_in_pid)
         .expect("bring-in index");
     let expected_first_actor = active_in_order[(bring_in_idx + 1) % active_in_order.len()];
-    let expected_first_actor_name = fx.engine
+    let expected_first_actor_name = fx
+        .engine
         .accounts
+        .lock()
+        .expect("account store lock")
         .name_from_id(expected_first_actor)
         .expect("first actor name");
 
-    let br = fx.engine.table.hand_state().betting().expect("betting state");
+    let br = fx
+        .engine
+        .table
+        .hand_state()
+        .betting()
+        .expect("betting state");
     assert_eq!(
         fx.engine.table.hand_state().pot_size(),
         15 + seven_card_stud::BRING_IN_AMOUNT
     );
     assert_eq!(fx.engine.table.hand_state().current_bet(), 5);
-    assert_eq!(br.contrib.get(&bring_in_pid).copied(), Some(5), "bring-in player should have forced contribution");
-    assert_eq!(last_action_requested_player(&start_events), expected_first_actor_name);
+    assert_eq!(
+        br.contrib.get(&bring_in_pid).copied(),
+        Some(5),
+        "bring-in player should have forced contribution"
+    );
+    assert_eq!(
+        last_action_requested_player(&start_events),
+        expected_first_actor_name
+    );
     assert!(
         !last_action_requested_allowed(&start_events).contains(&AllowedAction::Check),
         "the player after the bring-in should not be allowed to check"
@@ -776,18 +851,25 @@ fn stud_completion_moves_to_fourth_street_with_visible_best_opener() {
     assert_nonempty_no_error(&close_events);
 
     assert_eq!(fx.engine.table.current_step(), HandStep::BettingRound2);
-    assert_steps_exact(&close_events, &[HandStep::DealFaceUp, HandStep::BettingRound2]);
+    assert_steps_exact(
+        &close_events,
+        &[HandStep::DealFaceUp, HandStep::BettingRound2],
+    );
     assert_eq!(fx.engine.table.hand_state().current_bet(), 0);
 
-    let active_in_order: Vec<PlayerId> = fx.engine
+    let active_in_order: Vec<PlayerId> = fx
+        .engine
         .table
         .action_order()
         .into_iter()
         .filter(|pid| fx.engine.table.is_active_player(*pid))
         .collect();
     let opener_pid = stud_visible_opener_for_test(&fx.engine, &active_in_order);
-    let opener_name = fx.engine
+    let opener_name = fx
+        .engine
         .accounts
+        .lock()
+        .expect("account store lock")
         .name_from_id(opener_pid)
         .expect("opener name");
 
@@ -833,7 +915,7 @@ fn stud_start_requires_enough_for_ante_and_possible_bring_in() {
         .expect("create bob");
 
     let table = PokerTable::new();
-    let mut engine = ServerEngine::new(store, table);
+    let mut engine = GameEngine::new(Arc::new(Mutex::new(store)), table);
 
     let set_variant = set_stud_variant(&mut engine);
     assert_nonempty_no_error(&set_variant);
@@ -870,27 +952,49 @@ fn stud_big_bet_streets_and_seventh_street_private_card() {
     let start_events = start_to_betting_round1(&mut fx.engine);
     assert_nonempty_no_error(&start_events);
 
-    let fourth_prompt_events = close_current_round_passively_two_players(&mut fx.engine, &start_events);
+    let fourth_prompt_events =
+        close_current_round_passively_two_players(&mut fx.engine, &start_events);
     assert_eq!(fx.engine.table.current_step(), HandStep::BettingRound2);
-    assert_eq!(last_action_requested_min_raise(&fourth_prompt_events), Some(10));
+    assert_eq!(
+        last_action_requested_min_raise(&fourth_prompt_events),
+        Some(10)
+    );
 
     let fifth_prompt_events =
         close_current_round_passively_two_players(&mut fx.engine, &fourth_prompt_events);
     assert_eq!(fx.engine.table.current_step(), HandStep::BettingRound3);
-    assert_steps_exact(&fifth_prompt_events, &[HandStep::DealFaceUp, HandStep::BettingRound3]);
-    assert_eq!(last_action_requested_min_raise(&fifth_prompt_events), Some(20));
+    assert_steps_exact(
+        &fifth_prompt_events,
+        &[HandStep::DealFaceUp, HandStep::BettingRound3],
+    );
+    assert_eq!(
+        last_action_requested_min_raise(&fifth_prompt_events),
+        Some(20)
+    );
 
     let sixth_prompt_events =
         close_current_round_passively_two_players(&mut fx.engine, &fifth_prompt_events);
     assert_eq!(fx.engine.table.current_step(), HandStep::BettingRound4);
-    assert_steps_exact(&sixth_prompt_events, &[HandStep::DealFaceUp, HandStep::BettingRound4]);
-    assert_eq!(last_action_requested_min_raise(&sixth_prompt_events), Some(20));
+    assert_steps_exact(
+        &sixth_prompt_events,
+        &[HandStep::DealFaceUp, HandStep::BettingRound4],
+    );
+    assert_eq!(
+        last_action_requested_min_raise(&sixth_prompt_events),
+        Some(20)
+    );
 
     let seventh_prompt_events =
         close_current_round_passively_two_players(&mut fx.engine, &sixth_prompt_events);
     assert_eq!(fx.engine.table.current_step(), HandStep::BettingRound5);
-    assert_steps_exact(&seventh_prompt_events, &[HandStep::DealPrivate, HandStep::BettingRound5]);
-    assert_eq!(last_action_requested_min_raise(&seventh_prompt_events), Some(20));
+    assert_steps_exact(
+        &seventh_prompt_events,
+        &[HandStep::DealPrivate, HandStep::BettingRound5],
+    );
+    assert_eq!(
+        last_action_requested_min_raise(&seventh_prompt_events),
+        Some(20)
+    );
 
     for pid in fx.engine.active_players_in_hand() {
         assert_eq!(
@@ -923,7 +1027,8 @@ fn stud_showdown_and_payout_complete() {
     let start_events = start_to_betting_round1(&mut fx.engine);
     assert_nonempty_no_error(&start_events);
 
-    let fourth_prompt_events = close_current_round_passively_two_players(&mut fx.engine, &start_events);
+    let fourth_prompt_events =
+        close_current_round_passively_two_players(&mut fx.engine, &start_events);
     let fifth_prompt_events =
         close_current_round_passively_two_players(&mut fx.engine, &fourth_prompt_events);
     let sixth_prompt_events =
@@ -936,14 +1041,27 @@ fn stud_showdown_and_payout_complete() {
     assert_eq!(fx.engine.table.current_step(), HandStep::WaitingForPlayers);
     assert_steps_exact(
         &terminal_events,
-        &[HandStep::Showdown, HandStep::Payout, HandStep::WaitingForPlayers],
+        &[
+            HandStep::Showdown,
+            HandStep::Payout,
+            HandStep::WaitingForPlayers,
+        ],
     );
 
     let showdown = showdown_results(&terminal_events);
     assert_eq!(showdown.len(), 2);
     for (_name, desc) in showdown {
-        assert!(desc.contains("cards="), "missing full stud cards in showdown desc: {desc}");
-        assert!(desc.contains("up="), "missing stud up cards in showdown desc: {desc}");
-        assert!(desc.contains("=>"), "missing best-hand marker in showdown desc: {desc}");
+        assert!(
+            desc.contains("cards="),
+            "missing full stud cards in showdown desc: {desc}"
+        );
+        assert!(
+            desc.contains("up="),
+            "missing stud up cards in showdown desc: {desc}"
+        );
+        assert!(
+            desc.contains("=>"),
+            "missing best-hand marker in showdown desc: {desc}"
+        );
     }
 }

@@ -194,8 +194,9 @@ impl PokerTable {
         match street {
             // Five Card Draw uses the same dealer-relative action order for both betting rounds.
             Street::FirstBetting | Street::SecondBetting => self.action_order(),
-            Street::ThirdBetting | Street::FourthBetting | Street::FifthBetting => self.action_order(),
-
+            Street::ThirdBetting | Street::FourthBetting | Street::FifthBetting => {
+                self.action_order()
+            }
         }
     }
 

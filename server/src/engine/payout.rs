@@ -1,6 +1,6 @@
 use super::*;
 
-impl ServerEngine {
+impl GameEngine {
     pub(super) fn do_payout(&mut self) -> Vec<Event> {
         let mut events = Vec::new();
 
@@ -90,32 +90,32 @@ impl ServerEngine {
         // Stats updates
         // games_played for participants
         for pid in &participants {
-            let pname = self.accounts.name_from_id(*pid).unwrap_or("Unknown".into());
+            let pname = self.account_name(*pid);
 
             if let Some(name) = pname.into() {
-                let _ = self.accounts.record_game_played(&name);
+                let _ = self.with_accounts_mut(|accounts| accounts.record_game_played(&name));
             }
         }
 
         // pot_won for winners + deposit money
         for (pid, amt) in &payout_pairs {
-            let pname = self.accounts.name_from_id(*pid).unwrap_or("Unknown".into());
+            let pname = self.account_name(*pid);
 
             if let Some(name) = pname.into() {
                 if *amt > 0 {
-                    let _ = self.accounts.deposit(&name, *amt);
+                    let _ = self.with_accounts_mut(|accounts| accounts.deposit(&name, *amt));
                 }
-                let _ = self.accounts.record_pot_won(&name);
+                let _ = self.with_accounts_mut(|accounts| accounts.record_pot_won(&name));
             }
         }
 
         // folds for those who folded
         for pid in &participants {
             if self.table.hand_state().has_player_folded(pid) {
-                let pname = self.accounts.name_from_id(*pid).unwrap_or("Unknown".into());
+                let pname = self.account_name(*pid);
 
                 if let Some(name) = pname.into() {
-                    let _ = self.accounts.record_fold(&name);
+                    let _ = self.with_accounts_mut(|accounts| accounts.record_fold(&name));
                 }
             }
         }
@@ -125,7 +125,7 @@ impl ServerEngine {
             winners: payout_pairs
                 .into_iter()
                 .map(|(pid, amt)| {
-                    let pname = self.accounts.name_from_id(pid).unwrap_or("Unknown".into());
+                    let pname = self.account_name(pid);
                     (pname, amt)
                 })
                 .collect(),
@@ -167,4 +167,3 @@ impl ServerEngine {
         }
     }
 }
-
