@@ -1,16 +1,19 @@
 use crate::card_deck::Card;
+use serde::{Deserialize, Serialize};
 
 pub type PlayerId = u64;
 pub type Chips = i64;
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum PokerVariant {
     FiveCardDraw,
     TexasHoldEm,
     SevenCardStud,
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum HandStep {
     WaitingForPlayers,
     CollectForcedBets, // ante or blinds later
@@ -29,14 +32,14 @@ pub enum HandStep {
 
 // --- Commands ---
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Command {
     Account(AccountCmd),
     Lobby(LobbyCmd),
     Action(ActionCmd),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum AccountCmd {
     Create {
         name: String,
@@ -60,7 +63,7 @@ pub enum AccountCmd {
     },
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum LobbyCmd {
     SetVariant { variant: PokerVariant },
     Join { player_name: String, pin: String },
@@ -76,7 +79,7 @@ pub enum LobbyCmd {
     SitIn { player_name: String },
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ActionCmd {
     Check {
         player_name: String,
@@ -103,7 +106,7 @@ pub enum ActionCmd {
 
 // -------------------- Events --------------------
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Event {
     Ok,
     Info {
@@ -162,7 +165,7 @@ pub enum Event {
     },
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PlayerSummary {
     pub player_id: PlayerId,
     pub player_name: String,
@@ -173,7 +176,8 @@ pub struct PlayerSummary {
     pub folds: u32,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum AllowedAction {
     Check,
     Bet,
@@ -183,7 +187,7 @@ pub enum AllowedAction {
     Draw,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ShowdownLine {
     pub player_name: String,
     pub player_id: PlayerId,

@@ -6,6 +6,7 @@ use common::{
         AccountCmd, ActionCmd, AllowedAction, Command, Event, HandStep, LobbyCmd, PlayerId,
         PlayerSummary, ShowdownLine,
     },
+    wire::ActionPrompt,
 };
 use rand::{SeedableRng, rngs::StdRng};
 use std::cmp::Ordering;
@@ -97,6 +98,51 @@ impl GameEngine {
     fn account_name(&self, player_id: PlayerId) -> String {
         self.with_accounts(|accounts| accounts.name_from_id(player_id))
             .unwrap_or("Unknown".into())
+    }
+
+    pub fn action_prompt_for_player(&self, player_id: PlayerId) -> Option<ActionPrompt> {
+        match self.table.current_step() {
+            HandStep::BettingRound1
+            | HandStep::BettingRound2
+            | HandStep::BettingRound3
+            | HandStep::BettingRound4
+            | HandStep::BettingRound5 => {
+                let current_player = self.table.hand_state().betting()?.current_player();
+                if current_player != player_id {
+                    return None;
+                }
+
+                let player_name = self.account_name(player_id);
+                match self.action_requested_event_for(player_id, &player_name) {
+                    Event::ActionRequested {
+                        allowed,
+                        call_amount,
+                        min_raise,
+                        ..
+                    } => Some(ActionPrompt {
+                        allowed_actions: allowed,
+                        call_amount,
+                        min_raise,
+                        max_discards: None,
+                    }),
+                    _ => None,
+                }
+            }
+            HandStep::DrawPhase => {
+                let current_player = self.table.hand_state().draw()?.current_player();
+                if current_player != player_id {
+                    return None;
+                }
+
+                Some(ActionPrompt {
+                    allowed_actions: vec![AllowedAction::Draw],
+                    call_amount: None,
+                    min_raise: None,
+                    max_discards: Some(five_card_draw::MAX_DISCARDS),
+                })
+            }
+            _ => None,
+        }
     }
 
     fn is_holdem_variant(&self) -> bool {

@@ -4,6 +4,7 @@ mod app;
 mod dealer;
 mod engine;
 mod game_states;
+mod sessions;
 mod table;
 mod table_runtime;
 mod variants;

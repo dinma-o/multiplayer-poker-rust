@@ -24,8 +24,12 @@ impl TableRuntime {
 
     pub fn apply(&mut self, cmd: Command) -> Vec<Event> {
         let events = self.engine.apply(cmd);
-        self.history.extend(events.iter().cloned());
+        self.record_events(&events);
         events
+    }
+
+    pub fn record_events(&mut self, events: &[Event]) {
+        self.history.extend(events.iter().cloned());
     }
 
     #[allow(dead_code)]
