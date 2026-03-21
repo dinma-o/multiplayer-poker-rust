@@ -4,8 +4,8 @@ use std::net::TcpStream;
 
 use common::protocol::PokerVariant;
 use common::wire::{
-    ClientRequest, LoginResult, PlayerAction, RequestOp, ResponsePayload, ServerResponse,
-    SessionId, TableId,
+    ClientRequest, LoginResult, LogoutResult, PlayerAction, RequestOp, ResponsePayload,
+    ServerResponse, SessionId, TableId,
 };
 
 const DEFAULT_HOST: &str = "127.0.0.1";
@@ -128,8 +128,14 @@ impl TcpCliClient {
             return;
         }
 
-        if let Some(ResponsePayload::Login(LoginResult { session_id, .. })) = &response.payload {
-            self.session_id = Some(session_id.clone());
+        match &response.payload {
+            Some(ResponsePayload::Login(LoginResult { session_id, .. })) => {
+                self.session_id = Some(session_id.clone());
+            }
+            Some(ResponsePayload::Logout(LogoutResult { .. })) => {
+                self.session_id = None;
+            }
+            _ => {}
         }
     }
 }
@@ -174,6 +180,7 @@ fn parse_request_op(parts: &[&str]) -> Result<RequestOp, String> {
             name: required_arg(parts, 1, "name")?.to_string(),
             pin: required_arg(parts, 2, "pin")?.to_string(),
         }),
+        "logout" => Ok(RequestOp::Logout),
         "deposit" => Ok(RequestOp::Deposit {
             amount: parse_i64(parts.get(1), "amount")?,
         }),
@@ -285,6 +292,7 @@ fn print_help() {
     println!("  session");
     println!("  create_account <name> <pin> <amount>");
     println!("  login <name> <pin>");
+    println!("  logout");
     println!("  deposit <amount>");
     println!("  withdraw <amount>");
     println!("  list_tables");

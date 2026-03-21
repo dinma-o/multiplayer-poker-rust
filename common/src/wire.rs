@@ -56,6 +56,7 @@ pub enum RequestOp {
         name: String,
         pin: String,
     },
+    Logout,
     Deposit {
         amount: Chips,
     },
@@ -95,6 +96,7 @@ pub enum RequestOp {
 pub enum ResponsePayload {
     Account(AccountProfile),
     Login(LoginResult),
+    Logout(LogoutResult),
     Tables(TableList),
     Table(TableSummary),
     JoinTable(JoinTableResult),
@@ -147,6 +149,11 @@ pub struct AccountProfile {
 pub struct LoginResult {
     pub session_id: SessionId,
     pub account: AccountProfile,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct LogoutResult {
+    pub session_id: SessionId,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

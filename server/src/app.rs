@@ -5,9 +5,10 @@ use common::{
     protocol::{AccountCmd, ActionCmd, Command, Event, HandStep, LobbyCmd, PlayerId, PokerVariant},
     wire::{
         AccountProfile, ClientRequest, ErrorCode, ErrorPayload, HistoryEntry, HistoryKind,
-        JoinTableResult, LeaveTableResult, LeaveTableStatus, LoginResult, OperationReceipt,
-        PlayerAction, PlayerView, PublicSeatState, PublicTableState, RequestOp, ResponsePayload,
-        SeatAssignmentStatus, ServerResponse, TableHistory, TableId, TableList, TableSummary,
+        JoinTableResult, LeaveTableResult, LeaveTableStatus, LoginResult, LogoutResult,
+        OperationReceipt, PlayerAction, PlayerView, PublicSeatState, PublicTableState, RequestOp,
+        ResponsePayload, SeatAssignmentStatus, ServerResponse, TableHistory, TableId, TableList,
+        TableSummary,
     },
 };
 
@@ -88,10 +89,43 @@ impl ServerApp {
             .login(&name, &pin)
             .map_err(|e| Self::auth_error("Login failed", e))?;
 
-        let session = self.sessions.create_session(&account, &pin);
+        let session = self.sessions.create_session(&account);
         Ok(LoginResult {
             session_id: session.session_id,
             account: Self::account_profile(&account),
+        })
+    }
+
+    pub fn logout(&mut self, session_id: &str) -> AppResult<LogoutResult> {
+        let session = self.require_session(session_id)?;
+
+        for runtime in self.tables.values_mut() {
+            let is_seated = runtime
+                .engine
+                .table
+                .seated_players()
+                .iter()
+                .any(|(_, seated_id)| *seated_id == session.account_id);
+
+            if !is_seated {
+                continue;
+            }
+
+            let events = runtime.apply(Command::Lobby(LobbyCmd::Leave {
+                player_name: session.player_name.clone(),
+            }));
+            Self::ensure_no_error(&events)?;
+        }
+
+        let removed = self.sessions.remove(session_id).ok_or_else(|| {
+            ErrorPayload::new(
+                ErrorCode::SessionNotFound,
+                format!("Session {session_id} was not found"),
+            )
+        })?;
+
+        Ok(LogoutResult {
+            session_id: removed.session_id,
         })
     }
 
@@ -154,15 +188,22 @@ impl ServerApp {
         table_id: TableId,
     ) -> AppResult<JoinTableResult> {
         let session = self.require_session(session_id)?;
+        let account = self
+            .accounts
+            .lock()
+            .expect("account store lock poisoned")
+            .get_by_id(session.account_id)
+            .cloned()
+            .map_err(|e| Self::account_error("Join failed", e))?;
         let runtime = self
             .tables
             .get_mut(&table_id)
             .ok_or_else(|| Self::table_not_found(table_id))?;
 
-        let events = runtime.apply(Command::Lobby(LobbyCmd::Join {
-            player_name: session.player_name.clone(),
-            pin: session.pin.clone(),
-        }));
+        let events = runtime
+            .engine
+            .join_authenticated_player(account.id, account.name.clone());
+        runtime.record_events(&events);
         Self::ensure_no_error(&events)?;
 
         let seat = events.iter().find_map(|event| match event {
@@ -359,6 +400,10 @@ impl ServerApp {
                 .create_account(name, pin, amount)
                 .map(ResponsePayload::Account),
             RequestOp::Login { name, pin } => self.login(name, pin).map(ResponsePayload::Login),
+            RequestOp::Logout => {
+                let session_id = Self::require_session_id(session_id)?;
+                self.logout(session_id).map(ResponsePayload::Logout)
+            }
             RequestOp::Deposit { amount } => {
                 let session_id = Self::require_session_id(session_id)?;
                 self.deposit(session_id, amount)
@@ -800,6 +845,32 @@ mod tests {
             .deposit(&second.session_id, 10)
             .expect("fresh session should work");
         assert_eq!(fresh.balance, 510);
+    }
+
+    #[test]
+    fn shared_api_logout_invalidates_session_and_leaves_waiting_table() {
+        let mut fx = test_app();
+        fx.app
+            .create_account("alice".into(), "1234".into(), 500)
+            .expect("create alice");
+        let login = fx.app.login("alice".into(), "1234".into()).expect("login");
+
+        let table = fx.app.list_tables().tables[0].clone();
+        fx.app
+            .join_table(&login.session_id, table.table_id)
+            .expect("join table");
+
+        let logout = fx.app.logout(&login.session_id).expect("logout");
+        assert_eq!(logout.session_id, login.session_id);
+
+        let stale = fx
+            .app
+            .deposit(&login.session_id, 10)
+            .expect_err("logged out session should fail");
+        assert_eq!(stale.code, ErrorCode::SessionNotFound);
+
+        let state = fx.app.get_table_state(table.table_id).expect("table state");
+        assert!(state.seats.is_empty());
     }
 
     #[test]

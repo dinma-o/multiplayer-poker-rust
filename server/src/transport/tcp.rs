@@ -201,8 +201,14 @@ mod tests {
             let response: ServerResponse =
                 serde_json::from_str(line.trim()).expect("deserialize response");
 
-            if let Some(ResponsePayload::Login(login)) = &response.payload {
-                self.session_id = Some(login.session_id.clone());
+            match &response.payload {
+                Some(ResponsePayload::Login(login)) => {
+                    self.session_id = Some(login.session_id.clone());
+                }
+                Some(ResponsePayload::Logout(_)) => {
+                    self.session_id = None;
+                }
+                _ => {}
             }
 
             response
@@ -436,6 +442,60 @@ mod tests {
 
         drop(first_client);
         drop(second_client);
+        server.join();
+    }
+
+    #[test]
+    fn socket_logout_invalidates_session_and_clears_waiting_table_seat() {
+        let server = spawn_socket_test_server(1);
+        let mut client = TestClient::connect(&server.address).expect("connect client");
+
+        assert!(
+            client
+                .send(RequestOp::CreateAccount {
+                    name: "alice".into(),
+                    pin: "1234".into(),
+                    amount: 500,
+                })
+                .ok
+        );
+        assert!(
+            client
+                .send(RequestOp::Login {
+                    name: "alice".into(),
+                    pin: "1234".into(),
+                })
+                .ok
+        );
+        let old_session_id = client.session_id.clone().expect("session id");
+        assert!(client.send(RequestOp::JoinTable { table_id: 1 }).ok);
+
+        let logout = client.send(RequestOp::Logout);
+        assert!(logout.ok);
+        assert!(client.session_id.is_none());
+
+        let stale = client.send(RequestOp::Deposit { amount: 10 });
+        assert!(!stale.ok);
+        let stale_error = stale.error.expect("stale session error");
+        assert_eq!(stale_error.code, ErrorCode::InvalidRequest);
+
+        client.session_id = Some(old_session_id);
+        let invalidated = client.send(RequestOp::GetPlayerView { table_id: 1 });
+        assert!(!invalidated.ok);
+        let invalidated_error = invalidated.error.expect("invalidated session error");
+        assert_eq!(invalidated_error.code, ErrorCode::SessionNotFound);
+
+        client.session_id = None;
+        let state = client.send(RequestOp::GetTableState { table_id: 1 });
+        assert!(state.ok);
+        match state.payload.expect("table state payload") {
+            ResponsePayload::TableState(state) => {
+                assert!(state.seats.is_empty());
+            }
+            other => panic!("unexpected payload: {other:?}"),
+        }
+
+        drop(client);
         server.join();
     }
 }
