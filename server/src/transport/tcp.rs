@@ -1,6 +1,6 @@
 use std::io::{self, BufRead, BufReader, Write};
 use std::net::{TcpListener, TcpStream};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::thread;
 
 use common::wire::{ClientRequest, ErrorCode, ErrorPayload, ServerResponse};
@@ -9,7 +9,7 @@ use crate::app::ServerApp;
 
 pub const DEFAULT_BIND_ADDR: &str = "0.0.0.0:8080";
 
-pub type SharedServerApp = Arc<Mutex<ServerApp>>;
+pub type SharedServerApp = Arc<ServerApp>;
 
 pub fn serve(app: SharedServerApp) -> io::Result<()> {
     serve_on(DEFAULT_BIND_ADDR, app)
@@ -104,13 +104,7 @@ fn handle_request_line(line: &str, app: &SharedServerApp) -> ServerResponse {
         }
     };
 
-    match app.lock() {
-        Ok(mut app) => app.handle_request(request),
-        Err(_) => ServerResponse::error(
-            request.request_id,
-            ErrorPayload::new(ErrorCode::Internal, "server application lock poisoned"),
-        ),
-    }
+    app.handle_request(request)
 }
 
 fn write_response(stream: &mut TcpStream, response: &ServerResponse) -> io::Result<()> {
@@ -123,7 +117,9 @@ fn write_response(stream: &mut TcpStream, response: &ServerResponse) -> io::Resu
 mod tests {
     use super::*;
     use crate::account_store::AccountStore;
+    use common::protocol::{HandStep, PokerVariant};
     use common::wire::{ClientRequest, RequestOp, ResponsePayload, ServerResponse};
+    use std::sync::Barrier;
     use std::time::Duration;
     use tempfile::{TempDir, tempdir};
 
@@ -138,7 +134,7 @@ mod tests {
         let store = AccountStore::load(path).expect("load account store");
         TestFixture {
             _tmp: dir,
-            app: Arc::new(Mutex::new(ServerApp::new(store))),
+            app: Arc::new(ServerApp::new(store)),
         }
     }
 
@@ -219,7 +215,7 @@ mod tests {
         let dir = tempdir().expect("tempdir");
         let path = dir.path().join("accounts.json");
         let store = AccountStore::load(path).expect("load account store");
-        let app = Arc::new(Mutex::new(ServerApp::new(store)));
+        let app = Arc::new(ServerApp::new(store));
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind test listener");
         let address = listener.local_addr().expect("local addr").to_string();
 
@@ -496,6 +492,115 @@ mod tests {
         }
 
         drop(client);
+        server.join();
+    }
+
+    #[test]
+    fn socket_start_hand_requests_on_different_tables_can_progress_independently() {
+        let server = spawn_socket_test_server(4);
+        let mut alice = TestClient::connect(&server.address).expect("connect alice");
+        let mut bob = TestClient::connect(&server.address).expect("connect bob");
+        let mut carol = TestClient::connect(&server.address).expect("connect carol");
+        let mut dave = TestClient::connect(&server.address).expect("connect dave");
+
+        for (client, name) in [
+            (&mut alice, "alice"),
+            (&mut bob, "bob"),
+            (&mut carol, "carol"),
+            (&mut dave, "dave"),
+        ] {
+            assert!(
+                client
+                    .send(RequestOp::CreateAccount {
+                        name: name.into(),
+                        pin: "1234".into(),
+                        amount: 500,
+                    })
+                    .ok
+            );
+            assert!(
+                client
+                    .send(RequestOp::Login {
+                        name: name.into(),
+                        pin: "1234".into(),
+                    })
+                    .ok
+            );
+        }
+
+        let second_table_id = match alice
+            .send(RequestOp::CreateTable {
+                variant: PokerVariant::TexasHoldEm,
+            })
+            .payload
+            .expect("create table payload")
+        {
+            ResponsePayload::Table(table) => table.table_id,
+            other => panic!("unexpected payload: {other:?}"),
+        };
+
+        assert!(alice.send(RequestOp::JoinTable { table_id: 1 }).ok);
+        assert!(bob.send(RequestOp::JoinTable { table_id: 1 }).ok);
+        assert!(
+            carol
+                .send(RequestOp::JoinTable {
+                    table_id: second_table_id,
+                })
+                .ok
+        );
+        assert!(
+            dave.send(RequestOp::JoinTable {
+                table_id: second_table_id,
+            })
+            .ok
+        );
+
+        let barrier = Arc::new(Barrier::new(2));
+        let barrier_a = Arc::clone(&barrier);
+        let barrier_b = Arc::clone(&barrier);
+
+        let start_table_one = thread::spawn(move || {
+            barrier_a.wait();
+            alice.send(RequestOp::StartHand { table_id: 1 })
+        });
+
+        let start_table_two = thread::spawn(move || {
+            barrier_b.wait();
+            carol.send(RequestOp::StartHand {
+                table_id: second_table_id,
+            })
+        });
+
+        let start_one = start_table_one.join().expect("table 1 start thread");
+        let start_two = start_table_two.join().expect("table 2 start thread");
+        assert!(start_one.ok, "table 1 start should succeed: {start_one:?}");
+        assert!(start_two.ok, "table 2 start should succeed: {start_two:?}");
+
+        let table_one_state = bob.send(RequestOp::GetTableState { table_id: 1 });
+        match table_one_state.payload.expect("table 1 state payload") {
+            ResponsePayload::TableState(state) => {
+                assert_eq!(state.table_id, 1);
+                assert_eq!(state.seats.len(), 2);
+                assert_ne!(state.step, HandStep::WaitingForPlayers);
+            }
+            other => panic!("unexpected payload: {other:?}"),
+        }
+
+        let table_two_state = dave.send(RequestOp::GetTableState {
+            table_id: second_table_id,
+        });
+        match table_two_state.payload.expect("table 2 state payload") {
+            ResponsePayload::TableState(state) => {
+                assert_eq!(state.table_id, second_table_id);
+                assert_eq!(state.variant, PokerVariant::TexasHoldEm);
+                assert_eq!(state.seats.len(), 2);
+                assert_ne!(state.step, HandStep::WaitingForPlayers);
+            }
+            other => panic!("unexpected payload: {other:?}"),
+        }
+
+        drop(bob);
+        drop(dave);
         server.join();
     }
 }

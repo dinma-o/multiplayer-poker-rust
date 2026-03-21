@@ -1,5 +1,6 @@
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, RwLock};
 
 use common::{
     protocol::{AccountCmd, ActionCmd, Command, Event, HandStep, LobbyCmd, PlayerId, PokerVariant},
@@ -17,7 +18,9 @@ use crate::{
     accounts::Account,
     engine::SharedAccountStore,
     sessions::{Session, SessionStore},
+    table::PokerTable,
     table_runtime::TableRuntime,
+    table_worker::{PlayerViewState, TableHandle, TableWorkerError},
     variants,
 };
 
@@ -27,10 +30,10 @@ const DEFAULT_TABLE_ID: TableId = 1;
 
 pub struct ServerApp {
     pub accounts: SharedAccountStore,
-    sessions: SessionStore,
-    pub tables: HashMap<TableId, TableRuntime>,
+    sessions: Mutex<SessionStore>,
+    tables: RwLock<HashMap<TableId, TableHandle>>,
     default_table_id: TableId,
-    next_table_id: TableId,
+    next_table_id: AtomicU64,
 }
 
 impl ServerApp {
@@ -38,35 +41,44 @@ impl ServerApp {
         let accounts = Arc::new(Mutex::new(store));
         let default_table_id = DEFAULT_TABLE_ID;
         let mut tables = HashMap::new();
-        tables.insert(default_table_id, TableRuntime::new(Arc::clone(&accounts)));
+        tables.insert(default_table_id, TableHandle::new(Arc::clone(&accounts)));
 
         Self {
             accounts,
-            sessions: SessionStore::new(),
-            tables,
+            sessions: Mutex::new(SessionStore::new()),
+            tables: RwLock::new(tables),
             default_table_id,
-            next_table_id: default_table_id + 1,
+            next_table_id: AtomicU64::new(default_table_id + 1),
         }
     }
 
-    pub fn apply(&mut self, cmd: Command) -> Vec<Event> {
+    pub fn apply(&self, cmd: Command) -> Vec<Event> {
         match cmd {
             Command::Account(account_cmd) => self.apply_account_cmd(account_cmd),
             other => self.apply_to_table(self.default_table_id, other),
         }
     }
 
-    pub fn apply_to_table(&mut self, table_id: TableId, cmd: Command) -> Vec<Event> {
-        match self.tables.get_mut(&table_id) {
-            Some(runtime) => runtime.apply(cmd),
-            None => vec![Event::Error {
-                message: format!("Table {table_id} not found"),
+    pub fn apply_to_table(&self, table_id: TableId, cmd: Command) -> Vec<Event> {
+        let handle = match self.table_handle(table_id) {
+            Ok(handle) => handle,
+            Err(_) => {
+                return vec![Event::Error {
+                    message: format!("Table {table_id} not found"),
+                }];
+            }
+        };
+
+        match handle.apply(cmd) {
+            Ok(events) => events,
+            Err(error) => vec![Event::Error {
+                message: format!("Table {table_id} unavailable: {error}"),
             }],
         }
     }
 
     pub fn create_account(
-        &mut self,
+        &self,
         name: String,
         pin: String,
         amount: i64,
@@ -81,7 +93,7 @@ impl ServerApp {
         Ok(Self::account_profile(&account))
     }
 
-    pub fn login(&mut self, name: String, pin: String) -> AppResult<LoginResult> {
+    pub fn login(&self, name: String, pin: String) -> AppResult<LoginResult> {
         let account = self
             .accounts
             .lock()
@@ -89,47 +101,58 @@ impl ServerApp {
             .login(&name, &pin)
             .map_err(|e| Self::auth_error("Login failed", e))?;
 
-        let session = self.sessions.create_session(&account);
+        let session = self
+            .sessions
+            .lock()
+            .expect("session store lock poisoned")
+            .create_session(&account);
         Ok(LoginResult {
             session_id: session.session_id,
             account: Self::account_profile(&account),
         })
     }
 
-    pub fn logout(&mut self, session_id: &str) -> AppResult<LogoutResult> {
+    pub fn logout(&self, session_id: &str) -> AppResult<LogoutResult> {
         let session = self.require_session(session_id)?;
-
-        for runtime in self.tables.values_mut() {
-            let is_seated = runtime
-                .engine
+        for (table_id, handle) in self.table_handles() {
+            let snapshot = handle
+                .snapshot()
+                .map_err(|e| Self::table_worker_error(table_id, e))?;
+            let is_seated = snapshot
                 .table
                 .seated_players()
                 .iter()
                 .any(|(_, seated_id)| *seated_id == session.account_id);
-
             if !is_seated {
                 continue;
             }
 
-            let events = runtime.apply(Command::Lobby(LobbyCmd::Leave {
-                player_name: session.player_name.clone(),
-            }));
+            let events = handle
+                .apply(Command::Lobby(LobbyCmd::Leave {
+                    player_name: session.player_name.clone(),
+                }))
+                .map_err(|e| Self::table_worker_error(table_id, e))?;
             Self::ensure_no_error(&events)?;
         }
 
-        let removed = self.sessions.remove(session_id).ok_or_else(|| {
-            ErrorPayload::new(
-                ErrorCode::SessionNotFound,
-                format!("Session {session_id} was not found"),
-            )
-        })?;
+        let removed = self
+            .sessions
+            .lock()
+            .expect("session store lock poisoned")
+            .remove(session_id)
+            .ok_or_else(|| {
+                ErrorPayload::new(
+                    ErrorCode::SessionNotFound,
+                    format!("Session {session_id} was not found"),
+                )
+            })?;
 
         Ok(LogoutResult {
             session_id: removed.session_id,
         })
     }
 
-    pub fn deposit(&mut self, session_id: &str, amount: i64) -> AppResult<AccountProfile> {
+    pub fn deposit(&self, session_id: &str, amount: i64) -> AppResult<AccountProfile> {
         let session = self.require_session(session_id)?;
         let account = self
             .accounts
@@ -140,7 +163,7 @@ impl ServerApp {
         Ok(Self::account_profile(&account))
     }
 
-    pub fn withdraw(&mut self, session_id: &str, amount: i64) -> AppResult<AccountProfile> {
+    pub fn withdraw(&self, session_id: &str, amount: i64) -> AppResult<AccountProfile> {
         let session = self.require_session(session_id)?;
         let account = self
             .accounts
@@ -153,40 +176,39 @@ impl ServerApp {
 
     pub fn list_tables(&self) -> TableList {
         let mut tables: Vec<TableSummary> = self
-            .tables
-            .iter()
-            .map(|(table_id, runtime)| self.table_summary(*table_id, runtime))
+            .table_handles()
+            .into_iter()
+            .filter_map(|(table_id, handle)| {
+                handle
+                    .snapshot()
+                    .ok()
+                    .map(|snapshot| Self::table_summary_from_table(table_id, &snapshot.table))
+            })
             .collect();
         tables.sort_by_key(|table| table.table_id);
         TableList { tables }
     }
 
-    pub fn create_table(
-        &mut self,
-        session_id: &str,
-        variant: PokerVariant,
-    ) -> AppResult<TableSummary> {
+    pub fn create_table(&self, session_id: &str, variant: PokerVariant) -> AppResult<TableSummary> {
         let _session = self.require_session(session_id)?;
 
-        let table_id = self.next_table_id;
-        self.next_table_id = self.next_table_id.saturating_add(1);
-
+        let table_id = self.next_table_id.fetch_add(1, Ordering::Relaxed);
         let mut runtime = TableRuntime::new(Arc::clone(&self.accounts));
         runtime
             .engine
             .table
             .set_variant_spec(variants::spec_for(variant));
 
-        let summary = self.table_summary(table_id, &runtime);
-        self.tables.insert(table_id, runtime);
+        let summary = Self::table_summary_from_table(table_id, &runtime.engine.table);
+        let handle = TableHandle::new_with_runtime(runtime);
+        self.tables
+            .write()
+            .expect("table registry lock poisoned")
+            .insert(table_id, handle);
         Ok(summary)
     }
 
-    pub fn join_table(
-        &mut self,
-        session_id: &str,
-        table_id: TableId,
-    ) -> AppResult<JoinTableResult> {
+    pub fn join_table(&self, session_id: &str, table_id: TableId) -> AppResult<JoinTableResult> {
         let session = self.require_session(session_id)?;
         let account = self
             .accounts
@@ -195,15 +217,11 @@ impl ServerApp {
             .get_by_id(session.account_id)
             .cloned()
             .map_err(|e| Self::account_error("Join failed", e))?;
-        let runtime = self
-            .tables
-            .get_mut(&table_id)
-            .ok_or_else(|| Self::table_not_found(table_id))?;
+        let handle = self.table_handle(table_id)?;
 
-        let events = runtime
-            .engine
-            .join_authenticated_player(account.id, account.name.clone());
-        runtime.record_events(&events);
+        let events = handle
+            .join_authenticated_player(account.id, account.name.clone())
+            .map_err(|e| Self::table_worker_error(table_id, e))?;
         Self::ensure_no_error(&events)?;
 
         let seat = events.iter().find_map(|event| match event {
@@ -220,21 +238,19 @@ impl ServerApp {
         })
     }
 
-    pub fn leave_table(
-        &mut self,
-        session_id: &str,
-        table_id: TableId,
-    ) -> AppResult<LeaveTableResult> {
+    pub fn leave_table(&self, session_id: &str, table_id: TableId) -> AppResult<LeaveTableResult> {
         let session = self.require_session(session_id)?;
-        let runtime = self
-            .tables
-            .get_mut(&table_id)
-            .ok_or_else(|| Self::table_not_found(table_id))?;
+        let handle = self.table_handle(table_id)?;
+        let snapshot = handle
+            .snapshot()
+            .map_err(|e| Self::table_worker_error(table_id, e))?;
 
-        let immediate_leave = runtime.engine.table.current_step() == HandStep::WaitingForPlayers;
-        let events = runtime.apply(Command::Lobby(LobbyCmd::Leave {
-            player_name: session.player_name.clone(),
-        }));
+        let immediate_leave = snapshot.table.current_step() == HandStep::WaitingForPlayers;
+        let events = handle
+            .apply(Command::Lobby(LobbyCmd::Leave {
+                player_name: session.player_name.clone(),
+            }))
+            .map_err(|e| Self::table_worker_error(table_id, e))?;
         Self::ensure_no_error(&events)?;
 
         let status = if immediate_leave {
@@ -246,20 +262,18 @@ impl ServerApp {
         Ok(LeaveTableResult { table_id, status })
     }
 
-    pub fn start_hand(
-        &mut self,
-        session_id: &str,
-        table_id: TableId,
-    ) -> AppResult<OperationReceipt> {
+    pub fn start_hand(&self, session_id: &str, table_id: TableId) -> AppResult<OperationReceipt> {
         let session = self.require_session(session_id)?;
-        let runtime = self
-            .tables
-            .get_mut(&table_id)
-            .ok_or_else(|| Self::table_not_found(table_id))?;
+        let handle = self.table_handle(table_id)?;
+        let snapshot = handle
+            .snapshot()
+            .map_err(|e| Self::table_worker_error(table_id, e))?;
 
-        Self::require_player_seated(runtime, session.account_id, &session.player_name)?;
+        Self::require_player_seated(&snapshot.table, session.account_id, &session.player_name)?;
 
-        let events = runtime.apply(Command::Lobby(LobbyCmd::StartHand));
+        let events = handle
+            .apply(Command::Lobby(LobbyCmd::StartHand))
+            .map_err(|e| Self::table_worker_error(table_id, e))?;
         Self::ensure_no_error(&events)?;
         Ok(OperationReceipt {
             table_id,
@@ -268,39 +282,52 @@ impl ServerApp {
     }
 
     pub fn get_table_state(&self, table_id: TableId) -> AppResult<PublicTableState> {
-        let runtime = self
-            .tables
-            .get(&table_id)
-            .ok_or_else(|| Self::table_not_found(table_id))?;
-        Ok(self.build_public_table_state(table_id, runtime))
+        let handle = self.table_handle(table_id)?;
+        let snapshot = handle
+            .snapshot()
+            .map_err(|e| Self::table_worker_error(table_id, e))?;
+        Ok(self.build_public_table_state(table_id, &snapshot.table))
     }
 
     pub fn get_player_view(&self, session_id: &str, table_id: TableId) -> AppResult<PlayerView> {
         let session = self.require_session(session_id)?;
-        let runtime = self
-            .tables
-            .get(&table_id)
-            .ok_or_else(|| Self::table_not_found(table_id))?;
+        let handle = self.table_handle(table_id)?;
+        let state = handle
+            .player_view_state(session.account_id, session.player_name.clone())
+            .map_err(|e| Self::table_worker_error(table_id, e))?;
 
-        Self::require_player_seated(runtime, session.account_id, &session.player_name)?;
-        Ok(self.build_player_view(table_id, runtime, session.account_id, &session.player_name))
+        if !state.is_seated {
+            return Err(ErrorPayload::new(
+                ErrorCode::PermissionDenied,
+                format!("{} is not seated at the table", session.player_name),
+            ));
+        }
+
+        Ok(Self::build_player_view(
+            table_id,
+            session.account_id,
+            &session.player_name,
+            state,
+        ))
     }
 
     pub fn submit_action(
-        &mut self,
+        &self,
         session_id: &str,
         table_id: TableId,
         action: PlayerAction,
     ) -> AppResult<OperationReceipt> {
         let session = self.require_session(session_id)?;
-        let runtime = self
-            .tables
-            .get_mut(&table_id)
-            .ok_or_else(|| Self::table_not_found(table_id))?;
+        let handle = self.table_handle(table_id)?;
+        let snapshot = handle
+            .snapshot()
+            .map_err(|e| Self::table_worker_error(table_id, e))?;
 
-        Self::require_player_seated(runtime, session.account_id, &session.player_name)?;
+        Self::require_player_seated(&snapshot.table, session.account_id, &session.player_name)?;
         let command = Command::Action(Self::to_action_cmd(&session.player_name, action));
-        let events = runtime.apply(command);
+        let events = handle
+            .apply(command)
+            .map_err(|e| Self::table_worker_error(table_id, e))?;
         Self::ensure_no_error(&events)?;
 
         Ok(OperationReceipt {
@@ -310,13 +337,12 @@ impl ServerApp {
     }
 
     pub fn get_history(&self, table_id: TableId) -> AppResult<TableHistory> {
-        let runtime = self
-            .tables
-            .get(&table_id)
-            .ok_or_else(|| Self::table_not_found(table_id))?;
-
-        let entries = runtime
+        let handle = self.table_handle(table_id)?;
+        let history = handle
             .history()
+            .map_err(|e| Self::table_worker_error(table_id, e))?;
+
+        let entries = history
             .iter()
             .enumerate()
             .filter_map(|(index, event)| Self::history_entry(index as u64, event))
@@ -332,7 +358,7 @@ impl ServerApp {
             .flush()
     }
 
-    pub fn handle_request(&mut self, request: ClientRequest) -> ServerResponse {
+    pub fn handle_request(&self, request: ClientRequest) -> ServerResponse {
         let request_id = request.request_id.clone();
         match self.dispatch_request(request) {
             Ok(payload) => ServerResponse::ok(request_id, payload),
@@ -392,7 +418,7 @@ impl ServerApp {
         }
     }
 
-    fn dispatch_request(&mut self, request: ClientRequest) -> AppResult<ResponsePayload> {
+    fn dispatch_request(&self, request: ClientRequest) -> AppResult<ResponsePayload> {
         let session_id = request.session_id.as_deref();
 
         match request.op {
@@ -415,52 +441,63 @@ impl ServerApp {
                     .map(ResponsePayload::Account)
             }
             RequestOp::ListTables => Ok(ResponsePayload::Tables(self.list_tables())),
-            RequestOp::CreateTable { variant } => {
-                let session_id = Self::require_session_id(session_id)?;
-                self.create_table(session_id, variant)
-                    .map(ResponsePayload::Table)
-            }
-            RequestOp::JoinTable { table_id } => {
-                let session_id = Self::require_session_id(session_id)?;
-                self.join_table(session_id, table_id)
-                    .map(ResponsePayload::JoinTable)
-            }
-            RequestOp::LeaveTable { table_id } => {
-                let session_id = Self::require_session_id(session_id)?;
-                self.leave_table(session_id, table_id)
-                    .map(ResponsePayload::LeaveTable)
-            }
-            RequestOp::StartHand { table_id } => {
-                let session_id = Self::require_session_id(session_id)?;
-                self.start_hand(session_id, table_id)
-                    .map(ResponsePayload::Receipt)
-            }
+            RequestOp::CreateTable { variant } => self
+                .create_table(Self::require_session_id(session_id)?, variant)
+                .map(ResponsePayload::Table),
+            RequestOp::JoinTable { table_id } => self
+                .join_table(Self::require_session_id(session_id)?, table_id)
+                .map(ResponsePayload::JoinTable),
+            RequestOp::LeaveTable { table_id } => self
+                .leave_table(Self::require_session_id(session_id)?, table_id)
+                .map(ResponsePayload::LeaveTable),
+            RequestOp::StartHand { table_id } => self
+                .start_hand(Self::require_session_id(session_id)?, table_id)
+                .map(ResponsePayload::Receipt),
             RequestOp::GetTableState { table_id } => self
                 .get_table_state(table_id)
                 .map(ResponsePayload::TableState),
-            RequestOp::GetPlayerView { table_id } => {
-                let session_id = Self::require_session_id(session_id)?;
-                self.get_player_view(session_id, table_id)
-                    .map(ResponsePayload::PlayerView)
-            }
-            RequestOp::SubmitAction { table_id, action } => {
-                let session_id = Self::require_session_id(session_id)?;
-                self.submit_action(session_id, table_id, action)
-                    .map(ResponsePayload::Receipt)
-            }
+            RequestOp::GetPlayerView { table_id } => self
+                .get_player_view(Self::require_session_id(session_id)?, table_id)
+                .map(ResponsePayload::PlayerView),
+            RequestOp::SubmitAction { table_id, action } => self
+                .submit_action(Self::require_session_id(session_id)?, table_id, action)
+                .map(ResponsePayload::Receipt),
             RequestOp::GetHistory { table_id } => {
                 self.get_history(table_id).map(ResponsePayload::History)
             }
         }
     }
 
+    fn table_handle(&self, table_id: TableId) -> AppResult<TableHandle> {
+        self.tables
+            .read()
+            .expect("table registry lock poisoned")
+            .get(&table_id)
+            .cloned()
+            .ok_or_else(|| Self::table_not_found(table_id))
+    }
+
+    fn table_handles(&self) -> Vec<(TableId, TableHandle)> {
+        self.tables
+            .read()
+            .expect("table registry lock poisoned")
+            .iter()
+            .map(|(table_id, handle)| (*table_id, handle.clone()))
+            .collect()
+    }
+
     fn require_session(&self, session_id: &str) -> AppResult<Session> {
-        self.sessions.get(session_id).cloned().ok_or_else(|| {
-            ErrorPayload::new(
-                ErrorCode::SessionNotFound,
-                format!("Session {session_id} was not found"),
-            )
-        })
+        self.sessions
+            .lock()
+            .expect("session store lock poisoned")
+            .get(session_id)
+            .cloned()
+            .ok_or_else(|| {
+                ErrorPayload::new(
+                    ErrorCode::SessionNotFound,
+                    format!("Session {session_id} was not found"),
+                )
+            })
     }
 
     fn require_session_id(session_id: Option<&str>) -> AppResult<&str> {
@@ -473,13 +510,11 @@ impl ServerApp {
     }
 
     fn require_player_seated(
-        runtime: &TableRuntime,
+        table: &PokerTable,
         player_id: PlayerId,
         player_name: &str,
     ) -> AppResult<()> {
-        let is_seated = runtime
-            .engine
-            .table
+        let is_seated = table
             .seated_players()
             .iter()
             .any(|(_, seated_id)| *seated_id == player_id);
@@ -515,27 +550,21 @@ impl ServerApp {
             .collect()
     }
 
-    fn table_summary(&self, table_id: TableId, runtime: &TableRuntime) -> TableSummary {
+    fn table_summary_from_table(table_id: TableId, table: &PokerTable) -> TableSummary {
         TableSummary {
             table_id,
-            variant: Self::variant_for_runtime(runtime),
-            step: runtime.engine.table.current_step(),
-            seated_count: runtime.engine.table.seated_players().len(),
-            max_players: runtime.engine.table.variant_spec().max_players,
+            variant: Self::variant_for_table(table),
+            step: table.current_step(),
+            seated_count: table.seated_players().len(),
+            max_players: table.variant_spec().max_players,
         }
     }
 
-    fn build_public_table_state(
-        &self,
-        table_id: TableId,
-        runtime: &TableRuntime,
-    ) -> PublicTableState {
+    fn build_public_table_state(&self, table_id: TableId, table: &PokerTable) -> PublicTableState {
         let accounts = self.account_map();
-        let hand_state = runtime.engine.table.hand_state();
+        let hand_state = table.hand_state();
 
-        let seats = runtime
-            .engine
-            .table
+        let seats = table
             .seated_players()
             .into_iter()
             .filter_map(|(seat, player_id)| {
@@ -564,10 +593,10 @@ impl ServerApp {
 
         PublicTableState {
             table_id,
-            variant: Self::variant_for_runtime(runtime),
-            step: runtime.engine.table.current_step(),
-            dealer_seat: runtime.engine.table.dealer_position(),
-            acting_player_id: Self::acting_player_id(runtime),
+            variant: Self::variant_for_table(table),
+            step: table.current_step(),
+            dealer_seat: table.dealer_position(),
+            acting_player_id: Self::acting_player_id(table),
             pot: hand_state.pot_size() as i64,
             current_bet: hand_state.current_bet() as i64,
             board_cards: hand_state.board_cards().to_vec(),
@@ -576,62 +605,40 @@ impl ServerApp {
     }
 
     fn build_player_view(
-        &self,
         table_id: TableId,
-        runtime: &TableRuntime,
         player_id: PlayerId,
         player_name: &str,
+        state: PlayerViewState,
     ) -> PlayerView {
-        let hand_state = runtime.engine.table.hand_state();
-        let seat = runtime
-            .engine
-            .table
-            .seated_players()
-            .into_iter()
-            .find_map(|(seat, seated_id)| (seated_id == player_id).then_some(seat));
-
         PlayerView {
             table_id,
             player_id,
             player_name: player_name.to_string(),
-            seat,
-            private_cards: hand_state
-                .player_hole_cards(&player_id)
-                .cloned()
-                .unwrap_or_default(),
-            up_cards: hand_state
-                .player_up_cards(&player_id)
-                .cloned()
-                .unwrap_or_default(),
-            board_cards: hand_state.board_cards().to_vec(),
-            action_prompt: runtime.engine.action_prompt_for_player(player_id),
+            seat: state.seat,
+            private_cards: state.private_cards,
+            up_cards: state.up_cards,
+            board_cards: state.board_cards,
+            action_prompt: state.action_prompt,
         }
     }
 
-    fn acting_player_id(runtime: &TableRuntime) -> Option<PlayerId> {
-        match runtime.engine.table.current_step() {
+    fn acting_player_id(table: &PokerTable) -> Option<PlayerId> {
+        match table.current_step() {
             HandStep::BettingRound1
             | HandStep::BettingRound2
             | HandStep::BettingRound3
             | HandStep::BettingRound4
-            | HandStep::BettingRound5 => runtime
-                .engine
-                .table
+            | HandStep::BettingRound5 => table
                 .hand_state()
                 .betting()
                 .map(|betting| betting.current_player()),
-            HandStep::DrawPhase => runtime
-                .engine
-                .table
-                .hand_state()
-                .draw()
-                .map(|draw| draw.current_player()),
+            HandStep::DrawPhase => table.hand_state().draw().map(|draw| draw.current_player()),
             _ => None,
         }
     }
 
-    fn variant_for_runtime(runtime: &TableRuntime) -> PokerVariant {
-        let spec = runtime.engine.table.variant_spec();
+    fn variant_for_table(table: &PokerTable) -> PokerVariant {
+        let spec = table.variant_spec();
         if spec == variants::texas_holdem::SPEC {
             PokerVariant::TexasHoldEm
         } else if spec == variants::seven_card_stud::SPEC {
@@ -654,9 +661,7 @@ impl ServerApp {
 
     fn history_entry(index: u64, event: &Event) -> Option<HistoryEntry> {
         let (kind, message) = match event {
-            Event::Ok => {
-                return None;
-            }
+            Event::Ok => return None,
             Event::Info { message } => (HistoryKind::Info, message.clone()),
             Event::Error { message } => (HistoryKind::Error, message.clone()),
             Event::StepChanged { step } => (
@@ -682,9 +687,7 @@ impl ServerApp {
                 HistoryKind::DrawPrompt,
                 format!("draw requested for {player_name}"),
             ),
-            Event::PrivateHand { .. } => {
-                return None;
-            }
+            Event::PrivateHand { .. } => return None,
             Event::Showdown { results } => (
                 HistoryKind::Showdown,
                 format!("showdown: {} result(s)", results.len()),
@@ -739,6 +742,13 @@ impl ServerApp {
         )
     }
 
+    fn table_worker_error(table_id: TableId, error: TableWorkerError) -> ErrorPayload {
+        ErrorPayload::new(
+            ErrorCode::Internal,
+            format!("Table {table_id} worker error: {error}"),
+        )
+    }
+
     fn auth_error(prefix: &str, error: AccountError) -> ErrorPayload {
         ErrorPayload::new(
             ErrorCode::AuthenticationFailed,
@@ -773,7 +783,7 @@ mod tests {
 
     #[test]
     fn shared_api_account_and_login_flow() {
-        let mut fx = test_app();
+        let fx = test_app();
 
         let account = fx
             .app
@@ -791,7 +801,7 @@ mod tests {
 
     #[test]
     fn shared_api_table_state_and_player_view() {
-        let mut fx = test_app();
+        let fx = test_app();
         fx.app
             .create_account("alice".into(), "1234".into(), 500)
             .expect("create alice");
@@ -818,7 +828,7 @@ mod tests {
 
     #[test]
     fn shared_api_relogin_invalidates_old_session() {
-        let mut fx = test_app();
+        let fx = test_app();
         fx.app
             .create_account("alice".into(), "1234".into(), 500)
             .expect("create alice");
@@ -849,7 +859,7 @@ mod tests {
 
     #[test]
     fn shared_api_logout_invalidates_session_and_leaves_waiting_table() {
-        let mut fx = test_app();
+        let fx = test_app();
         fx.app
             .create_account("alice".into(), "1234".into(), 500)
             .expect("create alice");
@@ -875,7 +885,7 @@ mod tests {
 
     #[test]
     fn shared_api_create_table_and_history_filter_private_hands() {
-        let mut fx = test_app();
+        let fx = test_app();
         fx.app
             .create_account("alice".into(), "1234".into(), 500)
             .expect("create alice");

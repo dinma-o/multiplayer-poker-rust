@@ -101,6 +101,15 @@ impl GameEngine {
     }
 
     pub fn action_prompt_for_player(&self, player_id: PlayerId) -> Option<ActionPrompt> {
+        let player_name = self.account_name(player_id);
+        self.action_prompt_for_player_named(player_id, &player_name)
+    }
+
+    pub fn action_prompt_for_player_named(
+        &self,
+        player_id: PlayerId,
+        player_name: &str,
+    ) -> Option<ActionPrompt> {
         match self.table.current_step() {
             HandStep::BettingRound1
             | HandStep::BettingRound2
@@ -112,8 +121,7 @@ impl GameEngine {
                     return None;
                 }
 
-                let player_name = self.account_name(player_id);
-                match self.action_requested_event_for(player_id, &player_name) {
+                match self.action_requested_event_for(player_id, player_name) {
                     Event::ActionRequested {
                         allowed,
                         call_amount,

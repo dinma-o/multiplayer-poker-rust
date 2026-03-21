@@ -8,13 +8,14 @@ mod game_states;
 mod sessions;
 mod table;
 mod table_runtime;
+mod table_worker;
 mod transport;
 mod variants;
 
 use std::env;
 use std::fs;
 use std::path::Path;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use crate::account_store::AccountStore;
 use crate::app::ServerApp;
@@ -31,14 +32,12 @@ fn main() {
     match mode.as_deref() {
         Some("serve") | Some("tcp") => {
             let store = AccountStore::load(ACCOUNTS_PATH).expect("load accounts");
-            let app = Arc::new(Mutex::new(ServerApp::new(store)));
+            let app = Arc::new(ServerApp::new(store));
             if let Err(error) = transport::tcp::serve(Arc::clone(&app)) {
                 eprintln!("tcp server error: {error}");
             }
 
-            if let Ok(app) = app.lock() {
-                app.flush_accounts().expect("flush accounts");
-            }
+            app.flush_accounts().expect("flush accounts");
         }
         Some("cli") | None => {
             let store = AccountStore::load(ACCOUNTS_PATH).expect("load accounts");
