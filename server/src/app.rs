@@ -4,10 +4,10 @@ use std::sync::{Arc, Mutex};
 use common::{
     protocol::{AccountCmd, ActionCmd, Command, Event, HandStep, LobbyCmd, PlayerId, PokerVariant},
     wire::{
-        AccountProfile, ErrorCode, ErrorPayload, HistoryEntry, HistoryKind, JoinTableResult,
-        LeaveTableResult, LeaveTableStatus, LoginResult, OperationReceipt, PlayerAction,
-        PlayerView, PublicSeatState, PublicTableState, SeatAssignmentStatus, TableHistory, TableId,
-        TableList, TableSummary,
+        AccountProfile, ClientRequest, ErrorCode, ErrorPayload, HistoryEntry, HistoryKind,
+        JoinTableResult, LeaveTableResult, LeaveTableStatus, LoginResult, OperationReceipt,
+        PlayerAction, PlayerView, PublicSeatState, PublicTableState, RequestOp, ResponsePayload,
+        SeatAssignmentStatus, ServerResponse, TableHistory, TableId, TableList, TableSummary,
     },
 };
 
@@ -291,6 +291,14 @@ impl ServerApp {
             .flush()
     }
 
+    pub fn handle_request(&mut self, request: ClientRequest) -> ServerResponse {
+        let request_id = request.request_id.clone();
+        match self.dispatch_request(request) {
+            Ok(payload) => ServerResponse::ok(request_id, payload),
+            Err(error) => ServerResponse::error(request_id, error),
+        }
+    }
+
     fn apply_account_cmd(&self, cmd: AccountCmd) -> Vec<Event> {
         let mut accounts = self.accounts.lock().expect("account store lock poisoned");
 
@@ -343,11 +351,78 @@ impl ServerApp {
         }
     }
 
+    fn dispatch_request(&mut self, request: ClientRequest) -> AppResult<ResponsePayload> {
+        let session_id = request.session_id.as_deref();
+
+        match request.op {
+            RequestOp::CreateAccount { name, pin, amount } => self
+                .create_account(name, pin, amount)
+                .map(ResponsePayload::Account),
+            RequestOp::Login { name, pin } => self.login(name, pin).map(ResponsePayload::Login),
+            RequestOp::Deposit { amount } => {
+                let session_id = Self::require_session_id(session_id)?;
+                self.deposit(session_id, amount)
+                    .map(ResponsePayload::Account)
+            }
+            RequestOp::Withdraw { amount } => {
+                let session_id = Self::require_session_id(session_id)?;
+                self.withdraw(session_id, amount)
+                    .map(ResponsePayload::Account)
+            }
+            RequestOp::ListTables => Ok(ResponsePayload::Tables(self.list_tables())),
+            RequestOp::CreateTable { variant } => {
+                let session_id = Self::require_session_id(session_id)?;
+                self.create_table(session_id, variant)
+                    .map(ResponsePayload::Table)
+            }
+            RequestOp::JoinTable { table_id } => {
+                let session_id = Self::require_session_id(session_id)?;
+                self.join_table(session_id, table_id)
+                    .map(ResponsePayload::JoinTable)
+            }
+            RequestOp::LeaveTable { table_id } => {
+                let session_id = Self::require_session_id(session_id)?;
+                self.leave_table(session_id, table_id)
+                    .map(ResponsePayload::LeaveTable)
+            }
+            RequestOp::StartHand { table_id } => {
+                let session_id = Self::require_session_id(session_id)?;
+                self.start_hand(session_id, table_id)
+                    .map(ResponsePayload::Receipt)
+            }
+            RequestOp::GetTableState { table_id } => self
+                .get_table_state(table_id)
+                .map(ResponsePayload::TableState),
+            RequestOp::GetPlayerView { table_id } => {
+                let session_id = Self::require_session_id(session_id)?;
+                self.get_player_view(session_id, table_id)
+                    .map(ResponsePayload::PlayerView)
+            }
+            RequestOp::SubmitAction { table_id, action } => {
+                let session_id = Self::require_session_id(session_id)?;
+                self.submit_action(session_id, table_id, action)
+                    .map(ResponsePayload::Receipt)
+            }
+            RequestOp::GetHistory { table_id } => {
+                self.get_history(table_id).map(ResponsePayload::History)
+            }
+        }
+    }
+
     fn require_session(&self, session_id: &str) -> AppResult<Session> {
         self.sessions.get(session_id).cloned().ok_or_else(|| {
             ErrorPayload::new(
                 ErrorCode::SessionNotFound,
                 format!("Session {session_id} was not found"),
+            )
+        })
+    }
+
+    fn require_session_id(session_id: Option<&str>) -> AppResult<&str> {
+        session_id.ok_or_else(|| {
+            ErrorPayload::new(
+                ErrorCode::InvalidRequest,
+                "session_id is required for this operation",
             )
         })
     }
