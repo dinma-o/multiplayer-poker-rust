@@ -772,6 +772,37 @@ mod tests {
     }
 
     #[test]
+    fn shared_api_relogin_invalidates_old_session() {
+        let mut fx = test_app();
+        fx.app
+            .create_account("alice".into(), "1234".into(), 500)
+            .expect("create alice");
+
+        let first = fx
+            .app
+            .login("alice".into(), "1234".into())
+            .expect("first login");
+        let second = fx
+            .app
+            .login("alice".into(), "1234".into())
+            .expect("second login");
+
+        assert_ne!(first.session_id, second.session_id);
+
+        let stale = fx
+            .app
+            .deposit(&first.session_id, 10)
+            .expect_err("stale session should fail");
+        assert_eq!(stale.code, ErrorCode::SessionNotFound);
+
+        let fresh = fx
+            .app
+            .deposit(&second.session_id, 10)
+            .expect("fresh session should work");
+        assert_eq!(fresh.balance, 510);
+    }
+
+    #[test]
     fn shared_api_create_table_and_history_filter_private_hands() {
         let mut fx = test_app();
         fx.app

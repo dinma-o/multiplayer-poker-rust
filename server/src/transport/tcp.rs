@@ -387,4 +387,55 @@ mod tests {
         drop(bob);
         server.join();
     }
+
+    #[test]
+    fn socket_relogin_invalidates_old_session() {
+        let server = spawn_socket_test_server(2);
+        let mut first_client = TestClient::connect(&server.address).expect("connect first client");
+        let mut second_client =
+            TestClient::connect(&server.address).expect("connect second client");
+
+        assert!(
+            first_client
+                .send(RequestOp::CreateAccount {
+                    name: "alice".into(),
+                    pin: "1234".into(),
+                    amount: 500,
+                })
+                .ok
+        );
+
+        let first_login = first_client.send(RequestOp::Login {
+            name: "alice".into(),
+            pin: "1234".into(),
+        });
+        assert!(first_login.ok);
+        let first_session_id = first_client.session_id.clone().expect("first session");
+
+        let second_login = second_client.send(RequestOp::Login {
+            name: "alice".into(),
+            pin: "1234".into(),
+        });
+        assert!(second_login.ok);
+        let second_session_id = second_client.session_id.clone().expect("second session");
+        assert_ne!(first_session_id, second_session_id);
+
+        let stale = first_client.send(RequestOp::Deposit { amount: 10 });
+        assert!(!stale.ok);
+        let stale_error = stale.error.expect("stale session error");
+        assert_eq!(stale_error.code, ErrorCode::SessionNotFound);
+
+        let fresh = second_client.send(RequestOp::Deposit { amount: 10 });
+        assert!(fresh.ok);
+        match fresh.payload.expect("fresh deposit payload") {
+            ResponsePayload::Account(account) => {
+                assert_eq!(account.balance, 510);
+            }
+            other => panic!("unexpected payload: {other:?}"),
+        }
+
+        drop(first_client);
+        drop(second_client);
+        server.join();
+    }
 }
