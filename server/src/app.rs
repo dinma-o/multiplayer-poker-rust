@@ -1,36 +1,21 @@
 use std::collections::HashMap;
-use std::sync::{ Arc, Mutex };
+use std::sync::{Arc, Mutex};
 
 use common::{
-    protocol::{ AccountCmd, ActionCmd, Command, Event, HandStep, LobbyCmd, PlayerId, PokerVariant },
+    protocol::{AccountCmd, ActionCmd, Command, Event, HandStep, LobbyCmd, PlayerId, PokerVariant},
     wire::{
-        AccountProfile,
-        ErrorCode,
-        ErrorPayload,
-        HistoryEntry,
-        HistoryKind,
-        JoinTableResult,
-        LeaveTableResult,
-        LeaveTableStatus,
-        LoginResult,
-        OperationReceipt,
-        PlayerAction,
-        PlayerView,
-        PublicSeatState,
-        PublicTableState,
-        SeatAssignmentStatus,
-        TableHistory,
-        TableId,
-        TableList,
-        TableSummary,
+        AccountProfile, ErrorCode, ErrorPayload, HistoryEntry, HistoryKind, JoinTableResult,
+        LeaveTableResult, LeaveTableStatus, LoginResult, OperationReceipt, PlayerAction,
+        PlayerView, PublicSeatState, PublicTableState, SeatAssignmentStatus, TableHistory, TableId,
+        TableList, TableSummary,
     },
 };
 
 use crate::{
-    account_store::{ AccountError, AccountStore },
+    account_store::{AccountError, AccountStore},
     accounts::Account,
     engine::SharedAccountStore,
-    sessions::{ Session, SessionStore },
+    sessions::{Session, SessionStore},
     table_runtime::TableRuntime,
     variants,
 };
@@ -73,10 +58,9 @@ impl ServerApp {
     pub fn apply_to_table(&mut self, table_id: TableId, cmd: Command) -> Vec<Event> {
         match self.tables.get_mut(&table_id) {
             Some(runtime) => runtime.apply(cmd),
-            None =>
-                vec![Event::Error {
-                    message: format!("Table {table_id} not found"),
-                }],
+            None => vec![Event::Error {
+                message: format!("Table {table_id} not found"),
+            }],
         }
     }
 
@@ -84,9 +68,10 @@ impl ServerApp {
         &mut self,
         name: String,
         pin: String,
-        amount: i64
+        amount: i64,
     ) -> AppResult<AccountProfile> {
-        let account = self.accounts
+        let account = self
+            .accounts
             .lock()
             .expect("account store lock poisoned")
             .create_account(name, &pin, amount)
@@ -96,7 +81,8 @@ impl ServerApp {
     }
 
     pub fn login(&mut self, name: String, pin: String) -> AppResult<LoginResult> {
-        let account = self.accounts
+        let account = self
+            .accounts
             .lock()
             .expect("account store lock poisoned")
             .login(&name, &pin)
@@ -111,7 +97,8 @@ impl ServerApp {
 
     pub fn deposit(&mut self, session_id: &str, amount: i64) -> AppResult<AccountProfile> {
         let session = self.require_session(session_id)?;
-        let account = self.accounts
+        let account = self
+            .accounts
             .lock()
             .expect("account store lock poisoned")
             .deposit(&session.player_name, amount)
@@ -121,7 +108,8 @@ impl ServerApp {
 
     pub fn withdraw(&mut self, session_id: &str, amount: i64) -> AppResult<AccountProfile> {
         let session = self.require_session(session_id)?;
-        let account = self.accounts
+        let account = self
+            .accounts
             .lock()
             .expect("account store lock poisoned")
             .withdraw(&session.player_name, amount)
@@ -130,7 +118,8 @@ impl ServerApp {
     }
 
     pub fn list_tables(&self) -> TableList {
-        let mut tables: Vec<TableSummary> = self.tables
+        let mut tables: Vec<TableSummary> = self
+            .tables
             .iter()
             .map(|(table_id, runtime)| self.table_summary(*table_id, runtime))
             .collect();
@@ -141,7 +130,7 @@ impl ServerApp {
     pub fn create_table(
         &mut self,
         session_id: &str,
-        variant: PokerVariant
+        variant: PokerVariant,
     ) -> AppResult<TableSummary> {
         let _session = self.require_session(session_id)?;
 
@@ -149,7 +138,10 @@ impl ServerApp {
         self.next_table_id = self.next_table_id.saturating_add(1);
 
         let mut runtime = TableRuntime::new(Arc::clone(&self.accounts));
-        runtime.engine.table.set_variant_spec(variants::spec_for(variant));
+        runtime
+            .engine
+            .table
+            .set_variant_spec(variants::spec_for(variant));
 
         let summary = self.table_summary(table_id, &runtime);
         self.tables.insert(table_id, runtime);
@@ -159,28 +151,25 @@ impl ServerApp {
     pub fn join_table(
         &mut self,
         session_id: &str,
-        table_id: TableId
+        table_id: TableId,
     ) -> AppResult<JoinTableResult> {
         let session = self.require_session(session_id)?;
-        let runtime = self.tables
+        let runtime = self
+            .tables
             .get_mut(&table_id)
             .ok_or_else(|| Self::table_not_found(table_id))?;
 
-        let events = runtime.apply(
-            Command::Lobby(LobbyCmd::Join {
-                player_name: session.player_name.clone(),
-                pin: session.pin.clone(),
-            })
-        );
+        let events = runtime.apply(Command::Lobby(LobbyCmd::Join {
+            player_name: session.player_name.clone(),
+            pin: session.pin.clone(),
+        }));
         Self::ensure_no_error(&events)?;
 
-        let seat = events.iter().find_map(|event| {
-            match event {
-                Event::PlayerJoined { player_name, seat, .. } if
-                    player_name == &session.player_name
-                => Some(*seat),
-                _ => None,
-            }
+        let seat = events.iter().find_map(|event| match event {
+            Event::PlayerJoined {
+                player_name, seat, ..
+            } if player_name == &session.player_name => Some(*seat),
+            _ => None,
         });
 
         Ok(JoinTableResult {
@@ -193,19 +182,18 @@ impl ServerApp {
     pub fn leave_table(
         &mut self,
         session_id: &str,
-        table_id: TableId
+        table_id: TableId,
     ) -> AppResult<LeaveTableResult> {
         let session = self.require_session(session_id)?;
-        let runtime = self.tables
+        let runtime = self
+            .tables
             .get_mut(&table_id)
             .ok_or_else(|| Self::table_not_found(table_id))?;
 
         let immediate_leave = runtime.engine.table.current_step() == HandStep::WaitingForPlayers;
-        let events = runtime.apply(
-            Command::Lobby(LobbyCmd::Leave {
-                player_name: session.player_name.clone(),
-            })
-        );
+        let events = runtime.apply(Command::Lobby(LobbyCmd::Leave {
+            player_name: session.player_name.clone(),
+        }));
         Self::ensure_no_error(&events)?;
 
         let status = if immediate_leave {
@@ -220,10 +208,11 @@ impl ServerApp {
     pub fn start_hand(
         &mut self,
         session_id: &str,
-        table_id: TableId
+        table_id: TableId,
     ) -> AppResult<OperationReceipt> {
         let session = self.require_session(session_id)?;
-        let runtime = self.tables
+        let runtime = self
+            .tables
             .get_mut(&table_id)
             .ok_or_else(|| Self::table_not_found(table_id))?;
 
@@ -238,13 +227,19 @@ impl ServerApp {
     }
 
     pub fn get_table_state(&self, table_id: TableId) -> AppResult<PublicTableState> {
-        let runtime = self.tables.get(&table_id).ok_or_else(|| Self::table_not_found(table_id))?;
+        let runtime = self
+            .tables
+            .get(&table_id)
+            .ok_or_else(|| Self::table_not_found(table_id))?;
         Ok(self.build_public_table_state(table_id, runtime))
     }
 
     pub fn get_player_view(&self, session_id: &str, table_id: TableId) -> AppResult<PlayerView> {
         let session = self.require_session(session_id)?;
-        let runtime = self.tables.get(&table_id).ok_or_else(|| Self::table_not_found(table_id))?;
+        let runtime = self
+            .tables
+            .get(&table_id)
+            .ok_or_else(|| Self::table_not_found(table_id))?;
 
         Self::require_player_seated(runtime, session.account_id, &session.player_name)?;
         Ok(self.build_player_view(table_id, runtime, session.account_id, &session.player_name))
@@ -254,10 +249,11 @@ impl ServerApp {
         &mut self,
         session_id: &str,
         table_id: TableId,
-        action: PlayerAction
+        action: PlayerAction,
     ) -> AppResult<OperationReceipt> {
         let session = self.require_session(session_id)?;
-        let runtime = self.tables
+        let runtime = self
+            .tables
             .get_mut(&table_id)
             .ok_or_else(|| Self::table_not_found(table_id))?;
 
@@ -273,7 +269,10 @@ impl ServerApp {
     }
 
     pub fn get_history(&self, table_id: TableId) -> AppResult<TableHistory> {
-        let runtime = self.tables.get(&table_id).ok_or_else(|| Self::table_not_found(table_id))?;
+        let runtime = self
+            .tables
+            .get(&table_id)
+            .ok_or_else(|| Self::table_not_found(table_id))?;
 
         let entries = runtime
             .history()
@@ -286,7 +285,10 @@ impl ServerApp {
     }
 
     pub fn flush_accounts(&self) -> Result<(), AccountError> {
-        self.accounts.lock().expect("account store lock poisoned").flush()
+        self.accounts
+            .lock()
+            .expect("account store lock poisoned")
+            .flush()
     }
 
     fn apply_account_cmd(&self, cmd: AccountCmd) -> Vec<Event> {
@@ -296,83 +298,78 @@ impl ServerApp {
             AccountCmd::Create { name, pin, amount } => {
                 match accounts.create_account(&name, &pin, amount) {
                     Ok(_) => vec![Event::Ok],
-                    Err(e) =>
-                        vec![Event::Error {
-                            message: format!("Account creation failed: {:?}", e),
-                        }],
+                    Err(e) => vec![Event::Error {
+                        message: format!("Account creation failed: {:?}", e),
+                    }],
                 }
             }
             AccountCmd::Delete { player_name, pin } => {
                 match accounts.delete_account(&player_name, &pin) {
                     Ok(_) => vec![Event::Ok],
-                    Err(e) =>
-                        vec![Event::Error {
-                            message: format!("Account deletion failed: {:?}", e),
-                        }],
+                    Err(e) => vec![Event::Error {
+                        message: format!("Account deletion failed: {:?}", e),
+                    }],
                 }
             }
-            AccountCmd::Deposit { player_name, amount } =>
-                match accounts.deposit(&player_name, amount) {
-                    Ok(_) => vec![Event::Ok],
-                    Err(e) =>
-                        vec![Event::Error {
-                            message: format!("Deposit failed: {:?}", e),
-                        }],
+            AccountCmd::Deposit {
+                player_name,
+                amount,
+            } => match accounts.deposit(&player_name, amount) {
+                Ok(_) => vec![Event::Ok],
+                Err(e) => vec![Event::Error {
+                    message: format!("Deposit failed: {:?}", e),
+                }],
+            },
+            AccountCmd::Withdraw {
+                player_name,
+                amount,
+            } => match accounts.withdraw(&player_name, amount) {
+                Ok(_) => vec![Event::Ok],
+                Err(e) => vec![Event::Error {
+                    message: format!("Withdraw failed: {:?}", e),
+                }],
+            },
+            AccountCmd::Get { player_name } => match accounts.get_by_name(&player_name) {
+                Ok(acct) => {
+                    let summary = acct.summary();
+                    vec![Event::Info {
+                        message: format!("Account info:\n{summary}"),
+                    }]
                 }
-            AccountCmd::Withdraw { player_name, amount } =>
-                match accounts.withdraw(&player_name, amount) {
-                    Ok(_) => vec![Event::Ok],
-                    Err(e) =>
-                        vec![Event::Error {
-                            message: format!("Withdraw failed: {:?}", e),
-                        }],
-                }
-            AccountCmd::Get { player_name } =>
-                match accounts.get_by_name(&player_name) {
-                    Ok(acct) => {
-                        let summary = acct.summary();
-                        vec![Event::Info {
-                            message: format!("Account info:\n{summary}"),
-                        }]
-                    }
-                    Err(e) =>
-                        vec![Event::Error {
-                            message: format!("Get account failed: {:?}", e),
-                        }],
-                }
+                Err(e) => vec![Event::Error {
+                    message: format!("Get account failed: {:?}", e),
+                }],
+            },
         }
     }
 
     fn require_session(&self, session_id: &str) -> AppResult<Session> {
-        self.sessions
-            .get(session_id)
-            .cloned()
-            .ok_or_else(|| {
-                ErrorPayload::new(
-                    ErrorCode::SessionNotFound,
-                    format!("Session {session_id} was not found")
-                )
-            })
+        self.sessions.get(session_id).cloned().ok_or_else(|| {
+            ErrorPayload::new(
+                ErrorCode::SessionNotFound,
+                format!("Session {session_id} was not found"),
+            )
+        })
     }
 
     fn require_player_seated(
         runtime: &TableRuntime,
         player_id: PlayerId,
-        player_name: &str
+        player_name: &str,
     ) -> AppResult<()> {
-        let is_seated = runtime.engine.table
+        let is_seated = runtime
+            .engine
+            .table
             .seated_players()
             .iter()
             .any(|(_, seated_id)| *seated_id == player_id);
         if is_seated {
             Ok(())
         } else {
-            Err(
-                ErrorPayload::new(
-                    ErrorCode::PermissionDenied,
-                    format!("{player_name} is not seated at the table")
-                )
-            )
+            Err(ErrorPayload::new(
+                ErrorCode::PermissionDenied,
+                format!("{player_name} is not seated at the table"),
+            ))
         }
     }
 
@@ -411,12 +408,14 @@ impl ServerApp {
     fn build_public_table_state(
         &self,
         table_id: TableId,
-        runtime: &TableRuntime
+        runtime: &TableRuntime,
     ) -> PublicTableState {
         let accounts = self.account_map();
         let hand_state = runtime.engine.table.hand_state();
 
-        let seats = runtime.engine.table
+        let seats = runtime
+            .engine
+            .table
             .seated_players()
             .into_iter()
             .filter_map(|(seat, player_id)| {
@@ -425,7 +424,10 @@ impl ServerApp {
                     .player_hole_cards(&player_id)
                     .map(|cards| cards.len())
                     .unwrap_or(0);
-                let up_cards = hand_state.player_up_cards(&player_id).cloned().unwrap_or_default();
+                let up_cards = hand_state
+                    .player_up_cards(&player_id)
+                    .cloned()
+                    .unwrap_or_default();
 
                 Some(PublicSeatState {
                     seat,
@@ -458,10 +460,12 @@ impl ServerApp {
         table_id: TableId,
         runtime: &TableRuntime,
         player_id: PlayerId,
-        player_name: &str
+        player_name: &str,
     ) -> PlayerView {
         let hand_state = runtime.engine.table.hand_state();
-        let seat = runtime.engine.table
+        let seat = runtime
+            .engine
+            .table
             .seated_players()
             .into_iter()
             .find_map(|(seat, seated_id)| (seated_id == player_id).then_some(seat));
@@ -471,8 +475,14 @@ impl ServerApp {
             player_id,
             player_name: player_name.to_string(),
             seat,
-            private_cards: hand_state.player_hole_cards(&player_id).cloned().unwrap_or_default(),
-            up_cards: hand_state.player_up_cards(&player_id).cloned().unwrap_or_default(),
+            private_cards: hand_state
+                .player_hole_cards(&player_id)
+                .cloned()
+                .unwrap_or_default(),
+            up_cards: hand_state
+                .player_up_cards(&player_id)
+                .cloned()
+                .unwrap_or_default(),
             board_cards: hand_state.board_cards().to_vec(),
             action_prompt: runtime.engine.action_prompt_for_player(player_id),
         }
@@ -480,20 +490,22 @@ impl ServerApp {
 
     fn acting_player_id(runtime: &TableRuntime) -> Option<PlayerId> {
         match runtime.engine.table.current_step() {
-            | HandStep::BettingRound1
+            HandStep::BettingRound1
             | HandStep::BettingRound2
             | HandStep::BettingRound3
             | HandStep::BettingRound4
-            | HandStep::BettingRound5 =>
-                runtime.engine.table
-                    .hand_state()
-                    .betting()
-                    .map(|betting| betting.current_player()),
-            HandStep::DrawPhase =>
-                runtime.engine.table
-                    .hand_state()
-                    .draw()
-                    .map(|draw| draw.current_player()),
+            | HandStep::BettingRound5 => runtime
+                .engine
+                .table
+                .hand_state()
+                .betting()
+                .map(|betting| betting.current_player()),
+            HandStep::DrawPhase => runtime
+                .engine
+                .table
+                .hand_state()
+                .draw()
+                .map(|draw| draw.current_player()),
             _ => None,
         }
     }
@@ -510,14 +522,10 @@ impl ServerApp {
     }
 
     fn ensure_no_error(events: &[Event]) -> AppResult<()> {
-        if
-            let Some(message) = events.iter().find_map(|event| {
-                match event {
-                    Event::Error { message } => Some(message.clone()),
-                    _ => None,
-                }
-            })
-        {
+        if let Some(message) = events.iter().find_map(|event| match event {
+            Event::Error { message } => Some(message.clone()),
+            _ => None,
+        }) {
             return Err(ErrorPayload::new(ErrorCode::GameError, message));
         }
 
@@ -531,26 +539,44 @@ impl ServerApp {
             }
             Event::Info { message } => (HistoryKind::Info, message.clone()),
             Event::Error { message } => (HistoryKind::Error, message.clone()),
-            Event::StepChanged { step } =>
-                (HistoryKind::StepChanged, format!("step changed to {:?}", step)),
-            Event::PlayerJoined { player_name, seat, .. } =>
-                (HistoryKind::PlayerJoined, format!("{player_name} joined seat {seat}")),
-            Event::PlayerLeft { player_name, .. } =>
-                (HistoryKind::PlayerLeft, format!("{player_name} left the table")),
+            Event::StepChanged { step } => (
+                HistoryKind::StepChanged,
+                format!("step changed to {:?}", step),
+            ),
+            Event::PlayerJoined {
+                player_name, seat, ..
+            } => (
+                HistoryKind::PlayerJoined,
+                format!("{player_name} joined seat {seat}"),
+            ),
+            Event::PlayerLeft { player_name, .. } => (
+                HistoryKind::PlayerLeft,
+                format!("{player_name} left the table"),
+            ),
             Event::PotUpdated { pot } => (HistoryKind::PotUpdated, format!("pot updated to {pot}")),
-            Event::ActionRequested { player_name, .. } =>
-                (HistoryKind::ActionPrompt, format!("action requested for {player_name}")),
-            Event::DrawRequested { player_name, .. } =>
-                (HistoryKind::DrawPrompt, format!("draw requested for {player_name}")),
+            Event::ActionRequested { player_name, .. } => (
+                HistoryKind::ActionPrompt,
+                format!("action requested for {player_name}"),
+            ),
+            Event::DrawRequested { player_name, .. } => (
+                HistoryKind::DrawPrompt,
+                format!("draw requested for {player_name}"),
+            ),
             Event::PrivateHand { .. } => {
                 return None;
             }
-            Event::Showdown { results } =>
-                (HistoryKind::Showdown, format!("showdown: {} result(s)", results.len())),
-            Event::Payout { winners } =>
-                (HistoryKind::Payout, format!("payout: {} winner(s)", winners.len())),
-            Event::LobbyState { seated } =>
-                (HistoryKind::Info, format!("lobby state updated: {} seated", seated.len())),
+            Event::Showdown { results } => (
+                HistoryKind::Showdown,
+                format!("showdown: {} result(s)", results.len()),
+            ),
+            Event::Payout { winners } => (
+                HistoryKind::Payout,
+                format!("payout: {} winner(s)", winners.len()),
+            ),
+            Event::LobbyState { seated } => (
+                HistoryKind::Info,
+                format!("lobby state updated: {} seated", seated.len()),
+            ),
         };
 
         Some(HistoryEntry {
@@ -562,42 +588,42 @@ impl ServerApp {
 
     fn to_action_cmd(player_name: &str, action: PlayerAction) -> ActionCmd {
         match action {
-            PlayerAction::Check =>
-                ActionCmd::Check {
-                    player_name: player_name.to_string(),
-                },
-            PlayerAction::Bet { amount } =>
-                ActionCmd::Bet {
-                    player_name: player_name.to_string(),
-                    amount,
-                },
-            PlayerAction::Call =>
-                ActionCmd::Call {
-                    player_name: player_name.to_string(),
-                },
-            PlayerAction::Raise { amount } =>
-                ActionCmd::Raise {
-                    player_name: player_name.to_string(),
-                    amount,
-                },
-            PlayerAction::Fold =>
-                ActionCmd::Fold {
-                    player_name: player_name.to_string(),
-                },
-            PlayerAction::Draw { discard } =>
-                ActionCmd::Draw {
-                    player_name: player_name.to_string(),
-                    discard,
-                },
+            PlayerAction::Check => ActionCmd::Check {
+                player_name: player_name.to_string(),
+            },
+            PlayerAction::Bet { amount } => ActionCmd::Bet {
+                player_name: player_name.to_string(),
+                amount,
+            },
+            PlayerAction::Call => ActionCmd::Call {
+                player_name: player_name.to_string(),
+            },
+            PlayerAction::Raise { amount } => ActionCmd::Raise {
+                player_name: player_name.to_string(),
+                amount,
+            },
+            PlayerAction::Fold => ActionCmd::Fold {
+                player_name: player_name.to_string(),
+            },
+            PlayerAction::Draw { discard } => ActionCmd::Draw {
+                player_name: player_name.to_string(),
+                discard,
+            },
         }
     }
 
     fn table_not_found(table_id: TableId) -> ErrorPayload {
-        ErrorPayload::new(ErrorCode::TableNotFound, format!("Table {table_id} was not found"))
+        ErrorPayload::new(
+            ErrorCode::TableNotFound,
+            format!("Table {table_id} was not found"),
+        )
     }
 
     fn auth_error(prefix: &str, error: AccountError) -> ErrorPayload {
-        ErrorPayload::new(ErrorCode::AuthenticationFailed, format!("{prefix}: {error}"))
+        ErrorPayload::new(
+            ErrorCode::AuthenticationFailed,
+            format!("{prefix}: {error}"),
+        )
     }
 
     fn account_error(prefix: &str, error: AccountError) -> ErrorPayload {
@@ -608,7 +634,7 @@ impl ServerApp {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::{ TempDir, tempdir };
+    use tempfile::{TempDir, tempdir};
 
     struct TestFixture {
         _tmp: TempDir,
@@ -629,7 +655,8 @@ mod tests {
     fn shared_api_account_and_login_flow() {
         let mut fx = test_app();
 
-        let account = fx.app
+        let account = fx
+            .app
             .create_account("alice".into(), "1234".into(), 500)
             .expect("create account");
         assert_eq!(account.player_name, "alice");
@@ -645,18 +672,26 @@ mod tests {
     #[test]
     fn shared_api_table_state_and_player_view() {
         let mut fx = test_app();
-        fx.app.create_account("alice".into(), "1234".into(), 500).expect("create alice");
+        fx.app
+            .create_account("alice".into(), "1234".into(), 500)
+            .expect("create alice");
         let login = fx.app.login("alice".into(), "1234".into()).expect("login");
 
         let table = fx.app.list_tables().tables[0].clone();
-        let joined = fx.app.join_table(&login.session_id, table.table_id).expect("join table");
+        let joined = fx
+            .app
+            .join_table(&login.session_id, table.table_id)
+            .expect("join table");
         assert_eq!(joined.status, SeatAssignmentStatus::Seated);
 
         let state = fx.app.get_table_state(table.table_id).expect("table state");
         assert_eq!(state.table_id, table.table_id);
         assert_eq!(state.seats.len(), 1);
 
-        let view = fx.app.get_player_view(&login.session_id, table.table_id).expect("player view");
+        let view = fx
+            .app
+            .get_player_view(&login.session_id, table.table_id)
+            .expect("player view");
         assert_eq!(view.player_name, "alice");
         assert_eq!(view.seat, Some(0));
     }
@@ -664,22 +699,43 @@ mod tests {
     #[test]
     fn shared_api_create_table_and_history_filter_private_hands() {
         let mut fx = test_app();
-        fx.app.create_account("alice".into(), "1234".into(), 500).expect("create alice");
-        fx.app.create_account("bob".into(), "1234".into(), 500).expect("create bob");
+        fx.app
+            .create_account("alice".into(), "1234".into(), 500)
+            .expect("create alice");
+        fx.app
+            .create_account("bob".into(), "1234".into(), 500)
+            .expect("create bob");
 
-        let alice = fx.app.login("alice".into(), "1234".into()).expect("login alice");
-        let bob = fx.app.login("bob".into(), "1234".into()).expect("login bob");
+        let alice = fx
+            .app
+            .login("alice".into(), "1234".into())
+            .expect("login alice");
+        let bob = fx
+            .app
+            .login("bob".into(), "1234".into())
+            .expect("login bob");
 
-        let table = fx.app
+        let table = fx
+            .app
             .create_table(&alice.session_id, PokerVariant::TexasHoldEm)
             .expect("create table");
-        fx.app.join_table(&alice.session_id, table.table_id).expect("join alice");
-        fx.app.join_table(&bob.session_id, table.table_id).expect("join bob");
+        fx.app
+            .join_table(&alice.session_id, table.table_id)
+            .expect("join alice");
+        fx.app
+            .join_table(&bob.session_id, table.table_id)
+            .expect("join bob");
 
-        let _ = fx.app.start_hand(&alice.session_id, table.table_id).expect("start hand");
+        let _ = fx
+            .app
+            .start_hand(&alice.session_id, table.table_id)
+            .expect("start hand");
         let history = fx.app.get_history(table.table_id).expect("history");
         assert!(
-            history.entries.iter().all(|entry| !entry.message.contains("hand(")),
+            history
+                .entries
+                .iter()
+                .all(|entry| !entry.message.contains("hand(")),
             "private hand events should not be exposed via public history"
         );
     }
