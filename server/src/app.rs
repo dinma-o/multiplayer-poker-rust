@@ -8,8 +8,8 @@ use common::{
         AccountProfile, ClientRequest, ErrorCode, ErrorPayload, HistoryEntry, HistoryKind,
         JoinTableResult, LeaveTableResult, LeaveTableStatus, LoginResult, LogoutResult,
         OperationReceipt, PlayerAction, PlayerView, PublicSeatState, PublicTableState, RequestOp,
-        ResponsePayload, SeatAssignmentStatus, ServerResponse, TableHistory, TableId, TableList,
-        TableSummary,
+        ResponsePayload, SeatAssignmentStatus, ServerResponse, SessionId, TableHistory, TableId,
+        TableList, TableSummary, TableUpdateMessage,
     },
 };
 
@@ -27,6 +27,19 @@ use crate::{
 pub type AppResult<T> = Result<T, ErrorPayload>;
 
 const DEFAULT_TABLE_ID: TableId = 1;
+
+#[derive(Debug, Clone)]
+pub struct TableChangeNotice {
+    pub table_id: TableId,
+    pub events: Vec<Event>,
+}
+
+#[derive(Debug, Clone)]
+pub struct RequestOutcome {
+    pub response: ServerResponse,
+    pub table_changes: Vec<TableChangeNotice>,
+    pub invalidated_sessions: Vec<SessionId>,
+}
 
 pub struct ServerApp {
     pub accounts: SharedAccountStore,
@@ -94,6 +107,14 @@ impl ServerApp {
     }
 
     pub fn login(&self, name: String, pin: String) -> AppResult<LoginResult> {
+        self.login_detail(name, pin).map(|(result, _)| result)
+    }
+
+    fn login_detail(
+        &self,
+        name: String,
+        pin: String,
+    ) -> AppResult<(LoginResult, Option<SessionId>)> {
         let account = self
             .accounts
             .lock()
@@ -101,19 +122,28 @@ impl ServerApp {
             .login(&name, &pin)
             .map_err(|e| Self::auth_error("Login failed", e))?;
 
-        let session = self
+        let creation = self
             .sessions
             .lock()
             .expect("session store lock poisoned")
             .create_session(&account);
-        Ok(LoginResult {
-            session_id: session.session_id,
-            account: Self::account_profile(&account),
-        })
+        Ok((
+            LoginResult {
+                session_id: creation.session.session_id,
+                account: Self::account_profile(&account),
+            },
+            creation.replaced_session_id,
+        ))
     }
 
     pub fn logout(&self, session_id: &str) -> AppResult<LogoutResult> {
+        self.logout_detail(session_id)
+            .map(|(result, _table_changes)| result)
+    }
+
+    fn logout_detail(&self, session_id: &str) -> AppResult<(LogoutResult, Vec<TableChangeNotice>)> {
         let session = self.require_session(session_id)?;
+        let mut table_changes = Vec::new();
         for (table_id, handle) in self.table_handles() {
             let snapshot = handle
                 .snapshot()
@@ -133,6 +163,9 @@ impl ServerApp {
                 }))
                 .map_err(|e| Self::table_worker_error(table_id, e))?;
             Self::ensure_no_error(&events)?;
+            if !events.is_empty() {
+                table_changes.push(Self::table_change(table_id, events));
+            }
         }
 
         let removed = self
@@ -147,9 +180,54 @@ impl ServerApp {
                 )
             })?;
 
-        Ok(LogoutResult {
-            session_id: removed.session_id,
-        })
+        Ok((
+            LogoutResult {
+                session_id: removed.session_id,
+            },
+            table_changes,
+        ))
+    }
+
+    pub fn handle_disconnect(&self, session_id: &str) -> Vec<TableChangeNotice> {
+        let session = match self
+            .sessions
+            .lock()
+            .expect("session store lock poisoned")
+            .remove(session_id)
+        {
+            Some(session) => session,
+            None => return Vec::new(),
+        };
+
+        let mut table_changes = Vec::new();
+        for (table_id, handle) in self.table_handles() {
+            let snapshot = match handle.snapshot() {
+                Ok(snapshot) => snapshot,
+                Err(_) => continue,
+            };
+            let is_seated = snapshot
+                .table
+                .seated_players()
+                .iter()
+                .any(|(_, seated_id)| *seated_id == session.account_id);
+            if !is_seated {
+                continue;
+            }
+
+            let events =
+                match handle.disconnect_player(session.account_id, session.player_name.clone()) {
+                    Ok(events) => events,
+                    Err(_) => continue,
+                };
+            if Self::ensure_no_error(&events).is_err() {
+                continue;
+            }
+            if !events.is_empty() {
+                table_changes.push(Self::table_change(table_id, events));
+            }
+        }
+
+        table_changes
     }
 
     pub fn deposit(&self, session_id: &str, amount: i64) -> AppResult<AccountProfile> {
@@ -209,6 +287,15 @@ impl ServerApp {
     }
 
     pub fn join_table(&self, session_id: &str, table_id: TableId) -> AppResult<JoinTableResult> {
+        self.join_table_detail(session_id, table_id)
+            .map(|(result, _events)| result)
+    }
+
+    fn join_table_detail(
+        &self,
+        session_id: &str,
+        table_id: TableId,
+    ) -> AppResult<(JoinTableResult, Vec<Event>)> {
         let session = self.require_session(session_id)?;
         let account = self
             .accounts
@@ -231,14 +318,26 @@ impl ServerApp {
             _ => None,
         });
 
-        Ok(JoinTableResult {
-            table_id,
-            status: SeatAssignmentStatus::Seated,
-            seat,
-        })
+        Ok((
+            JoinTableResult {
+                table_id,
+                status: SeatAssignmentStatus::Seated,
+                seat,
+            },
+            events,
+        ))
     }
 
     pub fn leave_table(&self, session_id: &str, table_id: TableId) -> AppResult<LeaveTableResult> {
+        self.leave_table_detail(session_id, table_id)
+            .map(|(result, _events)| result)
+    }
+
+    fn leave_table_detail(
+        &self,
+        session_id: &str,
+        table_id: TableId,
+    ) -> AppResult<(LeaveTableResult, Vec<Event>)> {
         let session = self.require_session(session_id)?;
         let handle = self.table_handle(table_id)?;
         let snapshot = handle
@@ -259,10 +358,19 @@ impl ServerApp {
             LeaveTableStatus::LeavingAfterHand
         };
 
-        Ok(LeaveTableResult { table_id, status })
+        Ok((LeaveTableResult { table_id, status }, events))
     }
 
     pub fn start_hand(&self, session_id: &str, table_id: TableId) -> AppResult<OperationReceipt> {
+        self.start_hand_detail(session_id, table_id)
+            .map(|(result, _events)| result)
+    }
+
+    fn start_hand_detail(
+        &self,
+        session_id: &str,
+        table_id: TableId,
+    ) -> AppResult<(OperationReceipt, Vec<Event>)> {
         let session = self.require_session(session_id)?;
         let handle = self.table_handle(table_id)?;
         let snapshot = handle
@@ -275,10 +383,13 @@ impl ServerApp {
             .apply(Command::Lobby(LobbyCmd::StartHand))
             .map_err(|e| Self::table_worker_error(table_id, e))?;
         Self::ensure_no_error(&events)?;
-        Ok(OperationReceipt {
-            table_id,
-            event_count: events.len(),
-        })
+        Ok((
+            OperationReceipt {
+                table_id,
+                event_count: events.len(),
+            },
+            events,
+        ))
     }
 
     pub fn get_table_state(&self, table_id: TableId) -> AppResult<PublicTableState> {
@@ -286,7 +397,13 @@ impl ServerApp {
         let snapshot = handle
             .snapshot()
             .map_err(|e| Self::table_worker_error(table_id, e))?;
-        Ok(self.build_public_table_state(table_id, &snapshot.table))
+        Ok(
+            self.build_public_table_state(
+                table_id,
+                &snapshot.table,
+                &snapshot.disconnected_players,
+            ),
+        )
     }
 
     pub fn get_player_view(&self, session_id: &str, table_id: TableId) -> AppResult<PlayerView> {
@@ -317,6 +434,16 @@ impl ServerApp {
         table_id: TableId,
         action: PlayerAction,
     ) -> AppResult<OperationReceipt> {
+        self.submit_action_detail(session_id, table_id, action)
+            .map(|(result, _events)| result)
+    }
+
+    fn submit_action_detail(
+        &self,
+        session_id: &str,
+        table_id: TableId,
+        action: PlayerAction,
+    ) -> AppResult<(OperationReceipt, Vec<Event>)> {
         let session = self.require_session(session_id)?;
         let handle = self.table_handle(table_id)?;
         let snapshot = handle
@@ -330,10 +457,13 @@ impl ServerApp {
             .map_err(|e| Self::table_worker_error(table_id, e))?;
         Self::ensure_no_error(&events)?;
 
-        Ok(OperationReceipt {
-            table_id,
-            event_count: events.len(),
-        })
+        Ok((
+            OperationReceipt {
+                table_id,
+                event_count: events.len(),
+            },
+            events,
+        ))
     }
 
     pub fn get_history(&self, table_id: TableId) -> AppResult<TableHistory> {
@@ -359,10 +489,22 @@ impl ServerApp {
     }
 
     pub fn handle_request(&self, request: ClientRequest) -> ServerResponse {
+        self.handle_request_outcome(request).response
+    }
+
+    pub fn handle_request_outcome(&self, request: ClientRequest) -> RequestOutcome {
         let request_id = request.request_id.clone();
-        match self.dispatch_request(request) {
-            Ok(payload) => ServerResponse::ok(request_id, payload),
-            Err(error) => ServerResponse::error(request_id, error),
+        match self.dispatch_request_outcome(request) {
+            Ok((payload, table_changes, invalidated_sessions)) => RequestOutcome {
+                response: ServerResponse::ok(request_id, payload),
+                table_changes,
+                invalidated_sessions,
+            },
+            Err(error) => RequestOutcome {
+                response: ServerResponse::error(request_id, error),
+                table_changes: Vec::new(),
+                invalidated_sessions: Vec::new(),
+            },
         }
     }
 
@@ -418,52 +560,110 @@ impl ServerApp {
         }
     }
 
-    fn dispatch_request(&self, request: ClientRequest) -> AppResult<ResponsePayload> {
+    fn dispatch_request_outcome(
+        &self,
+        request: ClientRequest,
+    ) -> AppResult<(ResponsePayload, Vec<TableChangeNotice>, Vec<SessionId>)> {
         let session_id = request.session_id.as_deref();
 
         match request.op {
             RequestOp::CreateAccount { name, pin, amount } => self
                 .create_account(name, pin, amount)
-                .map(ResponsePayload::Account),
-            RequestOp::Login { name, pin } => self.login(name, pin).map(ResponsePayload::Login),
+                .map(|payload| (ResponsePayload::Account(payload), Vec::new(), Vec::new())),
+            RequestOp::Login { name, pin } => {
+                let (result, replaced_session_id) = self.login_detail(name, pin)?;
+                Ok((
+                    ResponsePayload::Login(result),
+                    Vec::new(),
+                    replaced_session_id.into_iter().collect(),
+                ))
+            }
             RequestOp::Logout => {
                 let session_id = Self::require_session_id(session_id)?;
-                self.logout(session_id).map(ResponsePayload::Logout)
+                let (result, table_changes) = self.logout_detail(session_id)?;
+                Ok((ResponsePayload::Logout(result), table_changes, Vec::new()))
             }
             RequestOp::Deposit { amount } => {
                 let session_id = Self::require_session_id(session_id)?;
-                self.deposit(session_id, amount)
-                    .map(ResponsePayload::Account)
+                let session = self.require_session(session_id)?;
+                let account = self.deposit(session_id, amount)?;
+                Ok((
+                    ResponsePayload::Account(account),
+                    self.visible_table_changes_for_player(session.account_id),
+                    Vec::new(),
+                ))
             }
             RequestOp::Withdraw { amount } => {
                 let session_id = Self::require_session_id(session_id)?;
-                self.withdraw(session_id, amount)
-                    .map(ResponsePayload::Account)
+                let session = self.require_session(session_id)?;
+                let account = self.withdraw(session_id, amount)?;
+                Ok((
+                    ResponsePayload::Account(account),
+                    self.visible_table_changes_for_player(session.account_id),
+                    Vec::new(),
+                ))
             }
-            RequestOp::ListTables => Ok(ResponsePayload::Tables(self.list_tables())),
+            RequestOp::ListTables => Ok((
+                ResponsePayload::Tables(self.list_tables()),
+                Vec::new(),
+                Vec::new(),
+            )),
             RequestOp::CreateTable { variant } => self
                 .create_table(Self::require_session_id(session_id)?, variant)
-                .map(ResponsePayload::Table),
-            RequestOp::JoinTable { table_id } => self
-                .join_table(Self::require_session_id(session_id)?, table_id)
-                .map(ResponsePayload::JoinTable),
-            RequestOp::LeaveTable { table_id } => self
-                .leave_table(Self::require_session_id(session_id)?, table_id)
-                .map(ResponsePayload::LeaveTable),
-            RequestOp::StartHand { table_id } => self
-                .start_hand(Self::require_session_id(session_id)?, table_id)
-                .map(ResponsePayload::Receipt),
+                .map(|payload| (ResponsePayload::Table(payload), Vec::new(), Vec::new())),
+            RequestOp::JoinTable { table_id } => {
+                let (result, events) =
+                    self.join_table_detail(Self::require_session_id(session_id)?, table_id)?;
+                Ok((
+                    ResponsePayload::JoinTable(result),
+                    vec![Self::table_change(table_id, events)],
+                    Vec::new(),
+                ))
+            }
+            RequestOp::LeaveTable { table_id } => {
+                let (result, events) =
+                    self.leave_table_detail(Self::require_session_id(session_id)?, table_id)?;
+                Ok((
+                    ResponsePayload::LeaveTable(result),
+                    vec![Self::table_change(table_id, events)],
+                    Vec::new(),
+                ))
+            }
+            RequestOp::StartHand { table_id } => {
+                let (result, events) =
+                    self.start_hand_detail(Self::require_session_id(session_id)?, table_id)?;
+                Ok((
+                    ResponsePayload::Receipt(result),
+                    vec![Self::table_change(table_id, events)],
+                    Vec::new(),
+                ))
+            }
             RequestOp::GetTableState { table_id } => self
                 .get_table_state(table_id)
-                .map(ResponsePayload::TableState),
+                .map(|payload| (ResponsePayload::TableState(payload), Vec::new(), Vec::new())),
             RequestOp::GetPlayerView { table_id } => self
                 .get_player_view(Self::require_session_id(session_id)?, table_id)
-                .map(ResponsePayload::PlayerView),
-            RequestOp::SubmitAction { table_id, action } => self
-                .submit_action(Self::require_session_id(session_id)?, table_id, action)
-                .map(ResponsePayload::Receipt),
-            RequestOp::GetHistory { table_id } => {
-                self.get_history(table_id).map(ResponsePayload::History)
+                .map(|payload| (ResponsePayload::PlayerView(payload), Vec::new(), Vec::new())),
+            RequestOp::SubmitAction { table_id, action } => {
+                let (result, events) = self.submit_action_detail(
+                    Self::require_session_id(session_id)?,
+                    table_id,
+                    action,
+                )?;
+                Ok((
+                    ResponsePayload::Receipt(result),
+                    vec![Self::table_change(table_id, events)],
+                    Vec::new(),
+                ))
+            }
+            RequestOp::GetHistory { table_id } => self
+                .get_history(table_id)
+                .map(|payload| (ResponsePayload::History(payload), Vec::new(), Vec::new())),
+            RequestOp::SubscribeTable { .. } | RequestOp::UnsubscribeTable { .. } => {
+                Err(ErrorPayload::new(
+                    ErrorCode::InvalidRequest,
+                    "subscribe requests are handled by the TCP transport",
+                ))
             }
         }
     }
@@ -560,7 +760,32 @@ impl ServerApp {
         }
     }
 
-    fn build_public_table_state(&self, table_id: TableId, table: &PokerTable) -> PublicTableState {
+    pub fn build_table_update_for_session(
+        &self,
+        table_id: TableId,
+        session_id: Option<&str>,
+        events: &[Event],
+    ) -> AppResult<TableUpdateMessage> {
+        let table_state = self.get_table_state(table_id)?;
+        let player_view = match session_id {
+            Some(session_id) => self.get_player_view(session_id, table_id).ok(),
+            None => None,
+        };
+
+        Ok(TableUpdateMessage {
+            table_id,
+            table_state,
+            player_view,
+            events: Self::history_entries(events),
+        })
+    }
+
+    fn build_public_table_state(
+        &self,
+        table_id: TableId,
+        table: &PokerTable,
+        disconnected_players: &std::collections::HashSet<PlayerId>,
+    ) -> PublicTableState {
         let accounts = self.account_map();
         let hand_state = table.hand_state();
 
@@ -583,6 +808,7 @@ impl ServerApp {
                     player_id,
                     player_name: account.name.clone(),
                     balance: account.balance,
+                    is_connected: !disconnected_players.contains(&player_id),
                     is_in_hand: hand_state.player_hole_cards(&player_id).is_some(),
                     has_folded: hand_state.has_player_folded(&player_id),
                     hidden_card_count: total_cards.saturating_sub(up_cards.len()),
@@ -707,6 +933,33 @@ impl ServerApp {
             kind,
             message,
         })
+    }
+
+    fn history_entries(events: &[Event]) -> Vec<HistoryEntry> {
+        events
+            .iter()
+            .enumerate()
+            .filter_map(|(index, event)| Self::history_entry(index as u64, event))
+            .collect()
+    }
+
+    fn table_change(table_id: TableId, events: Vec<Event>) -> TableChangeNotice {
+        TableChangeNotice { table_id, events }
+    }
+
+    fn visible_table_changes_for_player(&self, player_id: PlayerId) -> Vec<TableChangeNotice> {
+        self.table_handles()
+            .into_iter()
+            .filter_map(|(table_id, handle)| {
+                let snapshot = handle.snapshot().ok()?;
+                snapshot
+                    .table
+                    .seated_players()
+                    .iter()
+                    .any(|(_, seated_id)| *seated_id == player_id)
+                    .then(|| Self::table_change(table_id, Vec::new()))
+            })
+            .collect()
     }
 
     fn to_action_cmd(player_name: &str, action: PlayerAction) -> ActionCmd {

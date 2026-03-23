@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
 
@@ -6,7 +7,6 @@ use common::{
     protocol::{Command, Event, PlayerId},
     wire::ActionPrompt,
 };
-
 
 use crate::{engine::SharedAccountStore, table::PokerTable, table_runtime::TableRuntime};
 
@@ -18,6 +18,7 @@ pub struct TableHandle {
 #[derive(Debug, Clone)]
 pub struct TableSnapshot {
     pub table: PokerTable,
+    pub disconnected_players: HashSet<PlayerId>,
 }
 
 #[derive(Debug, Clone)]
@@ -53,6 +54,11 @@ enum TableRequest {
         reply_tx: Sender<Vec<Event>>,
     },
     JoinAuthenticated {
+        player_id: PlayerId,
+        player_name: String,
+        reply_tx: Sender<Vec<Event>>,
+    },
+    DisconnectPlayer {
         player_id: PlayerId,
         player_name: String,
         reply_tx: Sender<Vec<Event>>,
@@ -101,6 +107,18 @@ impl TableHandle {
         self.request(|reply_tx| TableRequest::Snapshot { reply_tx })
     }
 
+    pub fn disconnect_player(
+        &self,
+        player_id: PlayerId,
+        player_name: String,
+    ) -> TableWorkerResult<Vec<Event>> {
+        self.request(|reply_tx| TableRequest::DisconnectPlayer {
+            player_id,
+            player_name,
+            reply_tx,
+        })
+    }
+
     pub fn history(&self) -> TableWorkerResult<Vec<Event>> {
         self.request(|reply_tx| TableRequest::History { reply_tx })
     }
@@ -127,10 +145,13 @@ impl TableHandle {
 }
 
 fn worker_loop(mut runtime: TableRuntime, rx: Receiver<TableRequest>) {
+    let mut disconnected_players = HashSet::new();
+
     while let Ok(request) = rx.recv() {
         match request {
             TableRequest::Apply { cmd, reply_tx } => {
                 let events = runtime.apply(cmd);
+                prune_disconnected_players(&runtime, &mut disconnected_players);
                 let _ = reply_tx.send(events);
             }
             TableRequest::JoinAuthenticated {
@@ -142,11 +163,49 @@ fn worker_loop(mut runtime: TableRuntime, rx: Receiver<TableRequest>) {
                     .engine
                     .join_authenticated_player(player_id, player_name);
                 runtime.record_events(&events);
+                disconnected_players.remove(&player_id);
+                prune_disconnected_players(&runtime, &mut disconnected_players);
+                let _ = reply_tx.send(events);
+            }
+            TableRequest::DisconnectPlayer {
+                player_id,
+                player_name,
+                reply_tx,
+            } => {
+                let is_seated = runtime
+                    .engine
+                    .table
+                    .seated_players()
+                    .iter()
+                    .any(|(_, seated_id)| *seated_id == player_id);
+
+                let events = if is_seated {
+                    runtime.apply(Command::Lobby(common::protocol::LobbyCmd::Leave {
+                        player_name,
+                    }))
+                } else {
+                    Vec::new()
+                };
+
+                let still_seated = runtime
+                    .engine
+                    .table
+                    .seated_players()
+                    .iter()
+                    .any(|(_, seated_id)| *seated_id == player_id);
+                if still_seated {
+                    disconnected_players.insert(player_id);
+                } else {
+                    disconnected_players.remove(&player_id);
+                }
+
+                prune_disconnected_players(&runtime, &mut disconnected_players);
                 let _ = reply_tx.send(events);
             }
             TableRequest::Snapshot { reply_tx } => {
                 let _ = reply_tx.send(TableSnapshot {
                     table: runtime.engine.table.clone(),
+                    disconnected_players: disconnected_players.clone(),
                 });
             }
             TableRequest::History { reply_tx } => {
@@ -186,4 +245,18 @@ fn worker_loop(mut runtime: TableRuntime, rx: Receiver<TableRequest>) {
             }
         }
     }
+}
+
+fn prune_disconnected_players(
+    runtime: &TableRuntime,
+    disconnected_players: &mut HashSet<PlayerId>,
+) {
+    let seated_players: HashSet<PlayerId> = runtime
+        .engine
+        .table
+        .seated_players()
+        .into_iter()
+        .map(|(_, player_id)| player_id)
+        .collect();
+    disconnected_players.retain(|player_id| seated_players.contains(player_id));
 }
