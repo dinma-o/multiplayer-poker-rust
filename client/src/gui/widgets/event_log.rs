@@ -37,7 +37,7 @@ fn kind_color(kind: &HistoryKind) -> egui::Color32 {
             egui::Color32::from_gray(140)
         }
         HistoryKind::PotUpdated => egui::Color32::from_rgb(220, 200, 80),
-        HistoryKind::ActionPrompt | HistoryKind::DrawPrompt => egui::Color32::WHITE,
+        HistoryKind::ActionPrompt | HistoryKind::DrawPrompt => egui::Color32::from_rgb(255, 160, 60),
         HistoryKind::Showdown | HistoryKind::Payout => {
             egui::Color32::from_rgb(255, 200, 50)
         }
