@@ -1,25 +1,16 @@
-use std::collections::{ HashMap, HashSet };
-use std::io::{ self, BufRead, BufReader, Write };
-use std::net::{ Shutdown, TcpListener, TcpStream };
-use std::sync::mpsc::{ self, Receiver, Sender };
-use std::sync::{ Arc, Mutex };
+use std::collections::{HashMap, HashSet};
+use std::io::{self, BufRead, BufReader, Write};
+use std::net::{Shutdown, TcpListener, TcpStream};
+use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::{Arc, Mutex};
 use std::thread;
 
 use common::wire::{
-    ClientRequest,
-    ErrorCode,
-    ErrorPayload,
-    RequestOp,
-    ResponsePayload,
-    ServerMessage,
-    ServerResponse,
-    SessionCloseReason,
-    SubscriptionResult,
-    TableId,
-    TableUpdateMessage,
+    ClientRequest, ErrorCode, ErrorPayload, RequestOp, ResponsePayload, ServerMessage,
+    ServerResponse, SessionCloseReason, SubscriptionResult, TableId, TableUpdateMessage,
 };
 
-use crate::app::{ RequestOutcome, ServerApp, TableChangeNotice };
+use crate::app::{RequestOutcome, ServerApp, TableChangeNotice};
 
 pub const DEFAULT_BIND_ADDR: &str = "0.0.0.0:8080";
 
@@ -44,11 +35,14 @@ impl ConnectionRegistry {
     fn insert(&mut self, sender: Sender<ServerMessage>) -> ConnectionId {
         self.next_connection_id = self.next_connection_id.saturating_add(1);
         let connection_id = self.next_connection_id;
-        self.connections.insert(connection_id, ConnectionRecord {
-            sender,
-            session_id: None,
-            subscribed_tables: HashSet::new(),
-        });
+        self.connections.insert(
+            connection_id,
+            ConnectionRecord {
+                sender,
+                session_id: None,
+                subscribed_tables: HashSet::new(),
+            },
+        );
         connection_id
     }
 
@@ -78,7 +72,9 @@ impl ConnectionRegistry {
     }
 
     fn has_active_session_elsewhere(&self, session_id: &str) -> bool {
-        self.connections.values().any(|record| record.session_id.as_deref() == Some(session_id))
+        self.connections
+            .values()
+            .any(|record| record.session_id.as_deref() == Some(session_id))
     }
 
     fn invalidate_session(&mut self, session_id: &str) -> Vec<InvalidatedConnection> {
@@ -101,11 +97,14 @@ impl ConnectionRegistry {
         self.connections
             .iter()
             .filter_map(|(connection_id, record)| {
-                record.subscribed_tables.contains(&table_id).then(|| SubscriptionTarget {
-                    connection_id: *connection_id,
-                    sender: record.sender.clone(),
-                    session_id: record.session_id.clone(),
-                })
+                record
+                    .subscribed_tables
+                    .contains(&table_id)
+                    .then(|| SubscriptionTarget {
+                        connection_id: *connection_id,
+                        sender: record.sender.clone(),
+                        session_id: record.session_id.clone(),
+                    })
             })
             .collect()
     }
@@ -139,7 +138,7 @@ pub fn serve_on(bind_addr: &str, app: SharedServerApp) -> io::Result<()> {
 fn serve_listener(
     listener: TcpListener,
     app: SharedServerApp,
-    connection_limit: Option<usize>
+    connection_limit: Option<usize>,
 ) -> io::Result<()> {
     let registry = Arc::new(Mutex::new(ConnectionRegistry::default()));
     let mut handler_threads = Vec::new();
@@ -187,7 +186,7 @@ fn serve_listener(
 fn handle_client(
     stream: TcpStream,
     app: SharedServerApp,
-    registry: SharedConnectionRegistry
+    registry: SharedConnectionRegistry,
 ) -> io::Result<()> {
     let read_stream = stream.try_clone()?;
     let mut reader = BufReader::new(read_stream);
@@ -228,7 +227,7 @@ fn reader_loop(
     connection_id: ConnectionId,
     writer_tx: &Sender<ServerMessage>,
     app: &SharedServerApp,
-    registry: &SharedConnectionRegistry
+    registry: &SharedConnectionRegistry,
 ) -> io::Result<()> {
     loop {
         let mut line = String::new();
@@ -247,15 +246,13 @@ fn reader_loop(
             Err(error) => {
                 send_message(
                     writer_tx,
-                    ServerMessage::response(
-                        ServerResponse::error(
-                            "invalid-request",
-                            ErrorPayload::new(
-                                ErrorCode::InvalidRequest,
-                                format!("invalid request JSON: {error}")
-                            )
-                        )
-                    )
+                    ServerMessage::response(ServerResponse::error(
+                        "invalid-request",
+                        ErrorPayload::new(
+                            ErrorCode::InvalidRequest,
+                            format!("invalid request JSON: {error}"),
+                        ),
+                    )),
                 )?;
                 continue;
             }
@@ -270,7 +267,7 @@ fn handle_client_request(
     request: ClientRequest,
     writer_tx: &Sender<ServerMessage>,
     app: &SharedServerApp,
-    registry: &SharedConnectionRegistry
+    registry: &SharedConnectionRegistry,
 ) -> io::Result<()> {
     match request.op.clone() {
         RequestOp::SubscribeTable { table_id } => {
@@ -292,7 +289,7 @@ fn handle_subscribe_request(
     table_id: TableId,
     writer_tx: &Sender<ServerMessage>,
     app: &SharedServerApp,
-    registry: &SharedConnectionRegistry
+    registry: &SharedConnectionRegistry,
 ) -> io::Result<()> {
     match app.get_table_state(table_id) {
         Ok(_) => {
@@ -303,15 +300,13 @@ fn handle_subscribe_request(
 
             send_message(
                 writer_tx,
-                ServerMessage::response(
-                    ServerResponse::ok(
-                        request.request_id,
-                        ResponsePayload::Subscription(SubscriptionResult {
-                            table_id,
-                            subscribed: true,
-                        })
-                    )
-                )
+                ServerMessage::response(ServerResponse::ok(
+                    request.request_id,
+                    ResponsePayload::Subscription(SubscriptionResult {
+                        table_id,
+                        subscribed: true,
+                    }),
+                )),
             )?;
 
             let update = app
@@ -319,11 +314,10 @@ fn handle_subscribe_request(
                 .map_err(|error| io::Error::other(error.message))?;
             send_message(writer_tx, ServerMessage::table_update(update))
         }
-        Err(error) =>
-            send_message(
-                writer_tx,
-                ServerMessage::response(ServerResponse::error(request.request_id, error))
-            ),
+        Err(error) => send_message(
+            writer_tx,
+            ServerMessage::response(ServerResponse::error(request.request_id, error)),
+        ),
     }
 }
 
@@ -332,7 +326,7 @@ fn handle_unsubscribe_request(
     request: ClientRequest,
     table_id: TableId,
     writer_tx: &Sender<ServerMessage>,
-    registry: &SharedConnectionRegistry
+    registry: &SharedConnectionRegistry,
 ) -> io::Result<()> {
     registry
         .lock()
@@ -341,15 +335,13 @@ fn handle_unsubscribe_request(
 
     send_message(
         writer_tx,
-        ServerMessage::response(
-            ServerResponse::ok(
-                request.request_id,
-                ResponsePayload::Subscription(SubscriptionResult {
-                    table_id,
-                    subscribed: false,
-                })
-            )
-        )
+        ServerMessage::response(ServerResponse::ok(
+            request.request_id,
+            ResponsePayload::Subscription(SubscriptionResult {
+                table_id,
+                subscribed: false,
+            }),
+        )),
     )
 }
 
@@ -358,7 +350,7 @@ fn process_request_outcome(
     outcome: RequestOutcome,
     writer_tx: &Sender<ServerMessage>,
     app: &SharedServerApp,
-    registry: &SharedConnectionRegistry
+    registry: &SharedConnectionRegistry,
 ) -> io::Result<()> {
     let response = outcome.response.clone();
     send_message(writer_tx, ServerMessage::response(response.clone()))?;
@@ -372,7 +364,7 @@ fn process_request_outcome(
 fn apply_connection_response_state(
     connection_id: ConnectionId,
     response: &ServerResponse,
-    registry: &SharedConnectionRegistry
+    registry: &SharedConnectionRegistry,
 ) {
     if !response.ok {
         return;
@@ -399,7 +391,7 @@ fn apply_connection_response_state(
 fn invalidate_sessions(
     session_ids: Vec<String>,
     registry: &SharedConnectionRegistry,
-    app: &SharedServerApp
+    app: &SharedServerApp,
 ) {
     if session_ids.is_empty() {
         return;
@@ -418,7 +410,7 @@ fn invalidate_sessions(
         let message = ServerMessage::session_closed(
             invalidated_connection.session_id.clone(),
             SessionCloseReason::ReplacedByLogin,
-            "session replaced by a new login"
+            "session replaced by a new login",
         );
         if invalidated_connection.sender.send(message).is_err() {
             cleanup_connection(invalidated_connection.connection_id, app, registry);
@@ -429,7 +421,7 @@ fn invalidate_sessions(
 fn broadcast_table_changes(
     app: &SharedServerApp,
     registry: &SharedConnectionRegistry,
-    table_changes: &[TableChangeNotice]
+    table_changes: &[TableChangeNotice],
 ) {
     let mut failed_connection_ids = Vec::new();
 
@@ -442,20 +434,22 @@ fn broadcast_table_changes(
         };
 
         for subscriber in subscribers {
-            let update = match
-                app.build_table_update_for_session(
-                    table_change.table_id,
-                    subscriber.session_id.as_deref(),
-                    &table_change.events
-                )
-            {
+            let update = match app.build_table_update_for_session(
+                table_change.table_id,
+                subscriber.session_id.as_deref(),
+                &table_change.events,
+            ) {
                 Ok(update) => update,
                 Err(_) => {
                     continue;
                 }
             };
 
-            if subscriber.sender.send(ServerMessage::table_update(update)).is_err() {
+            if subscriber
+                .sender
+                .send(ServerMessage::table_update(update))
+                .is_err()
+            {
                 failed_connection_ids.push(subscriber.connection_id);
             }
         }
@@ -469,7 +463,7 @@ fn broadcast_table_changes(
 fn cleanup_connection(
     connection_id: ConnectionId,
     app: &SharedServerApp,
-    registry: &SharedConnectionRegistry
+    registry: &SharedConnectionRegistry,
 ) {
     let session_to_disconnect = {
         let mut registry = registry.lock().expect("connection registry lock poisoned");
@@ -480,7 +474,9 @@ fn cleanup_connection(
             }
         };
 
-        removed.session_id.filter(|session_id| !registry.has_active_session_elsewhere(session_id))
+        removed
+            .session_id
+            .filter(|session_id| !registry.has_active_session_elsewhere(session_id))
     };
 
     if let Some(session_id) = session_to_disconnect {
@@ -493,15 +489,13 @@ fn handle_request_line(line: &str, app: &SharedServerApp) -> ServerMessage {
     let request: ClientRequest = match serde_json::from_str(line) {
         Ok(request) => request,
         Err(error) => {
-            return ServerMessage::response(
-                ServerResponse::error(
-                    "invalid-request",
-                    ErrorPayload::new(
-                        ErrorCode::InvalidRequest,
-                        format!("invalid request JSON: {error}")
-                    )
-                )
-            );
+            return ServerMessage::response(ServerResponse::error(
+                "invalid-request",
+                ErrorPayload::new(
+                    ErrorCode::InvalidRequest,
+                    format!("invalid request JSON: {error}"),
+                ),
+            ));
         }
     };
 
@@ -509,11 +503,12 @@ fn handle_request_line(line: &str, app: &SharedServerApp) -> ServerMessage {
 }
 
 fn send_message(sender: &Sender<ServerMessage>, message: ServerMessage) -> io::Result<()> {
-    sender
-        .send(message)
-        .map_err(|_| {
-            io::Error::new(io::ErrorKind::BrokenPipe, "connection writer is unavailable")
-        })
+    sender.send(message).map_err(|_| {
+        io::Error::new(
+            io::ErrorKind::BrokenPipe,
+            "connection writer is unavailable",
+        )
+    })
 }
 
 fn write_message(stream: &mut TcpStream, message: &ServerMessage) -> io::Result<()> {
@@ -526,16 +521,12 @@ fn write_message(stream: &mut TcpStream, message: &ServerMessage) -> io::Result<
 mod tests {
     use super::*;
     use crate::account_store::AccountStore;
-    use common::protocol::{ HandStep, PokerVariant };
+    use common::protocol::{HandStep, PokerVariant};
     use common::wire::{
-        ClientRequest,
-        RequestOp,
-        ResponsePayload,
-        SessionClosedMessage,
-        SubscriptionResult,
+        ClientRequest, RequestOp, ResponsePayload, SessionClosedMessage, SubscriptionResult,
     };
     use std::time::Duration;
-    use tempfile::{ TempDir, tempdir };
+    use tempfile::{TempDir, tempdir};
 
     struct TestFixture {
         _tmp: TempDir,
@@ -560,7 +551,10 @@ mod tests {
 
     impl SocketTestServer {
         fn join(self) {
-            self.handle.join().expect("server thread panicked").expect("server thread failed");
+            self.handle
+                .join()
+                .expect("server thread panicked")
+                .expect("server thread failed");
         }
     }
 
@@ -599,7 +593,9 @@ mod tests {
             self.next_request_id = self.next_request_id.saturating_add(1);
 
             let json = serde_json::to_string(&request).expect("serialize request");
-            self.writer.write_all(json.as_bytes()).expect("write request");
+            self.writer
+                .write_all(json.as_bytes())
+                .expect("write request");
             self.writer.write_all(b"\n").expect("write newline");
             self.writer.flush().expect("flush request");
 
@@ -620,15 +616,17 @@ mod tests {
 
         fn read_message(&mut self) -> ServerMessage {
             let mut line = String::new();
-            self.reader.read_line(&mut line).expect("read server message line");
+            self.reader
+                .read_line(&mut line)
+                .expect("read server message line");
             serde_json::from_str(line.trim()).expect("deserialize server message")
         }
 
         fn wait_for_table_update(&mut self, table_id: TableId) -> TableUpdateMessage {
-            if
-                let Some(index) = self.pending_updates
-                    .iter()
-                    .position(|update| update.table_id == table_id)
+            if let Some(index) = self
+                .pending_updates
+                .iter()
+                .position(|update| update.table_id == table_id)
             {
                 return self.pending_updates.remove(index);
             }
@@ -653,14 +651,15 @@ mod tests {
         fn wait_for_table_update_matching<F>(
             &mut self,
             table_id: TableId,
-            predicate: F
+            predicate: F,
         ) -> TableUpdateMessage
-            where F: Fn(&TableUpdateMessage) -> bool
+        where
+            F: Fn(&TableUpdateMessage) -> bool,
         {
-            if
-                let Some(index) = self.pending_updates
-                    .iter()
-                    .position(|update| update.table_id == table_id && predicate(update))
+            if let Some(index) = self
+                .pending_updates
+                .iter()
+                .position(|update| update.table_id == table_id && predicate(update))
             {
                 return self.pending_updates.remove(index);
             }
@@ -670,10 +669,9 @@ mod tests {
                     ServerMessage::Response { response } => {
                         panic!("unexpected response while waiting for table update: {response:?}");
                     }
-                    ServerMessage::TableUpdate(update) if
-                        update.table_id == table_id &&
-                        predicate(&update)
-                    => {
+                    ServerMessage::TableUpdate(update)
+                        if update.table_id == table_id && predicate(&update) =>
+                    {
                         return update;
                     }
                     ServerMessage::TableUpdate(update) => self.pending_updates.push(update),
@@ -759,7 +757,7 @@ mod tests {
         let fixture = test_fixture();
         let response = handle_request_line(
             r#"{"request_id":"req-1","session_id":null,"op":{"type":"list_tables"}}"#,
-            &fixture.app
+            &fixture.app,
         );
 
         match response {
@@ -777,20 +775,16 @@ mod tests {
     #[test]
     fn response_writer_uses_newline_delimited_json() {
         let mut bytes = Vec::new();
-        let message = ServerMessage::response(
-            ServerResponse::ok(
-                "req-2",
-                ResponsePayload::Tables(
-                    crate::app::ServerApp
-                        ::new(
-                            AccountStore::load(
-                                tempdir().expect("tempdir").path().join("accounts.json")
-                            ).expect("load account store")
-                        )
-                        .list_tables()
+        let message = ServerMessage::response(ServerResponse::ok(
+            "req-2",
+            ResponsePayload::Tables(
+                crate::app::ServerApp::new(
+                    AccountStore::load(tempdir().expect("tempdir").path().join("accounts.json"))
+                        .expect("load account store"),
                 )
-            )
-        );
+                .list_tables(),
+            ),
+        ));
 
         serde_json::to_writer(&mut bytes, &message).expect("serialize response");
         bytes.extend_from_slice(b"\n");
@@ -838,30 +832,36 @@ mod tests {
         let mut bob = TestClient::connect(&server.address).expect("connect bob");
 
         assert!(
-            alice.send(RequestOp::CreateAccount {
-                name: "alice".into(),
-                pin: "1234".into(),
-                amount: 500,
-            }).ok
+            alice
+                .send(RequestOp::CreateAccount {
+                    name: "alice".into(),
+                    pin: "1234".into(),
+                    amount: 500,
+                })
+                .ok
         );
         assert!(
             bob.send(RequestOp::CreateAccount {
                 name: "bob".into(),
                 pin: "1234".into(),
                 amount: 500,
-            }).ok
+            })
+            .ok
         );
         assert!(
-            alice.send(RequestOp::Login {
-                name: "alice".into(),
-                pin: "1234".into(),
-            }).ok
+            alice
+                .send(RequestOp::Login {
+                    name: "alice".into(),
+                    pin: "1234".into(),
+                })
+                .ok
         );
         assert!(
             bob.send(RequestOp::Login {
                 name: "bob".into(),
                 pin: "1234".into(),
-            }).ok
+            })
+            .ok
         );
         assert!(alice.send(RequestOp::JoinTable { table_id: 1 }).ok);
         assert!(bob.send(RequestOp::JoinTable { table_id: 1 }).ok);
@@ -901,10 +901,12 @@ mod tests {
 
         let pushed_update = if acting_player_id == 1 {
             assert!(
-                alice.send(RequestOp::SubmitAction {
-                    table_id: 1,
-                    action: action.clone(),
-                }).ok
+                alice
+                    .send(RequestOp::SubmitAction {
+                        table_id: 1,
+                        action: action.clone(),
+                    })
+                    .ok
             );
             bob.wait_for_table_update_matching(1, |update| !update.events.is_empty())
         } else {
@@ -912,7 +914,8 @@ mod tests {
                 bob.send(RequestOp::SubmitAction {
                     table_id: 1,
                     action,
-                }).ok
+                })
+                .ok
             );
             alice.wait_for_table_update_matching(1, |update| !update.events.is_empty())
         };
@@ -933,22 +936,23 @@ mod tests {
         let mut bob = TestClient::connect(&server.address).expect("connect bob");
         let mut spectator = TestClient::connect(&server.address).expect("connect spectator");
 
-        for (client, name) in [
-            (&mut alice, "alice"),
-            (&mut bob, "bob"),
-        ] {
+        for (client, name) in [(&mut alice, "alice"), (&mut bob, "bob")] {
             assert!(
-                client.send(RequestOp::CreateAccount {
-                    name: name.into(),
-                    pin: "1234".into(),
-                    amount: 500,
-                }).ok
+                client
+                    .send(RequestOp::CreateAccount {
+                        name: name.into(),
+                        pin: "1234".into(),
+                        amount: 500,
+                    })
+                    .ok
             );
             assert!(
-                client.send(RequestOp::Login {
-                    name: name.into(),
-                    pin: "1234".into(),
-                }).ok
+                client
+                    .send(RequestOp::Login {
+                        name: name.into(),
+                        pin: "1234".into(),
+                    })
+                    .ok
             );
         }
 
@@ -957,7 +961,10 @@ mod tests {
 
         let subscribe = spectator.send(RequestOp::SubscribeTable { table_id: 1 });
         match subscribe.payload.expect("subscription payload") {
-            ResponsePayload::Subscription(SubscriptionResult { table_id, subscribed }) => {
+            ResponsePayload::Subscription(SubscriptionResult {
+                table_id,
+                subscribed,
+            }) => {
                 assert_eq!(table_id, 1);
                 assert!(subscribed);
             }
@@ -985,30 +992,35 @@ mod tests {
     fn socket_relogin_invalidates_old_session_with_push_message() {
         let server = spawn_socket_test_server(2);
         let mut first_client = TestClient::connect(&server.address).expect("connect first client");
-        let mut second_client = TestClient::connect(&server.address).expect(
-            "connect second client"
-        );
+        let mut second_client =
+            TestClient::connect(&server.address).expect("connect second client");
 
         assert!(
-            first_client.send(RequestOp::CreateAccount {
-                name: "alice".into(),
-                pin: "1234".into(),
-                amount: 500,
-            }).ok
+            first_client
+                .send(RequestOp::CreateAccount {
+                    name: "alice".into(),
+                    pin: "1234".into(),
+                    amount: 500,
+                })
+                .ok
         );
         assert!(
-            first_client.send(RequestOp::Login {
-                name: "alice".into(),
-                pin: "1234".into(),
-            }).ok
+            first_client
+                .send(RequestOp::Login {
+                    name: "alice".into(),
+                    pin: "1234".into(),
+                })
+                .ok
         );
         let old_session = first_client.session_id.clone().expect("old session");
 
         assert!(
-            second_client.send(RequestOp::Login {
-                name: "alice".into(),
-                pin: "1234".into(),
-            }).ok
+            second_client
+                .send(RequestOp::Login {
+                    name: "alice".into(),
+                    pin: "1234".into(),
+                })
+                .ok
         );
         let closed = first_client.wait_for_session_closed();
         assert_eq!(closed.session_id, old_session);
@@ -1026,22 +1038,23 @@ mod tests {
         let mut alice = TestClient::connect(&server.address).expect("connect alice");
         let mut bob = TestClient::connect(&server.address).expect("connect bob");
 
-        for (client, name) in [
-            (&mut alice, "alice"),
-            (&mut bob, "bob"),
-        ] {
+        for (client, name) in [(&mut alice, "alice"), (&mut bob, "bob")] {
             assert!(
-                client.send(RequestOp::CreateAccount {
-                    name: name.into(),
-                    pin: "1234".into(),
-                    amount: 500,
-                }).ok
+                client
+                    .send(RequestOp::CreateAccount {
+                        name: name.into(),
+                        pin: "1234".into(),
+                        amount: 500,
+                    })
+                    .ok
             );
             assert!(
-                client.send(RequestOp::Login {
-                    name: name.into(),
-                    pin: "1234".into(),
-                }).ok
+                client
+                    .send(RequestOp::Login {
+                        name: name.into(),
+                        pin: "1234".into(),
+                    })
+                    .ok
             );
         }
 
@@ -1060,13 +1073,21 @@ mod tests {
         drop(alice);
 
         let update = bob.wait_for_table_update_matching(1, |update| {
-            update.table_state.seats.iter().any(|seat| !seat.is_connected) ||
-                update.table_state.seats.len() == 1
+            update
+                .table_state
+                .seats
+                .iter()
+                .any(|seat| !seat.is_connected)
+                || update.table_state.seats.len() == 1
         });
         assert_eq!(update.table_id, 1);
         assert!(
-            update.table_state.seats.iter().any(|seat| !seat.is_connected) ||
-                update.table_state.seats.len() == 1,
+            update
+                .table_state
+                .seats
+                .iter()
+                .any(|seat| !seat.is_connected)
+                || update.table_state.seats.len() == 1,
             "disconnect should either show a disconnected seat or complete the hand and remove it"
         );
 
@@ -1080,22 +1101,23 @@ mod tests {
         let mut alice = TestClient::connect(&server.address).expect("connect alice");
         let mut bob = TestClient::connect(&server.address).expect("connect bob");
 
-        for (client, name) in [
-            (&mut alice, "alice"),
-            (&mut bob, "bob"),
-        ] {
+        for (client, name) in [(&mut alice, "alice"), (&mut bob, "bob")] {
             assert!(
-                client.send(RequestOp::CreateAccount {
-                    name: name.into(),
-                    pin: "1234".into(),
-                    amount: 500,
-                }).ok
+                client
+                    .send(RequestOp::CreateAccount {
+                        name: name.into(),
+                        pin: "1234".into(),
+                        amount: 500,
+                    })
+                    .ok
             );
             assert!(
-                client.send(RequestOp::Login {
-                    name: name.into(),
-                    pin: "1234".into(),
-                }).ok
+                client
+                    .send(RequestOp::Login {
+                        name: name.into(),
+                        pin: "1234".into(),
+                    })
+                    .ok
             );
         }
 
@@ -1108,7 +1130,13 @@ mod tests {
 
         let update = bob.wait_for_table_update(1);
         assert_eq!(update.table_state.seats.len(), 1);
-        assert!(update.table_state.seats.iter().all(|seat| seat.is_connected));
+        assert!(
+            update
+                .table_state
+                .seats
+                .iter()
+                .all(|seat| seat.is_connected)
+        );
 
         drop(bob);
         server.join();
@@ -1129,26 +1157,30 @@ mod tests {
             (&mut dave, "dave"),
         ] {
             assert!(
-                client.send(RequestOp::CreateAccount {
-                    name: name.into(),
-                    pin: "1234".into(),
-                    amount: 500,
-                }).ok
+                client
+                    .send(RequestOp::CreateAccount {
+                        name: name.into(),
+                        pin: "1234".into(),
+                        amount: 500,
+                    })
+                    .ok
             );
             assert!(
-                client.send(RequestOp::Login {
-                    name: name.into(),
-                    pin: "1234".into(),
-                }).ok
+                client
+                    .send(RequestOp::Login {
+                        name: name.into(),
+                        pin: "1234".into(),
+                    })
+                    .ok
             );
         }
 
-        let second_table_id = match
-            alice
-                .send(RequestOp::CreateTable {
-                    variant: PokerVariant::TexasHoldEm,
-                })
-                .payload.expect("create table payload")
+        let second_table_id = match alice
+            .send(RequestOp::CreateTable {
+                variant: PokerVariant::TexasHoldEm,
+            })
+            .payload
+            .expect("create table payload")
         {
             ResponsePayload::Table(table) => table.table_id,
             other => panic!("unexpected payload: {other:?}"),
@@ -1157,35 +1189,49 @@ mod tests {
         assert!(alice.send(RequestOp::JoinTable { table_id: 1 }).ok);
         assert!(bob.send(RequestOp::JoinTable { table_id: 1 }).ok);
         assert!(
-            carol.send(RequestOp::JoinTable {
-                table_id: second_table_id,
-            }).ok
+            carol
+                .send(RequestOp::JoinTable {
+                    table_id: second_table_id,
+                })
+                .ok
         );
         assert!(
             dave.send(RequestOp::JoinTable {
                 table_id: second_table_id,
-            }).ok
+            })
+            .ok
         );
 
         assert!(alice.send(RequestOp::StartHand { table_id: 1 }).ok);
         assert!(
-            carol.send(RequestOp::StartHand {
-                table_id: second_table_id,
-            }).ok
+            carol
+                .send(RequestOp::StartHand {
+                    table_id: second_table_id,
+                })
+                .ok
         );
 
         let table_one_state = bob.wait_for_table_update_matching(1, |update| {
             update.table_state.step != HandStep::WaitingForPlayers
         });
         assert_eq!(table_one_state.table_id, 1);
-        assert_ne!(table_one_state.table_state.step, HandStep::WaitingForPlayers);
+        assert_ne!(
+            table_one_state.table_state.step,
+            HandStep::WaitingForPlayers
+        );
 
         let table_two_state = dave.wait_for_table_update_matching(second_table_id, |update| {
             update.table_state.step != HandStep::WaitingForPlayers
         });
         assert_eq!(table_two_state.table_id, second_table_id);
-        assert_eq!(table_two_state.table_state.variant, PokerVariant::TexasHoldEm);
-        assert_ne!(table_two_state.table_state.step, HandStep::WaitingForPlayers);
+        assert_eq!(
+            table_two_state.table_state.variant,
+            PokerVariant::TexasHoldEm
+        );
+        assert_ne!(
+            table_two_state.table_state.step,
+            HandStep::WaitingForPlayers
+        );
 
         drop(alice);
         drop(bob);
