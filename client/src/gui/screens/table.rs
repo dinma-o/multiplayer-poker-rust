@@ -14,11 +14,15 @@ pub fn show(app: &mut PokerApp, ctx: &egui::Context, table_id: TableId) {
     let player_view = app.player_view.clone();
 
     // ── Top bar ──────────────────────────────────────────────────────────────
+    let mut leave_clicked = false;
     egui::TopBottomPanel::top("table_top_bar").show(ctx, |ui| {
         ui.horizontal(|ui| {
-            if ui.button("← Lobby").clicked() {
-                app.enter_lobby();
-                return;
+            let is_pending = app.is_request_pending();
+            if ui
+                .add_enabled(!is_pending, egui::Button::new("← Lobby"))
+                .clicked()
+            {
+                leave_clicked = true;
             }
 
             if let Some(state) = &app.table_state {
@@ -38,14 +42,16 @@ pub fn show(app: &mut PokerApp, ctx: &egui::Context, table_id: TableId) {
                     .add_enabled(!is_pending, egui::Button::new("Leave Table"))
                     .clicked()
                 {
-                    app.send_op(
-                        PendingKind::LeaveTable,
-                        RequestOp::LeaveTable { table_id },
-                    );
+                    leave_clicked = true;
                 }
             });
         });
     });
+
+    if leave_clicked {
+        app.send_op(PendingKind::LeaveTable, RequestOp::LeaveTable { table_id });
+        return;
+    }
 
     // ── Right panel: results + event log ─────────────────────────────────────
     let event_log = app.event_log.clone();
@@ -137,6 +143,24 @@ pub fn show(app: &mut PokerApp, ctx: &egui::Context, table_id: TableId) {
             }
         });
 
+        // ── Start Hand ───────────────────────────────────────────────────────
+        if state.step == HandStep::WaitingForPlayers {
+            ui.add_space(16.0);
+            ui.separator();
+            ui.add_space(4.0);
+            let is_pending = app.is_request_pending();
+            if ui
+                .add_enabled(!is_pending, egui::Button::new("▶  Start Hand"))
+                .clicked()
+            {
+                app.send_op(
+                    PendingKind::StartHand,
+                    RequestOp::StartHand { table_id },
+                );
+            }
+            ui.add_space(4.0);
+        }
+
         // ── Your hand ────────────────────────────────────────────────────────
         if let Some(view) = &player_view {
             let has_cards =
@@ -152,9 +176,13 @@ pub fn show(app: &mut PokerApp, ctx: &egui::Context, table_id: TableId) {
                         show_card(ui, ctx, &mut app.texture_cache, *card);
                         ui.add_space(2.0);
                     }
-                    for card in &view.up_cards {
-                        show_card(ui, ctx, &mut app.texture_cache, *card);
-                        ui.add_space(2.0);
+                    // Up cards are already shown in each player's seat widget,
+                    // so only show them here for non-Stud variants (BUG-06).
+                    if state.variant != PokerVariant::SevenCardStud {
+                        for card in &view.up_cards {
+                            show_card(ui, ctx, &mut app.texture_cache, *card);
+                            ui.add_space(2.0);
+                        }
                     }
                 });
             }

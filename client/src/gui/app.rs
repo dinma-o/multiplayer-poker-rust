@@ -1,10 +1,10 @@
 use std::collections::HashMap;
 use std::sync::mpsc::{Receiver, Sender};
 
-use common::protocol::PokerVariant;
+use common::protocol::{HandStep, PokerVariant};
 use common::wire::{
-    AccountProfile, HistoryEntry, HistoryKind, PlayerView, PublicTableState, RequestOp,
-    ResponsePayload, SessionId, TableId, TableSummary,
+    AccountProfile, HistoryEntry, HistoryKind, LeaveTableStatus, PlayerView, PublicTableState,
+    RequestOp, ResponsePayload, SeatAssignmentStatus, SessionId, TableId, TableSummary,
 };
 
 use crate::state::ClientEvent;
@@ -183,6 +183,7 @@ impl PokerApp {
     /// Transition to the Lobby screen and immediately refresh the table list.
     pub fn enter_lobby(&mut self) {
         self.screen = Screen::Lobby;
+        self.last_error = None;
         self.send_op(PendingKind::ListTables, RequestOp::ListTables);
     }
 
@@ -287,25 +288,48 @@ impl PokerApp {
             }
             Some(ResponsePayload::JoinTable(result)) => {
                 let table_id = result.table_id;
-                // Subscribe then fetch initial state — these go through the channel
-                // in order without blocking the UI.
-                if let Some(tx) = &self.cmd_tx {
-                    let _ = tx.send(GuiCommand::SendOp(
-                        RequestOp::SubscribeTable { table_id },
-                    ));
-                    let _ = tx.send(GuiCommand::SendOp(
-                        RequestOp::GetTableState { table_id },
-                    ));
-                    let _ = tx.send(GuiCommand::SendOp(
-                        RequestOp::GetPlayerView { table_id },
-                    ));
+                match result.status {
+                    SeatAssignmentStatus::Seated => {
+                        self.last_error = None;
+                        // Subscribe then fetch initial state — these go through the channel
+                        // in order without blocking the UI.
+                        if let Some(tx) = &self.cmd_tx {
+                            let _ = tx.send(GuiCommand::SendOp(
+                                RequestOp::SubscribeTable { table_id },
+                            ));
+                            let _ = tx.send(GuiCommand::SendOp(
+                                RequestOp::GetTableState { table_id },
+                            ));
+                            let _ = tx.send(GuiCommand::SendOp(
+                                RequestOp::GetPlayerView { table_id },
+                            ));
+                        }
+                        self.screen = Screen::Table { table_id };
+                    }
+                    SeatAssignmentStatus::Queued => {
+                        self.last_error = Some(
+                            "Table is full — you are queued and will be seated when a spot opens."
+                                .to_string(),
+                        );
+                    }
                 }
-                self.screen = Screen::Table { table_id };
             }
-            Some(ResponsePayload::LeaveTable(_)) => {
-                self.table_state = None;
-                self.player_view = None;
-                self.enter_lobby();
+            Some(ResponsePayload::LeaveTable(result)) => {
+                match result.status {
+                    LeaveTableStatus::Left => {
+                        self.table_state = None;
+                        self.player_view = None;
+                        self.selected_discards.clear();
+                        self.input_bet.clear();
+                        self.enter_lobby();
+                    }
+                    LeaveTableStatus::LeavingAfterHand => {
+                        self.last_error = Some(
+                            "You will leave the table automatically after this hand finishes."
+                                .to_string(),
+                        );
+                    }
+                }
             }
             Some(ResponsePayload::TableState(state)) => {
                 self.table_state = Some(state);
@@ -320,20 +344,31 @@ impl PokerApp {
     fn handle_push_event(&mut self, event: ClientEvent) {
         match event {
             ClientEvent::TableUpdate(update) => {
+                // Sync local account balance from the authoritative seat state.
+                if let Some(account) = &mut self.account {
+                    if let Some(seat) = update.table_state.seats.iter()
+                        .find(|s| s.player_id == account.player_id)
+                    {
+                        account.balance = seat.balance;
+                    }
+                }
+                // A new hand starting is signalled by the typed HandStep on the
+                // incoming table state — no string matching required.
+                if update.table_state.step == HandStep::CollectForcedBets {
+                    self.last_showdown = None;
+                    self.last_payout = None;
+                }
                 self.table_state = Some(update.table_state);
                 if let Some(view) = update.player_view {
+                    // Clear stale per-hand input state when a new PlayerView arrives.
+                    self.selected_discards.clear();
+                    self.input_bet.clear();
                     self.player_view = Some(view);
                 }
                 for entry in &update.events {
                     match entry.kind {
                         HistoryKind::Showdown => self.last_showdown = Some(entry.clone()),
                         HistoryKind::Payout => self.last_payout = Some(entry.clone()),
-                        HistoryKind::StepChanged => {
-                            if entry.message.contains("CollectForcedBets") {
-                                self.last_showdown = None;
-                                self.last_payout = None;
-                            }
-                        }
                         _ => {}
                     }
                 }
@@ -347,6 +382,8 @@ impl PokerApp {
                 self.event_log.clear();
                 self.last_showdown = None;
                 self.last_payout = None;
+                self.selected_discards.clear();
+                self.input_bet.clear();
                 use common::wire::SessionCloseReason;
                 self.status_msg = match msg.reason {
                     SessionCloseReason::ReplacedByLogin => {
@@ -366,6 +403,8 @@ impl PokerApp {
                 self.event_log.clear();
                 self.last_showdown = None;
                 self.last_payout = None;
+                self.selected_discards.clear();
+                self.input_bet.clear();
                 self.status_msg = "Connection lost — please reconnect".to_string();
                 self.screen = Screen::Connect;
             }

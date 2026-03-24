@@ -17,13 +17,15 @@ pub fn show_action_bar(
     let has_bet = prompt.allowed_actions.contains(&AllowedAction::Bet);
     let has_raise = prompt.allowed_actions.contains(&AllowedAction::Raise);
     let needs_amount = has_bet || has_raise;
+    let min = prompt.min_raise.unwrap_or(1);
 
     // ── Amount input (only when bet/raise is possible) ────────────────────
     if needs_amount {
-        let min = prompt.min_raise.unwrap_or(1);
 
-        // Ensure bet_input is seeded with a valid default on first show
-        if bet_input.is_empty() || bet_input.parse::<Chips>().unwrap_or(0) < min {
+        // Seed with min only when empty (start of a new turn).
+        // Do not snap mid-type — the player is free to type any value;
+        // clamping is enforced when they click Bet / Raise.
+        if bet_input.is_empty() {
             *bet_input = min.to_string();
         }
 
@@ -83,17 +85,19 @@ pub fn show_action_bar(
                 }
                 AllowedAction::Bet => {
                     if ui.button("Bet").clicked() {
-                        let amount = bet_input.parse::<Chips>().unwrap_or(
-                            prompt.min_raise.unwrap_or(1),
-                        );
+                        let amount = bet_input
+                            .parse::<Chips>()
+                            .unwrap_or(min)
+                            .clamp(min, balance);
                         chosen = Some(PlayerAction::Bet { amount });
                     }
                 }
                 AllowedAction::Raise => {
                     if ui.button("Raise").clicked() {
-                        let amount = bet_input.parse::<Chips>().unwrap_or(
-                            prompt.min_raise.unwrap_or(1),
-                        );
+                        let amount = bet_input
+                            .parse::<Chips>()
+                            .unwrap_or(min)
+                            .clamp(min, balance);
                         chosen = Some(PlayerAction::Raise { amount });
                     }
                 }
