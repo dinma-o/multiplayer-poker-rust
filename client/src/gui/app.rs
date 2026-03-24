@@ -3,8 +3,8 @@ use std::sync::mpsc::{Receiver, Sender};
 
 use common::protocol::PokerVariant;
 use common::wire::{
-    AccountProfile, HistoryEntry, PlayerView, PublicTableState, RequestOp, ResponsePayload,
-    SessionId, TableId, TableSummary,
+    AccountProfile, HistoryEntry, HistoryKind, PlayerView, PublicTableState, RequestOp,
+    ResponsePayload, SessionId, TableId, TableSummary,
 };
 
 use crate::state::ClientEvent;
@@ -114,6 +114,10 @@ pub struct PokerApp {
     // Indices of cards toggled for discard during the draw phase
     pub selected_discards: Vec<usize>,
 
+    // Most recent showdown and payout results — cleared when next hand starts
+    pub last_showdown: Option<HistoryEntry>,
+    pub last_payout: Option<HistoryEntry>,
+
     // Lobby: selected variant for the create-table dropdown
     pub selected_variant: PokerVariant,
 
@@ -147,6 +151,8 @@ impl Default for PokerApp {
             texture_cache: HashMap::new(),
             input_bet: String::new(),
             selected_discards: Vec::new(),
+            last_showdown: None,
+            last_payout: None,
         }
     }
 }
@@ -308,6 +314,19 @@ impl PokerApp {
                 self.table_state = Some(update.table_state);
                 if let Some(view) = update.player_view {
                     self.player_view = Some(view);
+                }
+                for entry in &update.events {
+                    match entry.kind {
+                        HistoryKind::Showdown => self.last_showdown = Some(entry.clone()),
+                        HistoryKind::Payout => self.last_payout = Some(entry.clone()),
+                        HistoryKind::StepChanged => {
+                            if entry.message.contains("CollectForcedBets") {
+                                self.last_showdown = None;
+                                self.last_payout = None;
+                            }
+                        }
+                        _ => {}
+                    }
                 }
                 self.event_log.extend(update.events);
             }

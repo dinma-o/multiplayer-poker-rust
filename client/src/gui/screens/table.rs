@@ -6,6 +6,7 @@ use super::super::widgets::action_bar::show_action_bar;
 use super::super::widgets::card::show_card;
 use super::super::widgets::discard_picker::show_discard_picker;
 use super::super::widgets::event_log::show_event_log;
+use super::super::widgets::results_panel::show_results;
 use super::super::widgets::seat::{show_empty_seat, show_seat};
 
 pub fn show(app: &mut PokerApp, ctx: &egui::Context, table_id: TableId) {
@@ -46,13 +47,16 @@ pub fn show(app: &mut PokerApp, ctx: &egui::Context, table_id: TableId) {
         });
     });
 
-    // ── Right panel: event log ────────────────────────────────────────────────
+    // ── Right panel: results + event log ─────────────────────────────────────
     let event_log = app.event_log.clone();
+    let last_showdown = app.last_showdown.clone();
+    let last_payout = app.last_payout.clone();
     egui::SidePanel::right("event_log_panel")
         .resizable(true)
         .min_width(200.0)
         .default_width(240.0)
         .show(ctx, |ui| {
+            show_results(ui, last_showdown.as_ref(), last_payout.as_ref());
             show_event_log(ui, &event_log);
         });
 
