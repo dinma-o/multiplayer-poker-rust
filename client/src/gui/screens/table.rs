@@ -4,6 +4,7 @@ use common::wire::{RequestOp, TableId};
 use super::super::app::{PendingKind, PokerApp};
 use super::super::widgets::action_bar::show_action_bar;
 use super::super::widgets::card::show_card;
+use super::super::widgets::discard_picker::show_discard_picker;
 use super::super::widgets::seat::{show_empty_seat, show_seat};
 
 pub fn show(app: &mut PokerApp, ctx: &egui::Context, table_id: TableId) {
@@ -144,17 +145,13 @@ pub fn show(app: &mut PokerApp, ctx: &egui::Context, table_id: TableId) {
             }
         }
 
-        // ── Action bar ───────────────────────────────────────────────────────
-        // Show only when there is a prompt, it is not a draw phase, and no
-        // request is already in-flight.
+        // ── Action bar / Discard picker ──────────────────────────────────────
         let prompt = player_view
             .as_ref()
             .and_then(|v| v.action_prompt.as_ref())
-            .filter(|p| p.max_discards.is_none())
             .cloned();
 
         if let Some(prompt) = prompt {
-            let balance = app.account.as_ref().map(|a| a.balance).unwrap_or(0);
             let is_pending = app.is_request_pending();
 
             ui.add_space(16.0);
@@ -164,13 +161,43 @@ pub fn show(app: &mut PokerApp, ctx: &egui::Context, table_id: TableId) {
             ui.add_space(4.0);
 
             ui.add_enabled_ui(!is_pending, |ui| {
-                if let Some(action) =
-                    show_action_bar(ui, &prompt, balance, &mut app.input_bet)
-                {
-                    app.send_op(
-                        PendingKind::SubmitAction,
-                        RequestOp::SubmitAction { table_id, action },
-                    );
+                if let Some(max_discards) = prompt.max_discards {
+                    // ── Draw phase: show discard picker ───────────────────
+                    let private_cards = player_view
+                        .as_ref()
+                        .map(|v| v.private_cards.clone())
+                        .unwrap_or_default();
+
+                    if let Some(discards) = show_discard_picker(
+                        ui,
+                        ctx,
+                        &mut app.texture_cache,
+                        &private_cards,
+                        max_discards,
+                        &mut app.selected_discards,
+                    ) {
+                        app.selected_discards.clear();
+                        app.send_op(
+                            PendingKind::SubmitAction,
+                            RequestOp::SubmitAction {
+                                table_id,
+                                action: common::wire::PlayerAction::Draw {
+                                    discard: discards,
+                                },
+                            },
+                        );
+                    }
+                } else {
+                    // ── Betting phase: show action bar ────────────────────
+                    let balance = app.account.as_ref().map(|a| a.balance).unwrap_or(0);
+                    if let Some(action) =
+                        show_action_bar(ui, &prompt, balance, &mut app.input_bet)
+                    {
+                        app.send_op(
+                            PendingKind::SubmitAction,
+                            RequestOp::SubmitAction { table_id, action },
+                        );
+                    }
                 }
             });
         }

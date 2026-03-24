@@ -111,6 +111,9 @@ pub struct PokerApp {
     // Bet/raise amount input on the action bar
     pub input_bet: String,
 
+    // Indices of cards toggled for discard during the draw phase
+    pub selected_discards: Vec<usize>,
+
     // Lobby: selected variant for the create-table dropdown
     pub selected_variant: PokerVariant,
 
@@ -143,6 +146,7 @@ impl Default for PokerApp {
             selected_variant: PokerVariant::FiveCardDraw,
             texture_cache: HashMap::new(),
             input_bet: String::new(),
+            selected_discards: Vec::new(),
         }
     }
 }
