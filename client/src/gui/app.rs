@@ -111,6 +111,9 @@ pub struct PokerApp {
     // Bet/raise amount input on the action bar
     pub input_bet: String,
 
+    // Deposit/withdraw amount input in the lobby
+    pub input_deposit: String,
+
     // Indices of cards toggled for discard during the draw phase
     pub selected_discards: Vec<usize>,
 
@@ -150,6 +153,7 @@ impl Default for PokerApp {
             selected_variant: PokerVariant::FiveCardDraw,
             texture_cache: HashMap::new(),
             input_bet: String::new(),
+            input_deposit: String::new(),
             selected_discards: Vec::new(),
             last_showdown: None,
             last_payout: None,
@@ -256,12 +260,17 @@ impl PokerApp {
                 self.enter_lobby();
             }
             Some(ResponsePayload::Account(profile)) => {
-                // Auto-login immediately after account creation.
-                let op = RequestOp::Login {
-                    name: profile.player_name.clone(),
-                    pin: self.input_pin.clone(),
-                };
-                self.send_op(PendingKind::Login, op);
+                if self.account.is_some() {
+                    // Deposit or withdraw — just update the balance in place.
+                    self.account = Some(profile);
+                } else {
+                    // Account creation — auto-login immediately.
+                    let op = RequestOp::Login {
+                        name: profile.player_name.clone(),
+                        pin: self.input_pin.clone(),
+                    };
+                    self.send_op(PendingKind::Login, op);
+                }
             }
             Some(ResponsePayload::Logout(_)) => {
                 self.session_id = None;

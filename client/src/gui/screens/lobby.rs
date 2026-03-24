@@ -114,6 +114,44 @@ pub fn show(app: &mut PokerApp, ctx: &egui::Context) {
             }
         });
 
+        ui.add_space(16.0);
+
+        // ── Deposit / Withdraw ────────────────────────────────────────────────
+        ui.strong("Balance");
+        ui.separator();
+        ui.horizontal(|ui| {
+            ui.label("Amount:");
+            ui.add(
+                egui::TextEdit::singleline(&mut app.input_deposit)
+                    .desired_width(80.0)
+                    .hint_text("0"),
+            );
+
+            let amount_valid = app
+                .input_deposit
+                .parse::<i64>()
+                .map(|v| v > 0)
+                .unwrap_or(false);
+            let is_pending = app.is_request_pending();
+            let enabled = amount_valid && !is_pending;
+
+            if ui
+                .add_enabled(enabled, egui::Button::new("Deposit"))
+                .clicked()
+            {
+                let amount = app.input_deposit.parse::<i64>().unwrap_or(0);
+                app.send_op(PendingKind::Deposit, RequestOp::Deposit { amount });
+            }
+
+            if ui
+                .add_enabled(enabled, egui::Button::new("Withdraw"))
+                .clicked()
+            {
+                let amount = app.input_deposit.parse::<i64>().unwrap_or(0);
+                app.send_op(PendingKind::Withdraw, RequestOp::Withdraw { amount });
+            }
+        });
+
         // ── Error display ────────────────────────────────────────────────────
         if let Some(err) = &app.last_error {
             ui.add_space(8.0);
