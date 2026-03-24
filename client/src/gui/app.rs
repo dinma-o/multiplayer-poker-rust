@@ -339,9 +339,21 @@ impl PokerApp {
                 }
                 self.event_log.extend(update.events);
             }
-            ClientEvent::SessionClosed(_) => {
+            ClientEvent::SessionClosed(msg) => {
                 self.session_id = None;
                 self.account = None;
+                self.table_state = None;
+                self.player_view = None;
+                self.event_log.clear();
+                self.last_showdown = None;
+                self.last_payout = None;
+                use common::wire::SessionCloseReason;
+                self.status_msg = match msg.reason {
+                    SessionCloseReason::ReplacedByLogin => {
+                        "Session replaced by a new login".to_string()
+                    }
+                    SessionCloseReason::LoggedOut => String::new(),
+                };
                 self.screen = Screen::Login;
             }
             ClientEvent::Disconnected => {
@@ -349,11 +361,23 @@ impl PokerApp {
                 self.cmd_tx = None;
                 self.resp_rx = None;
                 self.push_rx = None;
+                self.table_state = None;
+                self.player_view = None;
+                self.event_log.clear();
+                self.last_showdown = None;
+                self.last_payout = None;
+                self.status_msg = "Connection lost — please reconnect".to_string();
                 self.screen = Screen::Connect;
             }
             ClientEvent::TransportError(msg) => {
-                self.last_error = Some(msg);
                 self.connected = false;
+                self.cmd_tx = None;
+                self.resp_rx = None;
+                self.push_rx = None;
+                self.table_state = None;
+                self.player_view = None;
+                self.event_log.clear();
+                self.status_msg = format!("Connection error: {msg}");
                 self.screen = Screen::Connect;
             }
             ClientEvent::UnexpectedResponse(_) => {}

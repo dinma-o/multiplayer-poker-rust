@@ -4,6 +4,17 @@ use super::super::app::{LoginTab, PendingKind, PokerApp};
 
 pub fn show(app: &mut PokerApp, ctx: &egui::Context) {
     egui::CentralPanel::default().show(ctx, |ui| {
+        if !app.status_msg.is_empty() {
+            egui::Frame::new()
+                .fill(egui::Color32::from_rgb(80, 30, 30))
+                .inner_margin(egui::Margin::same(8))
+                .corner_radius(4.0)
+                .show(ui, |ui| {
+                    ui.colored_label(egui::Color32::from_rgb(255, 180, 180), &app.status_msg);
+                });
+            ui.add_space(8.0);
+        }
+
         ui.heading("PokerDUD");
         ui.add_space(16.0);
 
