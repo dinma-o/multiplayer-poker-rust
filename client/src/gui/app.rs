@@ -108,6 +108,9 @@ pub struct PokerApp {
     pub input_amount: String,
     pub login_tab: LoginTab,
 
+    // Bet/raise amount input on the action bar
+    pub input_bet: String,
+
     // Lobby: selected variant for the create-table dropdown
     pub selected_variant: PokerVariant,
 
@@ -139,6 +142,7 @@ impl Default for PokerApp {
             login_tab: LoginTab::Login,
             selected_variant: PokerVariant::FiveCardDraw,
             texture_cache: HashMap::new(),
+            input_bet: String::new(),
         }
     }
 }

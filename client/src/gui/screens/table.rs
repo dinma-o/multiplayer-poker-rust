@@ -1,10 +1,10 @@
 use common::protocol::{HandStep, PokerVariant};
-use common::wire::TableId;
+use common::wire::{RequestOp, TableId};
 
 use super::super::app::{PendingKind, PokerApp};
+use super::super::widgets::action_bar::show_action_bar;
 use super::super::widgets::card::show_card;
 use super::super::widgets::seat::{show_empty_seat, show_seat};
-use common::wire::RequestOp;
 
 pub fn show(app: &mut PokerApp, ctx: &egui::Context, table_id: TableId) {
     let my_player_id = app.account.as_ref().map(|a| a.player_id);
@@ -142,6 +142,37 @@ pub fn show(app: &mut PokerApp, ctx: &egui::Context, table_id: TableId) {
                     }
                 });
             }
+        }
+
+        // ── Action bar ───────────────────────────────────────────────────────
+        // Show only when there is a prompt, it is not a draw phase, and no
+        // request is already in-flight.
+        let prompt = player_view
+            .as_ref()
+            .and_then(|v| v.action_prompt.as_ref())
+            .filter(|p| p.max_discards.is_none())
+            .cloned();
+
+        if let Some(prompt) = prompt {
+            let balance = app.account.as_ref().map(|a| a.balance).unwrap_or(0);
+            let is_pending = app.is_request_pending();
+
+            ui.add_space(16.0);
+            ui.separator();
+            ui.add_space(4.0);
+            ui.label(egui::RichText::new("Your Turn").strong());
+            ui.add_space(4.0);
+
+            ui.add_enabled_ui(!is_pending, |ui| {
+                if let Some(action) =
+                    show_action_bar(ui, &prompt, balance, &mut app.input_bet)
+                {
+                    app.send_op(
+                        PendingKind::SubmitAction,
+                        RequestOp::SubmitAction { table_id, action },
+                    );
+                }
+            });
         }
     });
 }
