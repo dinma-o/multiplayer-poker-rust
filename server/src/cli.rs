@@ -476,8 +476,11 @@ fn print_events(events: &[Event]) {
             }
             Event::Payout { winners } => {
                 println!("payout:");
-                for (player_name, amt) in winners {
-                    println!("  {} +{}", player_name, amt);
+                for winner in winners {
+                    println!(
+                        "  {} (ID: {}) +{}",
+                        winner.player_name, winner.player_id, winner.amount
+                    );
                 }
             }
         }

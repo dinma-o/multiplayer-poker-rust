@@ -124,9 +124,10 @@ impl GameEngine {
         events.push(Event::Payout {
             winners: payout_pairs
                 .into_iter()
-                .map(|(pid, amt)| {
-                    let pname = self.account_name(pid);
-                    (pname, amt)
+                .map(|(pid, amt)| common::protocol::PayoutLine {
+                    player_name: self.account_name(pid),
+                    player_id: pid,
+                    amount: amt,
                 })
                 .collect(),
         });

@@ -886,45 +886,66 @@ impl ServerApp {
     }
 
     fn history_entry(index: u64, event: &Event) -> Option<HistoryEntry> {
-        let (kind, message) = match event {
+        let (kind, message, showdown_results, payout_results) = match event {
             Event::Ok => return None,
-            Event::Info { message } => (HistoryKind::Info, message.clone()),
-            Event::Error { message } => (HistoryKind::Error, message.clone()),
+            Event::Info { message } => (HistoryKind::Info, message.clone(), None, None),
+            Event::Error { message } => (HistoryKind::Error, message.clone(), None, None),
             Event::StepChanged { step } => (
                 HistoryKind::StepChanged,
                 format!("step changed to {:?}", step),
+                None,
+                None,
             ),
             Event::PlayerJoined {
                 player_name, seat, ..
             } => (
                 HistoryKind::PlayerJoined,
                 format!("{player_name} joined seat {seat}"),
+                None,
+                None,
             ),
             Event::PlayerLeft { player_name, .. } => (
                 HistoryKind::PlayerLeft,
                 format!("{player_name} left the table"),
+                None,
+                None,
             ),
-            Event::PotUpdated { pot } => (HistoryKind::PotUpdated, format!("pot updated to {pot}")),
+            Event::PotUpdated { pot } => (
+                HistoryKind::PotUpdated,
+                format!("pot updated to {pot}"),
+                None,
+                None,
+            ),
             Event::ActionRequested { player_name, .. } => (
                 HistoryKind::ActionPrompt,
                 format!("action requested for {player_name}"),
+                None,
+                None,
             ),
             Event::DrawRequested { player_name, .. } => (
                 HistoryKind::DrawPrompt,
                 format!("draw requested for {player_name}"),
+                None,
+                None,
             ),
             Event::PrivateHand { .. } => return None,
             Event::Showdown { results } => (
                 HistoryKind::Showdown,
                 format!("showdown: {} result(s)", results.len()),
+                Some(results.clone()),
+                None,
             ),
             Event::Payout { winners } => (
                 HistoryKind::Payout,
                 format!("payout: {} winner(s)", winners.len()),
+                None,
+                Some(winners.clone()),
             ),
             Event::LobbyState { seated } => (
                 HistoryKind::Info,
                 format!("lobby state updated: {} seated", seated.len()),
+                None,
+                None,
             ),
         };
 
@@ -932,6 +953,8 @@ impl ServerApp {
             index,
             kind,
             message,
+            showdown_results,
+            payout_results,
         })
     }
 
@@ -1178,5 +1201,109 @@ mod tests {
                 .all(|entry| !entry.message.contains("hand(")),
             "private hand events should not be exposed via public history"
         );
+    }
+
+    #[test]
+    fn showdown_events_keep_structured_results_in_history_and_updates() {
+        let fx = test_app();
+        fx.app
+            .create_account("alice".into(), "1234".into(), 500)
+            .expect("create alice");
+        let login = fx.app.login("alice".into(), "1234".into()).expect("login");
+        let table = fx.app.list_tables().tables[0].clone();
+        fx.app
+            .join_table(&login.session_id, table.table_id)
+            .expect("join table");
+
+        let showdown = Event::Showdown {
+            results: vec![
+                common::protocol::ShowdownLine {
+                    player_name: "alice".into(),
+                    player_id: 1,
+                    hand_desc: "A♠ K♠ => Flush".into(),
+                },
+                common::protocol::ShowdownLine {
+                    player_name: "bob".into(),
+                    player_id: 2,
+                    hand_desc: "K♥ K♦ => Pair".into(),
+                },
+            ],
+        };
+
+        let history_entry = ServerApp::history_entry(5, &showdown).expect("history entry");
+        assert_eq!(history_entry.kind, HistoryKind::Showdown);
+        assert_eq!(history_entry.message, "showdown: 2 result(s)");
+        let results = history_entry
+            .showdown_results
+            .as_ref()
+            .expect("showdown results");
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].player_name, "alice");
+        assert!(results[0].hand_desc.contains("Flush"));
+
+        let update = fx
+            .app
+            .build_table_update_for_session(table.table_id, Some(&login.session_id), &[showdown])
+            .expect("table update");
+        assert_eq!(update.events.len(), 1);
+        assert_eq!(update.events[0].kind, HistoryKind::Showdown);
+        let update_results = update.events[0]
+            .showdown_results
+            .as_ref()
+            .expect("update showdown results");
+        assert_eq!(update_results.len(), 2);
+        assert_eq!(update_results[1].player_name, "bob");
+    }
+
+    #[test]
+    fn payout_events_keep_structured_results_in_history_and_updates() {
+        let fx = test_app();
+        fx.app
+            .create_account("alice".into(), "1234".into(), 500)
+            .expect("create alice");
+        let login = fx.app.login("alice".into(), "1234".into()).expect("login");
+        let table = fx.app.list_tables().tables[0].clone();
+        fx.app
+            .join_table(&login.session_id, table.table_id)
+            .expect("join table");
+
+        let payout = Event::Payout {
+            winners: vec![
+                common::protocol::PayoutLine {
+                    player_name: "alice".into(),
+                    player_id: 1,
+                    amount: 60,
+                },
+                common::protocol::PayoutLine {
+                    player_name: "bob".into(),
+                    player_id: 2,
+                    amount: 40,
+                },
+            ],
+        };
+
+        let history_entry = ServerApp::history_entry(6, &payout).expect("history entry");
+        assert_eq!(history_entry.kind, HistoryKind::Payout);
+        assert_eq!(history_entry.message, "payout: 2 winner(s)");
+        let results = history_entry
+            .payout_results
+            .as_ref()
+            .expect("payout results");
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].player_id, 1);
+        assert_eq!(results[1].amount, 40);
+
+        let update = fx
+            .app
+            .build_table_update_for_session(table.table_id, Some(&login.session_id), &[payout])
+            .expect("table update");
+        assert_eq!(update.events.len(), 1);
+        assert_eq!(update.events[0].kind, HistoryKind::Payout);
+        let update_results = update.events[0]
+            .payout_results
+            .as_ref()
+            .expect("update payout results");
+        assert_eq!(update_results.len(), 2);
+        assert_eq!(update_results[1].player_id, 2);
     }
 }

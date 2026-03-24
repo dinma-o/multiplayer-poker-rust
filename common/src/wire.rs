@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     card_deck::Card,
-    protocol::{AllowedAction, Chips, HandStep, PlayerId, PokerVariant},
+    protocol::{AllowedAction, Chips, HandStep, PayoutLine, PlayerId, PokerVariant, ShowdownLine},
 };
 
 pub type SessionId = String;
@@ -316,6 +316,8 @@ pub struct HistoryEntry {
     pub index: u64,
     pub kind: HistoryKind,
     pub message: String,
+    pub showdown_results: Option<Vec<ShowdownLine>>,
+    pub payout_results: Option<Vec<PayoutLine>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -439,11 +441,26 @@ mod tests {
                 board_cards: vec![],
                 action_prompt: None,
             }),
-            events: vec![HistoryEntry {
-                index: 2,
-                kind: HistoryKind::ActionPrompt,
-                message: "action requested for alice".into(),
-            }],
+            events: vec![
+                HistoryEntry {
+                    index: 2,
+                    kind: HistoryKind::ActionPrompt,
+                    message: "action requested for alice".into(),
+                    showdown_results: None,
+                    payout_results: None,
+                },
+                HistoryEntry {
+                    index: 3,
+                    kind: HistoryKind::Showdown,
+                    message: "showdown: 1 result(s)".into(),
+                    showdown_results: Some(vec![ShowdownLine {
+                        player_name: "alice".into(),
+                        player_id: 7,
+                        hand_desc: "K♥ => Pair".into(),
+                    }]),
+                    payout_results: None,
+                },
+            ],
         };
 
         let msg = ServerMessage::table_update(update);
@@ -475,5 +492,57 @@ mod tests {
         let json = serde_json::to_string(&msg).expect("serialize message");
         let decoded: ServerMessage = serde_json::from_str(&json).expect("deserialize message");
         assert_eq!(decoded, msg);
+    }
+
+    #[test]
+    fn history_entry_with_showdown_results_round_trip_json() {
+        let entry = HistoryEntry {
+            index: 8,
+            kind: HistoryKind::Showdown,
+            message: "showdown: 2 result(s)".into(),
+            showdown_results: Some(vec![
+                ShowdownLine {
+                    player_name: "alice".into(),
+                    player_id: 7,
+                    hand_desc: "A♠ K♠ => Flush".into(),
+                },
+                ShowdownLine {
+                    player_name: "bob".into(),
+                    player_id: 8,
+                    hand_desc: "K♥ K♦ => Pair".into(),
+                },
+            ]),
+            payout_results: None,
+        };
+
+        let json = serde_json::to_string(&entry).expect("serialize history entry");
+        let decoded: HistoryEntry = serde_json::from_str(&json).expect("deserialize history entry");
+        assert_eq!(decoded, entry);
+    }
+
+    #[test]
+    fn history_entry_with_payout_results_round_trip_json() {
+        let entry = HistoryEntry {
+            index: 9,
+            kind: HistoryKind::Payout,
+            message: "payout: 2 winner(s)".into(),
+            showdown_results: None,
+            payout_results: Some(vec![
+                PayoutLine {
+                    player_name: "alice".into(),
+                    player_id: 7,
+                    amount: 60,
+                },
+                PayoutLine {
+                    player_name: "bob".into(),
+                    player_id: 8,
+                    amount: 40,
+                },
+            ]),
+        };
+
+        let json = serde_json::to_string(&entry).expect("serialize history entry");
+        let decoded: HistoryEntry = serde_json::from_str(&json).expect("deserialize history entry");
+        assert_eq!(decoded, entry);
     }
 }

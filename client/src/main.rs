@@ -8,13 +8,13 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 
 use common::card_deck::Card;
-use common::protocol::{AllowedAction, HandStep, PokerVariant};
+use common::protocol::{AllowedAction, HandStep, PayoutLine, PokerVariant, ShowdownLine};
 use common::wire::{
-    AccountProfile, ActionPrompt, ClientRequest, ErrorCode, HistoryEntry, JoinTableResult,
-    LeaveTableResult, LeaveTableStatus, OperationReceipt, PlayerAction, PlayerView,
-    PublicSeatState, PublicTableState, RequestId, RequestOp, ResponsePayload, SeatAssignmentStatus,
-    ServerMessage, ServerResponse, SessionCloseReason, SessionClosedMessage, SessionId,
-    SubscriptionResult, TableHistory, TableId, TableUpdateMessage,
+    AccountProfile, ActionPrompt, ClientRequest, ErrorCode, HistoryEntry, HistoryKind,
+    JoinTableResult, LeaveTableResult, LeaveTableStatus, OperationReceipt, PlayerAction,
+    PlayerView, PublicSeatState, PublicTableState, RequestId, RequestOp, ResponsePayload,
+    SeatAssignmentStatus, ServerMessage, ServerResponse, SessionCloseReason, SessionClosedMessage,
+    SessionId, SubscriptionResult, TableHistory, TableId, TableUpdateMessage,
 };
 
 const DEFAULT_HOST: &str = "127.0.0.1";
@@ -504,7 +504,7 @@ fn format_table_update_friendly(update: &TableUpdateMessage) -> Option<String> {
     if !update.events.is_empty() {
         output.push_str("\nEvents:");
         for event in &update.events {
-            let _ = write!(output, "\n  {}. {}", event.index, event.message);
+            append_history_entry(&mut output, event, "  ");
         }
     }
 
@@ -655,7 +655,7 @@ fn format_history(history: &TableHistory) -> String {
         output.push_str("\n  none");
     } else {
         for entry in &history.entries {
-            let _ = write!(output, "\n  {}", format_history_entry(entry));
+            append_history_entry(&mut output, entry, "  ");
         }
     }
     output
@@ -670,7 +670,62 @@ fn format_subscription(subscription: &SubscriptionResult) -> String {
 }
 
 fn format_history_entry(entry: &HistoryEntry) -> String {
-    format!("{}. {}", entry.index, entry.message)
+    let mut output = format!("{}. {}", entry.index, entry.message);
+    if entry.kind == HistoryKind::Showdown
+        && let Some(results) = &entry.showdown_results
+        && !results.is_empty()
+    {
+        output.push_str("\n  Showdown:");
+        for result in results {
+            let _ = write!(
+                output,
+                "\n    {} -> {}",
+                result.player_name, result.hand_desc
+            );
+        }
+    }
+    if entry.kind == HistoryKind::Payout
+        && let Some(results) = &entry.payout_results
+        && !results.is_empty()
+    {
+        output.push_str("\n  Payout:");
+        for result in results {
+            let _ = write!(output, "\n    {}", format_payout_line(result));
+        }
+    }
+    output
+}
+
+fn append_history_entry(output: &mut String, entry: &HistoryEntry, indent: &str) {
+    let formatted = format_history_entry(entry);
+    for line in formatted.lines() {
+        output.push('\n');
+        output.push_str(indent);
+        output.push_str(line);
+    }
+}
+
+fn showdown_results(results: &[ShowdownLine]) -> Option<Vec<ShowdownLine>> {
+    if results.is_empty() {
+        None
+    } else {
+        Some(results.to_vec())
+    }
+}
+
+fn payout_results(results: &[PayoutLine]) -> Option<Vec<PayoutLine>> {
+    if results.is_empty() {
+        None
+    } else {
+        Some(results.to_vec())
+    }
+}
+
+fn format_payout_line(result: &PayoutLine) -> String {
+    format!(
+        "{} (player #{}) +{}",
+        result.player_name, result.player_id, result.amount
+    )
 }
 
 fn format_seat_line(seat: &PublicSeatState, state: &PublicTableState) -> String {
@@ -977,7 +1032,8 @@ mod tests {
                 table_id: 1,
                 entries: vec![
                     sample_history_entry(3, "alice joined"),
-                    sample_history_entry(4, "bob called"),
+                    sample_showdown_history_entry(),
+                    sample_payout_history_entry(),
                 ],
             }),
         );
@@ -986,7 +1042,12 @@ mod tests {
 
         assert!(output.contains("History for table 1"));
         assert!(output.contains("3. alice joined"));
-        assert!(output.contains("4. bob called"));
+        assert!(output.contains("4. showdown: 2 result(s)"));
+        assert!(output.contains("Showdown:"));
+        assert!(output.contains("alice -> board=[A♠ K♥ Q♣] hole=[J♦ 10♦] => Straight"));
+        assert!(output.contains("5. payout: 2 winner(s)"));
+        assert!(output.contains("Payout:"));
+        assert!(output.contains("alice (player #7) +60"));
     }
 
     #[test]
@@ -997,14 +1058,45 @@ mod tests {
             player_view: Some(sample_player_view()),
             events: vec![
                 sample_history_entry(7, "alice bet 10"),
-                sample_history_entry(8, "bob folded"),
+                sample_showdown_history_entry(),
+                sample_payout_history_entry(),
             ],
         });
 
         assert!(output.contains("[push table 1]"));
         assert!(output.contains("Events:"));
         assert!(output.contains("7. alice bet 10"));
+        assert!(output.contains("4. showdown: 2 result(s)"));
+        assert!(output.contains("alice -> board=[A♠ K♥ Q♣] hole=[J♦ 10♦] => Straight"));
+        assert!(output.contains("5. payout: 2 winner(s)"));
+        assert!(output.contains("bob (player #8) +40"));
         assert!(output.contains("Player view for alice (player #7)"));
+    }
+
+    #[test]
+    fn falls_back_to_summary_when_showdown_results_are_missing() {
+        let output = format_history_entry(&HistoryEntry {
+            index: 12,
+            kind: HistoryKind::Showdown,
+            message: "showdown: 0 result(s)".into(),
+            showdown_results: None,
+            payout_results: None,
+        });
+
+        assert_eq!(output, "12. showdown: 0 result(s)");
+    }
+
+    #[test]
+    fn falls_back_to_summary_when_payout_results_are_missing() {
+        let output = format_history_entry(&HistoryEntry {
+            index: 13,
+            kind: HistoryKind::Payout,
+            message: "payout: 0 winner(s)".into(),
+            showdown_results: None,
+            payout_results: None,
+        });
+
+        assert_eq!(output, "13. payout: 0 winner(s)");
     }
 
     #[test]
@@ -1116,6 +1208,50 @@ mod tests {
             index,
             kind: common::wire::HistoryKind::Info,
             message: message.into(),
+            showdown_results: None,
+            payout_results: None,
+        }
+    }
+
+    fn sample_showdown_history_entry() -> HistoryEntry {
+        HistoryEntry {
+            index: 4,
+            kind: HistoryKind::Showdown,
+            message: "showdown: 2 result(s)".into(),
+            showdown_results: showdown_results(&[
+                ShowdownLine {
+                    player_name: "alice".into(),
+                    player_id: 7,
+                    hand_desc: "board=[A♠ K♥ Q♣] hole=[J♦ 10♦] => Straight".into(),
+                },
+                ShowdownLine {
+                    player_name: "bob".into(),
+                    player_id: 8,
+                    hand_desc: "board=[A♠ K♥ Q♣] hole=[K♣ K♦] => Three of a Kind".into(),
+                },
+            ]),
+            payout_results: None,
+        }
+    }
+
+    fn sample_payout_history_entry() -> HistoryEntry {
+        HistoryEntry {
+            index: 5,
+            kind: HistoryKind::Payout,
+            message: "payout: 2 winner(s)".into(),
+            showdown_results: None,
+            payout_results: payout_results(&[
+                PayoutLine {
+                    player_name: "alice".into(),
+                    player_id: 7,
+                    amount: 60,
+                },
+                PayoutLine {
+                    player_name: "bob".into(),
+                    player_id: 8,
+                    amount: 40,
+                },
+            ]),
         }
     }
 
