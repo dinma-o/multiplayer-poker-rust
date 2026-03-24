@@ -5,24 +5,13 @@ use std::sync::mpsc::{self, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
+use crate::state::{ClientEvent, EventHandler};
 use common::wire::{
-    ClientRequest, RequestId, RequestOp, ResponsePayload, ServerMessage, ServerResponse,
-    SessionClosedMessage, SessionId, TableUpdateMessage,
+    ClientRequest, RequestId, RequestOp, ResponsePayload, ServerMessage, ServerResponse, SessionId,
 };
 
 type PendingMap = Arc<Mutex<HashMap<RequestId, Sender<ServerResponse>>>>;
 type SharedSession = Arc<Mutex<Option<SessionId>>>;
-
-pub type EventHandler = Arc<dyn Fn(ClientEvent) + Send + Sync + 'static>;
-
-#[derive(Debug, Clone)]
-pub enum ClientEvent {
-    UnexpectedResponse(ServerResponse),
-    TableUpdate(TableUpdateMessage),
-    SessionClosed(SessionClosedMessage),
-    TransportError(String),
-    Disconnected,
-}
 
 pub struct TcpClient {
     writer: TcpStream,
