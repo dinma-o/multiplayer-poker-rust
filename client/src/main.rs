@@ -1,31 +1,26 @@
-use std::collections::HashMap;
 use std::env;
 use std::fmt::Write as _;
-use std::io::{self, BufRead, BufReader, Write};
-use std::net::TcpStream;
-use std::sync::mpsc::{self, Sender};
-use std::sync::{Arc, Mutex};
-use std::thread;
+use std::io::{self, Write};
+use std::sync::Arc;
 
 use common::card_deck::Card;
 use common::protocol::{AllowedAction, HandStep, PayoutLine, PokerVariant, ShowdownLine};
 use common::wire::{
-    AccountProfile, ActionPrompt, ClientRequest, ErrorCode, HistoryEntry, HistoryKind,
-    JoinTableResult, LeaveTableResult, LeaveTableStatus, OperationReceipt, PlayerAction,
-    PlayerView, PublicSeatState, PublicTableState, RequestId, RequestOp, ResponsePayload,
-    SeatAssignmentStatus, ServerMessage, ServerResponse, SessionCloseReason, SessionClosedMessage,
-    SessionId, SubscriptionResult, TableHistory, TableId, TableUpdateMessage,
+    AccountProfile, ActionPrompt, ErrorCode, HistoryEntry, HistoryKind, JoinTableResult,
+    LeaveTableResult, LeaveTableStatus, OperationReceipt, PlayerAction, PlayerView,
+    PublicSeatState, PublicTableState, RequestOp, ResponsePayload, SeatAssignmentStatus,
+    ServerResponse, SessionCloseReason, SessionClosedMessage, SubscriptionResult, TableHistory,
+    TableId, TableUpdateMessage,
 };
+use poker_gui::net::{ClientEvent, EventHandler, TcpClient};
 
 const DEFAULT_HOST: &str = "127.0.0.1";
 const DEFAULT_PORT: u16 = 8080;
 
-type PendingMap = Arc<Mutex<HashMap<RequestId, Sender<ServerResponse>>>>;
-type SharedSession = Arc<Mutex<Option<SessionId>>>;
-
 fn main() {
     let address = parse_address(env::args().skip(1));
-    let mut client = match TcpCliClient::connect(&address) {
+    let event_handler: EventHandler = Arc::new(handle_client_event);
+    let mut client = match TcpClient::connect(&address, Some(event_handler)) {
         Ok(client) => client,
         Err(error) => {
             eprintln!("failed to connect to {address}: {error}");
@@ -84,159 +79,25 @@ fn main() {
     }
 }
 
-struct TcpCliClient {
-    writer: TcpStream,
-    next_request_id: u64,
-    pending: PendingMap,
-    session_id: SharedSession,
-}
-
-impl TcpCliClient {
-    fn connect(address: &str) -> io::Result<Self> {
-        let writer = TcpStream::connect(address)?;
-        let read_stream = writer.try_clone()?;
-        let pending = Arc::new(Mutex::new(HashMap::new()));
-        let session_id = Arc::new(Mutex::new(None));
-
-        spawn_reader_thread(read_stream, Arc::clone(&pending), Arc::clone(&session_id));
-
-        Ok(Self {
-            writer,
-            next_request_id: 1,
-            pending,
-            session_id,
-        })
-    }
-
-    fn send(&mut self, op: RequestOp) -> io::Result<ServerResponse> {
-        let request_id = format!("req-{}", self.next_request_id);
-        self.next_request_id = self.next_request_id.saturating_add(1);
-
-        let (reply_tx, reply_rx) = mpsc::channel();
-        self.pending
-            .lock()
-            .expect("pending request map lock poisoned")
-            .insert(request_id.clone(), reply_tx);
-
-        let request = ClientRequest {
-            request_id: request_id.clone(),
-            session_id: self.session_id(),
-            op,
-        };
-
-        let json = serde_json::to_string(&request).map_err(io::Error::other)?;
-        if let Err(error) = self.writer.write_all(json.as_bytes()) {
-            self.pending
-                .lock()
-                .expect("pending request map lock poisoned")
-                .remove(&request_id);
-            return Err(error);
+fn handle_client_event(event: ClientEvent) {
+    match event {
+        ClientEvent::UnexpectedResponse(response) => {
+            println!("\n[push] unexpected response:");
+            print_response(&response);
+            print_prompt();
         }
-        if let Err(error) = self.writer.write_all(b"\n") {
-            self.pending
-                .lock()
-                .expect("pending request map lock poisoned")
-                .remove(&request_id);
-            return Err(error);
+        ClientEvent::TableUpdate(update) => {
+            print_table_update(&update);
         }
-        if let Err(error) = self.writer.flush() {
-            self.pending
-                .lock()
-                .expect("pending request map lock poisoned")
-                .remove(&request_id);
-            return Err(error);
+        ClientEvent::SessionClosed(message) => {
+            print_session_closed(&message);
         }
-
-        reply_rx.recv().map_err(|_| {
-            io::Error::new(
-                io::ErrorKind::BrokenPipe,
-                "server connection closed before a response was received",
-            )
-        })
-    }
-
-    fn session_id(&self) -> Option<SessionId> {
-        self.session_id
-            .lock()
-            .expect("session lock poisoned")
-            .clone()
-    }
-}
-
-fn spawn_reader_thread(read_stream: TcpStream, pending: PendingMap, session_id: SharedSession) {
-    thread::spawn(move || {
-        let mut reader = BufReader::new(read_stream);
-
-        loop {
-            let mut line = String::new();
-            let bytes_read = match reader.read_line(&mut line) {
-                Ok(bytes_read) => bytes_read,
-                Err(error) => {
-                    eprintln!("server read error: {error}");
-                    break;
-                }
-            };
-            if bytes_read == 0 {
-                eprintln!("server closed the connection");
-                break;
-            }
-
-            let trimmed = line.trim();
-            if trimmed.is_empty() {
-                continue;
-            }
-
-            let message: ServerMessage = match serde_json::from_str(trimmed) {
-                Ok(message) => message,
-                Err(error) => {
-                    eprintln!("failed to decode server message: {error}");
-                    continue;
-                }
-            };
-
-            match message {
-                ServerMessage::Response { response } => {
-                    capture_session(&session_id, &response);
-                    if let Some(reply_tx) = pending
-                        .lock()
-                        .expect("pending request map lock poisoned")
-                        .remove(&response.request_id)
-                    {
-                        let _ = reply_tx.send(response);
-                    } else {
-                        println!("\n[push] unexpected response:");
-                        print_response(&response);
-                        print_prompt();
-                    }
-                }
-                ServerMessage::TableUpdate(update) => {
-                    print_table_update(&update);
-                }
-                ServerMessage::SessionClosed(message) => {
-                    *session_id.lock().expect("session lock poisoned") = None;
-                    print_session_closed(&message);
-                }
-            }
+        ClientEvent::TransportError(message) => {
+            eprintln!("{message}");
         }
-
-        let mut pending = pending.lock().expect("pending request map lock poisoned");
-        pending.clear();
-    });
-}
-
-fn capture_session(session_id: &SharedSession, response: &ServerResponse) {
-    if !response.ok {
-        return;
-    }
-
-    match &response.payload {
-        Some(ResponsePayload::Login(login)) => {
-            *session_id.lock().expect("session lock poisoned") = Some(login.session_id.clone());
+        ClientEvent::Disconnected => {
+            eprintln!("server closed the connection");
         }
-        Some(ResponsePayload::Logout(_)) => {
-            *session_id.lock().expect("session lock poisoned") = None;
-        }
-        _ => {}
     }
 }
 

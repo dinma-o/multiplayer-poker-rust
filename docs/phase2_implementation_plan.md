@@ -6,6 +6,8 @@ It is intentionally contract-first. The first goal is to freeze the shared commu
 
 This plan is based on the current project structure and the deployment guidance in [deployment.md](deployment.md).
 
+For the focused GUI-client execution order after the TCP CLI became functional, see [gui_client_phases.md](gui_client_phases.md).
+
 ## Summary
 
 We will build Phase 2 around a LAN TCP + JSON architecture, not HTTP and not a public internet deployment.
