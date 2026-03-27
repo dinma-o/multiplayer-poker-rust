@@ -158,10 +158,13 @@ fn parse_request_op(parts: &[&str]) -> Result<RequestOp, String> {
         "unsubscribe_table" => Ok(RequestOp::UnsubscribeTable {
             table_id: parse_u64(parts.get(1), "table_id")?,
         }),
-        "submit_action" => Ok(RequestOp::SubmitAction {
-            table_id: parse_u64(parts.get(1), "table_id")?,
-            action: parse_action(&parts[2..])?,
-        }),
+        "submit_action" => {
+            let action_parts = parts.get(2..).unwrap_or(&[]);
+            Ok(RequestOp::SubmitAction {
+                table_id: parse_u64(parts.get(1), "table_id")?,
+                action: parse_action(action_parts)?,
+            })
+        }
         other => Err(format!("unknown command '{other}'")),
     }
 }
