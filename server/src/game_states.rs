@@ -1,5 +1,9 @@
-use common::{ card_deck::Card, hand::Hand, protocol::{ HandStep, PlayerId } };
-use std::collections::{ HashMap, HashSet };
+use common::{
+    card_deck::Card,
+    hand::Hand,
+    protocol::{HandStep, PlayerId},
+};
+use std::collections::{HashMap, HashSet};
 // Define the various states of a Five Card Draw Poker game.
 
 #[derive(Debug, Clone)]
@@ -10,11 +14,11 @@ pub struct PokerStateMachine {
 
 #[derive(Debug, Clone)]
 pub struct BettingRoundState {
-    pub order: Vec<PlayerId>, // fixed action order
-    pub to_act_idx: usize, // index into order
+    pub order: Vec<PlayerId>,            // fixed action order
+    pub to_act_idx: usize,               // index into order
     pub contrib: HashMap<PlayerId, u32>, // chips contributed this round
-    pub pending: HashSet<PlayerId>, // players yet to act this round
-    pub raises_used: u32, // number of raises used this round
+    pub pending: HashSet<PlayerId>,      // players yet to act this round
+    pub raises_used: u32,                // number of raises used this round
 }
 
 impl BettingRoundState {
@@ -176,7 +180,9 @@ impl<const HandSize: usize> HandState<HandSize> {
     }
 
     pub fn set_player_hand(&mut self, player_id: PlayerId, hand: Hand<HandSize>) {
-        self.visible_cards.hole_cards.insert(player_id, hand.cards().iter().copied().collect());
+        self.visible_cards
+            .hole_cards
+            .insert(player_id, hand.cards().iter().copied().collect());
     }
 
     pub fn player_hand(&self, player_id: &PlayerId) -> Option<Hand<HandSize>> {
@@ -210,7 +216,11 @@ impl<const HandSize: usize> HandState<HandSize> {
     }
 
     pub fn push_player_up_card(&mut self, player_id: PlayerId, card: Card) {
-        self.visible_cards.up_cards.entry(player_id).or_default().push(card);
+        self.visible_cards
+            .up_cards
+            .entry(player_id)
+            .or_default()
+            .push(card);
     }
 
     pub fn visible_cards(&self) -> &VisibleHandCards {
@@ -283,7 +293,7 @@ mod tests {
             HandStep::DrawPhase,
             HandStep::BettingRound2,
             HandStep::Showdown,
-            HandStep::Payout
+            HandStep::Payout,
         ];
         let mut fsm = PokerStateMachine::new(plan);
 

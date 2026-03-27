@@ -6,15 +6,19 @@ use common::{
         AccountCmd, ActionCmd, AllowedAction, Command, Event, HandStep, LobbyCmd, PlayerId,
         PlayerSummary, ShowdownLine,
     },
+    wire::ActionPrompt,
 };
 use rand::{SeedableRng, rngs::StdRng};
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
+use std::sync::{Arc, Mutex, MutexGuard};
 
 use crate::{
-    account_store::AccountStore,
+    account_store::{AccountError, AccountStore},
+    accounts::Account,
     game_states::BettingRoundState,
-    table::PokerTable, variants,
+    table::PokerTable,
+    variants,
 };
 
 mod action_ops;
@@ -29,8 +33,10 @@ mod showdown;
 #[cfg(test)]
 mod tests;
 
-pub struct ServerEngine {
-    pub accounts: AccountStore,
+pub type SharedAccountStore = Arc<Mutex<AccountStore>>;
+
+pub struct GameEngine {
+    pub accounts: SharedAccountStore,
     pub table: PokerTable,
     pub deck: Deck,
     rng_seed: Option<u64>,
@@ -52,14 +58,90 @@ struct StudVisibleRank {
     tiebreakers: [u8; 4],
 }
 
-impl ServerEngine {
-    pub fn new(accounts: AccountStore, table: PokerTable) -> Self {
+impl GameEngine {
+    pub fn new(accounts: SharedAccountStore, table: PokerTable) -> Self {
         Self {
             accounts,
             table,
             deck: Deck::new_shuffled(),
             rng_seed: None,
             sit_out_next: HashSet::new(),
+        }
+    }
+
+    fn lock_accounts(&self) -> MutexGuard<'_, AccountStore> {
+        self.accounts.lock().expect("account store lock poisoned")
+    }
+
+    fn with_accounts<R>(&self, f: impl FnOnce(&AccountStore) -> R) -> R {
+        let accounts = self.lock_accounts();
+        f(&accounts)
+    }
+
+    fn with_accounts_mut<R>(&self, f: impl FnOnce(&mut AccountStore) -> R) -> R {
+        let mut accounts = self.lock_accounts();
+        f(&mut accounts)
+    }
+
+    fn list_accounts(&self) -> Vec<Account> {
+        self.with_accounts(|accounts| accounts.list_accounts().to_vec())
+    }
+
+    fn account_by_name(&self, player_name: &str) -> Result<Account, AccountError> {
+        self.with_accounts(|accounts| accounts.get_by_name(player_name).cloned())
+    }
+
+    fn account_by_id(&self, player_id: PlayerId) -> Result<Account, AccountError> {
+        self.with_accounts(|accounts| accounts.get_by_id(player_id).cloned())
+    }
+
+    fn account_name(&self, player_id: PlayerId) -> String {
+        self.with_accounts(|accounts| accounts.name_from_id(player_id))
+            .unwrap_or("Unknown".into())
+    }
+
+    pub fn action_prompt_for_player(&self, player_id: PlayerId) -> Option<ActionPrompt> {
+        match self.table.current_step() {
+            HandStep::BettingRound1
+            | HandStep::BettingRound2
+            | HandStep::BettingRound3
+            | HandStep::BettingRound4
+            | HandStep::BettingRound5 => {
+                let current_player = self.table.hand_state().betting()?.current_player();
+                if current_player != player_id {
+                    return None;
+                }
+
+                let player_name = self.account_name(player_id);
+                match self.action_requested_event_for(player_id, &player_name) {
+                    Event::ActionRequested {
+                        allowed,
+                        call_amount,
+                        min_raise,
+                        ..
+                    } => Some(ActionPrompt {
+                        allowed_actions: allowed,
+                        call_amount,
+                        min_raise,
+                        max_discards: None,
+                    }),
+                    _ => None,
+                }
+            }
+            HandStep::DrawPhase => {
+                let current_player = self.table.hand_state().draw()?.current_player();
+                if current_player != player_id {
+                    return None;
+                }
+
+                Some(ActionPrompt {
+                    allowed_actions: vec![AllowedAction::Draw],
+                    call_amount: None,
+                    min_raise: None,
+                    max_discards: Some(five_card_draw::MAX_DISCARDS),
+                })
+            }
+            _ => None,
         }
     }
 
@@ -125,8 +207,8 @@ impl ServerEngine {
 
     fn stud_raise_by_amount(&self, current_bet: u32) -> Option<u32> {
         let opening_bet = self.stud_opening_bet_size()?;
-        if self.current_stud_street() == Some(StudStreet::Third) &&
-            current_bet == seven_card_stud::BRING_IN_AMOUNT
+        if self.current_stud_street() == Some(StudStreet::Third)
+            && current_bet == seven_card_stud::BRING_IN_AMOUNT
         {
             return Some(opening_bet.saturating_sub(seven_card_stud::BRING_IN_AMOUNT));
         }
@@ -162,7 +244,8 @@ impl ServerEngine {
             *counts.entry(card.rank() as u8).or_insert(0) += 1;
         }
 
-        let mut groups: Vec<(u8, u8)> = counts.iter().map(|(&rank, &count)| (count, rank)).collect();
+        let mut groups: Vec<(u8, u8)> =
+            counts.iter().map(|(&rank, &count)| (count, rank)).collect();
         groups.sort_unstable_by(|a, b| b.cmp(a));
 
         let singles_desc = |skip_ranks: &[u8]| -> Vec<u8> {
@@ -198,7 +281,10 @@ impl ServerEngine {
         if groups.len() >= 2 && groups[0].0 == 2 && groups[1].0 == 2 {
             let high_pair = groups[0].1.max(groups[1].1);
             let low_pair = groups[0].1.min(groups[1].1);
-            let kicker = singles_desc(&[high_pair, low_pair]).into_iter().next().unwrap_or(0);
+            let kicker = singles_desc(&[high_pair, low_pair])
+                .into_iter()
+                .next()
+                .unwrap_or(0);
             return StudVisibleRank {
                 category: 2,
                 tiebreakers: [high_pair, low_pair, kicker, 0],
@@ -242,7 +328,7 @@ impl ServerEngine {
     }
 
     pub fn lobby_state_event(&self) -> Event {
-        let accounts = self.accounts.list_accounts();
+        let accounts = self.list_accounts();
         let mut account_by_id = HashMap::with_capacity(accounts.len());
         for acct in accounts {
             account_by_id.insert(acct.id, acct);
@@ -294,8 +380,8 @@ impl ServerEngine {
         } else {
             lines.push("Seated players:".into());
             for (seat, pid) in seated {
-                let name = self.accounts.name_from_id(pid).unwrap_or("Unknown".into());
-                let balance = self.accounts.get_by_id(pid).map(|a| a.balance).unwrap_or(0);
+                let name = self.account_name(pid);
+                let balance = self.account_by_id(pid).map(|a| a.balance).unwrap_or(0);
                 let in_hand = self.table.hand_state().player_hole_cards(&pid).is_some();
                 let folded = self.table.hand_state().has_player_folded(&pid);
 
@@ -324,7 +410,8 @@ impl ServerEngine {
         }
 
         if self.is_holdem_variant() && !self.table.hand_state().board_cards().is_empty() {
-            let board = self.table
+            let board = self
+                .table
                 .hand_state()
                 .board_cards()
                 .iter()
@@ -338,7 +425,7 @@ impl ServerEngine {
             for (_seat, pid) in self.table.seated_players() {
                 if let Some(up_cards) = self.table.hand_state().player_up_cards(&pid) {
                     if !up_cards.is_empty() {
-                        let name = self.accounts.name_from_id(pid).unwrap_or("Unknown".into());
+                        let name = self.account_name(pid);
                         let cards = up_cards
                             .iter()
                             .map(|card| card.to_string())
@@ -363,7 +450,7 @@ impl ServerEngine {
             | HandStep::BettingRound5 => {
                 if let Some(br) = self.table.hand_state().betting() {
                     let pid = br.current_player();
-                    let pname = self.accounts.name_from_id(pid).unwrap_or("Unknown".into());
+                    let pname = self.account_name(pid);
                     if let Event::ActionRequested {
                         allowed,
                         call_amount,
@@ -401,7 +488,7 @@ impl ServerEngine {
             HandStep::DrawPhase => {
                 if let Some(dr) = self.table.hand_state().draw() {
                     let pid = dr.current_player();
-                    let pname = self.accounts.name_from_id(pid).unwrap_or("Unknown".into());
+                    let pname = self.account_name(pid);
                     lines.push(format!(
                         "To draw: {} | max_discards: {}",
                         pname,
@@ -427,28 +514,28 @@ impl ServerEngine {
 
     pub fn apply_account_cmd(&mut self, cmd: AccountCmd) -> Vec<Event> {
         match cmd {
-            AccountCmd::Create { name, pin, amount } => {
-                match self.accounts.create_account(&name, &pin, amount) {
-                    Ok(_) => vec![Event::Ok],
-                    Err(e) => vec![Event::Error {
-                        message: format!("Account creation failed: {:?}", e),
-                    }],
-                }
-            }
+            AccountCmd::Create { name, pin, amount } => match self
+                .with_accounts_mut(|accounts| accounts.create_account(&name, &pin, amount))
+            {
+                Ok(_) => vec![Event::Ok],
+                Err(e) => vec![Event::Error {
+                    message: format!("Account creation failed: {:?}", e),
+                }],
+            },
 
-            AccountCmd::Delete { player_name, pin } => {
-                match self.accounts.delete_account(&player_name, &pin) {
-                    Ok(_) => vec![Event::Ok],
-                    Err(e) => vec![Event::Error {
-                        message: format!("Account deletion failed: {:?}", e),
-                    }],
-                }
-            }
+            AccountCmd::Delete { player_name, pin } => match self
+                .with_accounts_mut(|accounts| accounts.delete_account(&player_name, &pin))
+            {
+                Ok(_) => vec![Event::Ok],
+                Err(e) => vec![Event::Error {
+                    message: format!("Account deletion failed: {:?}", e),
+                }],
+            },
 
             AccountCmd::Deposit {
                 player_name,
                 amount,
-            } => match self.accounts.deposit(&player_name, amount) {
+            } => match self.with_accounts_mut(|accounts| accounts.deposit(&player_name, amount)) {
                 Ok(_) => vec![Event::Ok],
                 Err(e) => vec![Event::Error {
                     message: format!("Deposit failed: {:?}", e),
@@ -458,14 +545,14 @@ impl ServerEngine {
             AccountCmd::Withdraw {
                 player_name,
                 amount,
-            } => match self.accounts.withdraw(&player_name, amount) {
+            } => match self.with_accounts_mut(|accounts| accounts.withdraw(&player_name, amount)) {
                 Ok(_) => vec![Event::Ok],
                 Err(e) => vec![Event::Error {
                     message: format!("Withdraw failed: {:?}", e),
                 }],
             },
 
-            AccountCmd::Get { player_name } => match self.accounts.get_by_name(&player_name) {
+            AccountCmd::Get { player_name } => match self.account_by_name(&player_name) {
                 Ok(acct) => {
                     let summary = acct.summary();
                     vec![Event::Info {
@@ -480,17 +567,17 @@ impl ServerEngine {
     }
 
     pub fn has_enough_to_start_hand(&self, player_id: PlayerId) -> bool {
-        match self.accounts.get_by_id(player_id) {
+        match self.account_by_id(player_id) {
             Ok(acct) => match self.table.variant_spec() {
                 spec if spec == variants::seven_card_stud::SPEC => {
-                    acct.balance >= 
-                        (seven_card_stud::ANTE_AMOUNT + seven_card_stud::BRING_IN_AMOUNT) as i64
+                    acct.balance
+                        >= (seven_card_stud::ANTE_AMOUNT + seven_card_stud::BRING_IN_AMOUNT) as i64
                 }
                 _ => match self.variant_ante_amount() {
                     Some(amount) => acct.balance >= amount as i64,
                     None => true,
-                }
-            }
+                },
+            },
             Err(_) => false,
         }
     }

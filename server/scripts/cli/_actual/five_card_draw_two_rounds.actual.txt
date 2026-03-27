@@ -1,0 +1,83 @@
+PokerDUD CLI. Type 'help' or 'help <command>' for details.
+> ok
+> ok
+> joined: simfcd_a_20260222 (ID: 1) at seat 0
+seated players:
+  seat 0: name simfcd_a_20260222 | bal 1000 | GP 0 | PW 0 | F 0
+> joined: simfcd_b_20260222 (ID: 2) at seat 1
+seated players:
+  seat 0: name simfcd_a_20260222 | bal 1000 | GP 0 | PW 0 | F 0
+  seat 1: name simfcd_b_20260222 | bal 1000 | GP 0 | PW 0 | F 0
+> info: Set poker variant to FiveCardDraw (active: Five Card Draw)
+> > info: RNG seed set to 1101
+> step: CollectForcedBets
+pot: 10
+step: DealPrivate
+hand(simfcd_b_20260222): ["4♦", "4♥", "4♠", "3♦", "10♦"]
+hand(simfcd_a_20260222): ["J♥", "5♣", "6♥", "8♥", "J♦"]
+step: BettingRound1
+action requested for simfcd_b_20260222: allowed=[Check, Bet, Fold] call=Some(0) min_raise=Some(5)
+> pot: 10
+action requested for simfcd_a_20260222: allowed=[Check, Bet, Fold] call=Some(0) min_raise=Some(5)
+> pot: 10
+step: DrawPhase
+draw requested for simfcd_b_20260222: max_discards=4
+> hand(simfcd_b_20260222): ["4♦", "4♥", "4♠", "3♦", "10♦"]
+draw requested for simfcd_a_20260222: max_discards=4
+> hand(simfcd_a_20260222): ["J♥", "5♣", "6♥", "8♥", "J♦"]
+step: BettingRound2
+action requested for simfcd_b_20260222: allowed=[Check, Bet, Fold] call=Some(0) min_raise=Some(5)
+> pot: 10
+action requested for simfcd_a_20260222: allowed=[Check, Bet, Fold] call=Some(0) min_raise=Some(5)
+> pot: 10
+step: Showdown
+showdown:
+  simfcd_a_20260222 -> Hand[J♥, 5♣, 6♥, 8♥, J♦] => OnePair [11, 8, 6, 5, 0]
+  simfcd_b_20260222 -> Hand[4♦, 4♥, 4♠, 3♦, 10♦] => ThreeOfAKind [4, 10, 3, 0, 0]
+step: Payout
+payout:
+  simfcd_b_20260222 +10
+pot: 0
+step: WaitingForPlayers
+> > info: RNG seed set to 1102
+> step: CollectForcedBets
+pot: 10
+step: DealPrivate
+hand(simfcd_a_20260222): ["K♠", "6♠", "7♦", "8♠", "J♠"]
+hand(simfcd_b_20260222): ["5♣", "6♣", "Q♥", "10♥", "K♦"]
+step: BettingRound1
+action requested for simfcd_a_20260222: allowed=[Check, Bet, Fold] call=Some(0) min_raise=Some(5)
+> pot: 10
+action requested for simfcd_b_20260222: allowed=[Check, Bet, Fold] call=Some(0) min_raise=Some(5)
+> pot: 10
+step: DrawPhase
+draw requested for simfcd_a_20260222: max_discards=4
+> hand(simfcd_a_20260222): ["K♠", "6♠", "7♦", "8♠", "J♠"]
+draw requested for simfcd_b_20260222: max_discards=4
+> hand(simfcd_b_20260222): ["5♣", "6♣", "Q♥", "10♥", "K♦"]
+step: BettingRound2
+action requested for simfcd_a_20260222: allowed=[Check, Bet, Fold] call=Some(0) min_raise=Some(5)
+> pot: 10
+action requested for simfcd_b_20260222: allowed=[Check, Bet, Fold] call=Some(0) min_raise=Some(5)
+> pot: 10
+step: Showdown
+showdown:
+  simfcd_a_20260222 -> Hand[K♠, 6♠, 7♦, 8♠, J♠] => HighCard [13, 11, 8, 7, 6]
+  simfcd_b_20260222 -> Hand[5♣, 6♣, Q♥, 10♥, K♦] => HighCard [13, 12, 10, 6, 5]
+step: Payout
+payout:
+  simfcd_a_20260222 +5
+  simfcd_b_20260222 +5
+pot: 0
+step: WaitingForPlayers
+> > seated players:
+  seat 0: name simfcd_a_20260222 | bal 995 | GP 2 | PW 1 | F 0
+  seat 1: name simfcd_b_20260222 | bal 1005 | GP 2 | PW 2 | F 0
+> left: simfcd_a_20260222 (ID: 1)
+seated players:
+  seat 1: name simfcd_b_20260222 | bal 1005 | GP 2 | PW 2 | F 0
+> left: simfcd_b_20260222 (ID: 2)
+seated players:
+> ok
+> ok
+> Bye.

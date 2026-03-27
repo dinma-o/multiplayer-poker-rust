@@ -1,11 +1,12 @@
 use super::*;
 
-impl ServerEngine {
+impl GameEngine {
     pub fn apply_draw_action(&mut self, cmd: ActionCmd) -> Vec<Event> {
         let mut events = Vec::new();
 
         // Check that we are in a draw phase/step
-        if let Err(events) = self.require_step_with_message(HandStep::DrawPhase, "Not in draw phase")
+        if let Err(events) =
+            self.require_step_with_message(HandStep::DrawPhase, "Not in draw phase")
         {
             return events;
         }
@@ -95,6 +96,4 @@ impl ServerEngine {
 
         events
     }
-
 }
-

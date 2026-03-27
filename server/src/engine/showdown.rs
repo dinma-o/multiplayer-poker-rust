@@ -1,6 +1,6 @@
 use super::*;
 
-impl ServerEngine {
+impl GameEngine {
     pub(super) fn do_showdown(&mut self) -> Vec<Event> {
         // Active players = players who still have hands and did not fold
         let active: Vec<PlayerId> = self
@@ -39,7 +39,7 @@ impl ServerEngine {
                 }
             };
 
-            let pname = self.accounts.name_from_id(*pid).unwrap_or("Unknown".into());
+            let pname = self.account_name(*pid);
             lines.push(ShowdownLine {
                 player_id: *pid,
                 player_name: pname,
@@ -55,7 +55,10 @@ impl ServerEngine {
         vec![Event::Showdown { results: lines }]
     }
 
-    pub(super) fn rank_player_for_current_variant(&self, pid: PlayerId) -> Option<hand_rank::HandRank> {
+    pub(super) fn rank_player_for_current_variant(
+        &self,
+        pid: PlayerId,
+    ) -> Option<hand_rank::HandRank> {
         if self.is_holdem_variant() {
             let seven = self.holdem_seven_cards_for_player(pid)?;
             return Some(hand_rank::best_hand_from_seven_cards(&seven));
@@ -113,11 +116,10 @@ impl ServerEngine {
 
         let all_text = cards.iter().map(|c| c.to_string()).collect::<Vec<_>>();
         let up_text = up_cards.iter().map(|c| c.to_string()).collect::<Vec<_>>();
-        
+
         Some(format!(
             "cards={:?} up={:?} => {:?}",
             all_text, up_text, rank.category
         ))
     }
 }
-
