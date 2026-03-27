@@ -46,12 +46,6 @@ impl TcpClient {
         let request_id = format!("req-{}", self.next_request_id);
         self.next_request_id = self.next_request_id.saturating_add(1);
 
-        let (reply_tx, reply_rx) = mpsc::channel();
-        self.pending
-            .lock()
-            .expect("pending request map lock poisoned")
-            .insert(request_id.clone(), reply_tx);
-
         let request = ClientRequest {
             request_id: request_id.clone(),
             session_id: self.session_id(),
@@ -59,6 +53,12 @@ impl TcpClient {
         };
 
         let json = serde_json::to_string(&request).map_err(io::Error::other)?;
+
+        let (reply_tx, reply_rx) = mpsc::channel();
+        self.pending
+            .lock()
+            .expect("pending request map lock poisoned")
+            .insert(request_id.clone(), reply_tx);
         if let Err(error) = self.writer.write_all(json.as_bytes()) {
             self.pending
                 .lock()
