@@ -8,14 +8,19 @@ pub struct Session {
     pub session_id: SessionId,
     pub account_id: u64,
     pub player_name: String,
-    // Temporary bridge for reusing the current engine join flow.
-    pub pin: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct SessionCreation {
+    pub session: Session,
+    pub replaced_session_id: Option<SessionId>,
 }
 
 #[derive(Debug, Default)]
 pub struct SessionStore {
     next_id: u64,
     sessions: HashMap<SessionId, Session>,
+    session_by_account: HashMap<u64, SessionId>,
 }
 
 impl SessionStore {
@@ -23,10 +28,16 @@ impl SessionStore {
         Self {
             next_id: 1,
             sessions: HashMap::new(),
+            session_by_account: HashMap::new(),
         }
     }
 
-    pub fn create_session(&mut self, account: &Account, pin: &str) -> Session {
+    pub fn create_session(&mut self, account: &Account) -> SessionCreation {
+        let replaced_session_id = self.session_by_account.remove(&account.id);
+        if let Some(previous_session_id) = &replaced_session_id {
+            self.sessions.remove(previous_session_id);
+        }
+
         let session_id = format!("session-{}-{}", account.id, self.next_id);
         self.next_id = self.next_id.saturating_add(1);
 
@@ -34,13 +45,68 @@ impl SessionStore {
             session_id: session_id.clone(),
             account_id: account.id,
             player_name: account.name.clone(),
-            pin: pin.to_string(),
         };
         self.sessions.insert(session_id, session.clone());
-        session
+        self.session_by_account
+            .insert(account.id, session.session_id.clone());
+        SessionCreation {
+            session,
+            replaced_session_id,
+        }
     }
 
     pub fn get(&self, session_id: &str) -> Option<&Session> {
         self.sessions.get(session_id)
+    }
+
+    pub fn remove(&mut self, session_id: &str) -> Option<Session> {
+        let session = self.sessions.remove(session_id)?;
+        if self.session_by_account.get(&session.account_id) == Some(&session.session_id) {
+            self.session_by_account.remove(&session.account_id);
+        }
+        Some(session)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn create_session_replaces_existing_session_for_same_account() {
+        let account = Account::new(7, "alice", "1234", 500);
+        let mut store = SessionStore::new();
+
+        let first = store.create_session(&account).session;
+        let second_creation = store.create_session(&account);
+        let second = second_creation.session;
+
+        assert_ne!(first.session_id, second.session_id);
+        assert_eq!(
+            second_creation.replaced_session_id.as_deref(),
+            Some(first.session_id.as_str())
+        );
+        assert!(store.get(&first.session_id).is_none());
+        assert_eq!(
+            store
+                .get(&second.session_id)
+                .map(|session| session.account_id),
+            Some(account.id)
+        );
+    }
+
+    #[test]
+    fn remove_deletes_session_and_reverse_lookup() {
+        let account = Account::new(8, "bob", "9999", 250);
+        let mut store = SessionStore::new();
+        let session = store.create_session(&account).session;
+
+        let removed = store.remove(&session.session_id).expect("remove session");
+        assert_eq!(removed.account_id, account.id);
+        assert!(store.get(&session.session_id).is_none());
+
+        let replacement = store.create_session(&account).session;
+        assert_ne!(replacement.session_id, session.session_id);
+        assert!(store.get(&replacement.session_id).is_some());
     }
 }

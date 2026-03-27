@@ -77,6 +77,7 @@ Currently defined request operation types:
 
 - `create_account`
 - `login`
+- `logout`
 - `deposit`
 - `withdraw`
 - `list_tables`
@@ -93,6 +94,7 @@ Currently defined request operation types:
 
 Operations that should be treated as authenticated:
 
+- `logout`
 - `deposit`
 - `withdraw`
 - `create_table`
@@ -142,6 +144,15 @@ Used by account creation, deposit, and withdraw.
     "pots_won": 0,
     "folds": 0
   }
+}
+```
+
+### Logout
+
+```json
+{
+  "type": "logout",
+  "session_id": "session-1-1"
 }
 ```
 

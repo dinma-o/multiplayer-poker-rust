@@ -24,6 +24,14 @@ impl GameEngine {
         }
     }
 
+    pub fn join_authenticated_player(
+        &mut self,
+        player_id: PlayerId,
+        player_name: String,
+    ) -> Vec<Event> {
+        self.lobby_join_authenticated(player_id, player_name)
+    }
+
     fn lobby_set_variant(&mut self, variant: common::protocol::PokerVariant) -> Vec<Event> {
         if let Err(events) = self.require_step_with_message(
             HandStep::WaitingForPlayers,
@@ -121,18 +129,28 @@ impl GameEngine {
         }
 
         match self.with_accounts(|accounts| accounts.login(&player_name, &pin)) {
-            Ok(pa) => match self.table.join_table(pa.id) {
-                Ok(seat) => vec![
-                    Event::PlayerJoined {
-                        player_id: pa.id,
-                        player_name: pa.name.clone(),
-                        seat: seat,
-                    },
-                    self.emit_lobby_state(),
-                ],
-                Err(e) => vec![self.emit_error(format!("Seating failed: {:?}", e))],
-            },
+            Ok(pa) => self.lobby_join_authenticated(pa.id, pa.name.clone()),
             Err(e) => vec![self.emit_error(format!("Login failed: {:?}", e))],
+        }
+    }
+
+    fn lobby_join_authenticated(&mut self, player_id: PlayerId, player_name: String) -> Vec<Event> {
+        if let Err(events) = self
+            .require_step_with_message(HandStep::WaitingForPlayers, "Cannot join table during hand")
+        {
+            return events;
+        }
+
+        match self.table.join_table(player_id) {
+            Ok(seat) => vec![
+                Event::PlayerJoined {
+                    player_id,
+                    player_name,
+                    seat,
+                },
+                self.emit_lobby_state(),
+            ],
+            Err(e) => vec![self.emit_error(format!("Seating failed: {:?}", e))],
         }
     }
 

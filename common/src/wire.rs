@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     card_deck::Card,
-    protocol::{AllowedAction, Chips, HandStep, PlayerId, PokerVariant},
+    protocol::{AllowedAction, Chips, HandStep, PayoutLine, PlayerId, PokerVariant, ShowdownLine},
 };
 
 pub type SessionId = String;
@@ -46,6 +46,36 @@ impl ServerResponse {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "type", rename_all = "snake_case")]
+pub enum ServerMessage {
+    Response { response: ServerResponse },
+    TableUpdate(TableUpdateMessage),
+    SessionClosed(SessionClosedMessage),
+}
+
+impl ServerMessage {
+    pub fn response(response: ServerResponse) -> Self {
+        Self::Response { response }
+    }
+
+    pub fn table_update(update: TableUpdateMessage) -> Self {
+        Self::TableUpdate(update)
+    }
+
+    pub fn session_closed(
+        session_id: impl Into<SessionId>,
+        reason: SessionCloseReason,
+        message: impl Into<String>,
+    ) -> Self {
+        Self::SessionClosed(SessionClosedMessage {
+            session_id: session_id.into(),
+            reason,
+            message: message.into(),
+        })
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "type", rename_all = "snake_case")]
 pub enum RequestOp {
     CreateAccount {
         name: String,
@@ -56,6 +86,7 @@ pub enum RequestOp {
         name: String,
         pin: String,
     },
+    Logout,
     Deposit {
         amount: Chips,
     },
@@ -88,6 +119,12 @@ pub enum RequestOp {
     GetHistory {
         table_id: TableId,
     },
+    SubscribeTable {
+        table_id: TableId,
+    },
+    UnsubscribeTable {
+        table_id: TableId,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -95,6 +132,7 @@ pub enum RequestOp {
 pub enum ResponsePayload {
     Account(AccountProfile),
     Login(LoginResult),
+    Logout(LogoutResult),
     Tables(TableList),
     Table(TableSummary),
     JoinTable(JoinTableResult),
@@ -103,6 +141,7 @@ pub enum ResponsePayload {
     TableState(PublicTableState),
     PlayerView(PlayerView),
     History(TableHistory),
+    Subscription(SubscriptionResult),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -147,6 +186,11 @@ pub struct AccountProfile {
 pub struct LoginResult {
     pub session_id: SessionId,
     pub account: AccountProfile,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct LogoutResult {
+    pub session_id: SessionId,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -215,6 +259,7 @@ pub struct PublicSeatState {
     pub player_id: PlayerId,
     pub player_name: String,
     pub balance: Chips,
+    pub is_connected: bool,
     pub is_in_hand: bool,
     pub has_folded: bool,
     pub hidden_card_count: usize,
@@ -259,10 +304,20 @@ pub struct TableHistory {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TableUpdateMessage {
+    pub table_id: TableId,
+    pub table_state: PublicTableState,
+    pub player_view: Option<PlayerView>,
+    pub events: Vec<HistoryEntry>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct HistoryEntry {
     pub index: u64,
     pub kind: HistoryKind,
     pub message: String,
+    pub showdown_results: Option<Vec<ShowdownLine>>,
+    pub payout_results: Option<Vec<PayoutLine>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -278,6 +333,26 @@ pub enum HistoryKind {
     DrawPrompt,
     Showdown,
     Payout,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SubscriptionResult {
+    pub table_id: TableId,
+    pub subscribed: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SessionClosedMessage {
+    pub session_id: SessionId,
+    pub reason: SessionCloseReason,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SessionCloseReason {
+    LoggedOut,
+    ReplacedByLogin,
 }
 
 #[cfg(test)]
@@ -317,6 +392,7 @@ mod tests {
                 player_id: 3,
                 player_name: "alice".into(),
                 balance: 980,
+                is_connected: true,
                 is_in_hand: true,
                 has_folded: false,
                 hidden_card_count: 2,
@@ -328,5 +404,145 @@ mod tests {
         let json = serde_json::to_string(&resp).expect("serialize response");
         let decoded: ServerResponse = serde_json::from_str(&json).expect("deserialize response");
         assert_eq!(decoded, resp);
+    }
+
+    #[test]
+    fn server_message_round_trip_json() {
+        let update = TableUpdateMessage {
+            table_id: 1,
+            table_state: PublicTableState {
+                table_id: 1,
+                variant: PokerVariant::FiveCardDraw,
+                step: HandStep::BettingRound1,
+                dealer_seat: 0,
+                acting_player_id: Some(7),
+                pot: 15,
+                current_bet: 5,
+                board_cards: vec![],
+                seats: vec![PublicSeatState {
+                    seat: 0,
+                    player_id: 7,
+                    player_name: "alice".into(),
+                    balance: 495,
+                    is_connected: true,
+                    is_in_hand: true,
+                    has_folded: false,
+                    hidden_card_count: 5,
+                    up_cards: vec![],
+                }],
+            },
+            player_view: Some(PlayerView {
+                table_id: 1,
+                player_id: 7,
+                player_name: "alice".into(),
+                seat: Some(0),
+                private_cards: vec![Card::new(Rank::King, Suit::Hearts)],
+                up_cards: vec![],
+                board_cards: vec![],
+                action_prompt: None,
+            }),
+            events: vec![
+                HistoryEntry {
+                    index: 2,
+                    kind: HistoryKind::ActionPrompt,
+                    message: "action requested for alice".into(),
+                    showdown_results: None,
+                    payout_results: None,
+                },
+                HistoryEntry {
+                    index: 3,
+                    kind: HistoryKind::Showdown,
+                    message: "showdown: 1 result(s)".into(),
+                    showdown_results: Some(vec![ShowdownLine {
+                        player_name: "alice".into(),
+                        player_id: 7,
+                        hand_desc: "K♥ => Pair".into(),
+                    }]),
+                    payout_results: None,
+                },
+            ],
+        };
+
+        let msg = ServerMessage::table_update(update);
+        let json = serde_json::to_string(&msg).expect("serialize message");
+        let decoded: ServerMessage = serde_json::from_str(&json).expect("deserialize message");
+        assert_eq!(decoded, msg);
+    }
+
+    #[test]
+    fn subscription_result_round_trip_json() {
+        let payload = ResponsePayload::Subscription(SubscriptionResult {
+            table_id: 3,
+            subscribed: true,
+        });
+
+        let json = serde_json::to_string(&payload).expect("serialize payload");
+        let decoded: ResponsePayload = serde_json::from_str(&json).expect("deserialize payload");
+        assert_eq!(decoded, payload);
+    }
+
+    #[test]
+    fn session_closed_message_round_trip_json() {
+        let msg = ServerMessage::session_closed(
+            "session-9",
+            SessionCloseReason::ReplacedByLogin,
+            "session replaced",
+        );
+
+        let json = serde_json::to_string(&msg).expect("serialize message");
+        let decoded: ServerMessage = serde_json::from_str(&json).expect("deserialize message");
+        assert_eq!(decoded, msg);
+    }
+
+    #[test]
+    fn history_entry_with_showdown_results_round_trip_json() {
+        let entry = HistoryEntry {
+            index: 8,
+            kind: HistoryKind::Showdown,
+            message: "showdown: 2 result(s)".into(),
+            showdown_results: Some(vec![
+                ShowdownLine {
+                    player_name: "alice".into(),
+                    player_id: 7,
+                    hand_desc: "A♠ K♠ => Flush".into(),
+                },
+                ShowdownLine {
+                    player_name: "bob".into(),
+                    player_id: 8,
+                    hand_desc: "K♥ K♦ => Pair".into(),
+                },
+            ]),
+            payout_results: None,
+        };
+
+        let json = serde_json::to_string(&entry).expect("serialize history entry");
+        let decoded: HistoryEntry = serde_json::from_str(&json).expect("deserialize history entry");
+        assert_eq!(decoded, entry);
+    }
+
+    #[test]
+    fn history_entry_with_payout_results_round_trip_json() {
+        let entry = HistoryEntry {
+            index: 9,
+            kind: HistoryKind::Payout,
+            message: "payout: 2 winner(s)".into(),
+            showdown_results: None,
+            payout_results: Some(vec![
+                PayoutLine {
+                    player_name: "alice".into(),
+                    player_id: 7,
+                    amount: 60,
+                },
+                PayoutLine {
+                    player_name: "bob".into(),
+                    player_id: 8,
+                    amount: 40,
+                },
+            ]),
+        };
+
+        let json = serde_json::to_string(&entry).expect("serialize history entry");
+        let decoded: HistoryEntry = serde_json::from_str(&json).expect("deserialize history entry");
+        assert_eq!(decoded, entry);
     }
 }

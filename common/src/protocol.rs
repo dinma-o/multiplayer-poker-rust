@@ -161,7 +161,7 @@ pub enum Event {
     },
 
     Payout {
-        winners: Vec<(String, Chips)>,
+        winners: Vec<PayoutLine>,
     },
 }
 
@@ -187,9 +187,16 @@ pub enum AllowedAction {
     Draw,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ShowdownLine {
     pub player_name: String,
     pub player_id: PlayerId,
     pub hand_desc: String, // keep string for now; we will add structured later
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PayoutLine {
+    pub player_name: String,
+    pub player_id: PlayerId,
+    pub amount: Chips,
 }
