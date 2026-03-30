@@ -7,16 +7,8 @@ fn main() {
     let mut args: Vec<String> = env::args().skip(1).collect();
 
     if args.iter().any(|a| a == "--gui") {
-        #[cfg(feature = "gui")]
-        {
-            poker_gui::gui::run();
-            return;
-        }
-        #[cfg(not(feature = "gui"))]
-        {
-            eprintln!("error: binary was not compiled with the 'gui' feature");
-            std::process::exit(1);
-        }
+        poker_gui::gui::run();
+        return;
     }
 
     args.retain(|a| a != "--gui");
