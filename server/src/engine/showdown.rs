@@ -1,4 +1,5 @@
 use super::*;
+use common::hand::Hand;
 
 impl GameEngine {
     pub(super) fn do_showdown(&mut self) -> Vec<Event> {
@@ -34,8 +35,8 @@ impl GameEngine {
                     .unwrap_or_else(|| format!("best={:?}", r.category))
             } else {
                 match self.table.hand_state().player_hand(pid) {
-                    Some(hand) => format!("{} => {:?} {:?}", hand, r.category, r.tiebreakers),
-                    None => format!("{:?} {:?}", r.category, r.tiebreakers),
+                    Some(hand) => format!("{} -> {:?}", self.format_cards(&hand), r.category),
+                    None => format!("{:?}", r.category),
                 }
             };
 
@@ -53,6 +54,11 @@ impl GameEngine {
         }
 
         vec![Event::Showdown { results: lines }]
+    }
+
+    fn format_cards(&self, hand: &Hand<5>) -> String {
+        let card_strs: Vec<String> = hand.cards().iter().map(|c| c.to_string()).collect();
+        card_strs.join(", ")
     }
 
     pub(super) fn rank_player_for_current_variant(
