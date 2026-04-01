@@ -13,15 +13,15 @@ pub fn run() {
 }
 
 #[cfg(debug_assertions)]
-pub fn run_preview(name: &str) -> Result<(), String> {
-    let scene = dev_preview::PreviewScene::parse(name)?;
+pub fn run_preview(name: &str, variant: Option<&str>) -> Result<(), String> {
+    let scene = dev_preview::PreviewScene::parse(name, variant)?;
     let title = format!("PokerDUD Preview - {}", scene.label());
     run_app(&title, dev_preview::build_preview_app(scene));
     Ok(())
 }
 
 #[cfg(not(debug_assertions))]
-pub fn run_preview(_name: &str) -> Result<(), String> {
+pub fn run_preview(_name: &str, _variant: Option<&str>) -> Result<(), String> {
     Err("GUI preview mode is only available in debug builds.".to_string())
 }
 

@@ -151,7 +151,7 @@ fn show_action_card(
         .corner_radius(18.0)
         .inner_margin(egui::Margin::same(12))
         .show(ui, |ui| {
-            ui.set_min_size(egui::vec2(150.0, 72.0));
+            ui.set_max_size(egui::vec2(100.0, 48.0));
             ui.vertical(|ui| {
                 ui.label(egui::RichText::new(label).color(title_color).strong());
                 ui.label(egui::RichText::new(subtitle).small().color(body_color));

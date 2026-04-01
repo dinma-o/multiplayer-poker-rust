@@ -52,6 +52,7 @@ pub fn show_seat(
         .show(ui, |ui| {
             ui.set_width(SEAT_WIDTH);
             ui.set_max_width(SEAT_WIDTH);
+            ui.set_max_height(75.0);
 
             ui.vertical(|ui| {
                 ui.horizontal_wrapped(|ui| {
@@ -69,38 +70,39 @@ pub fn show_seat(
                 });
                 ui.label(theme::small_muted(format!("{} chips", seat.balance)));
                 ui.label(theme::small_muted(status));
+
+                if seat.has_folded {
+                    return;
+                }
+
+                if seat.hidden_card_count > 0 || !seat.up_cards.is_empty() {
+                    ui.add_space(6.0);
+                    let up_to_show = seat.up_cards.len().min(2);
+                    let hidden_limit = if up_to_show > 0 { 1 } else { 2 };
+                    let hidden_to_show = seat.hidden_card_count.min(hidden_limit);
+                    let remaining_up = seat.up_cards.len().saturating_sub(up_to_show);
+                    let remaining_hidden = seat.hidden_card_count.saturating_sub(hidden_to_show);
+                    let remaining_cards = remaining_hidden + remaining_up;
+
+                    ui.horizontal(|ui| {
+                        for card in seat.up_cards.iter().take(up_to_show) {
+                            show_card_compact(ui, ctx, cache, *card);
+                        }
+                        for _ in 0..hidden_to_show {
+                            show_card_back_compact(ui);
+                        }
+                        if remaining_cards > 0 {
+                            theme::show_badge(
+                                ui,
+                                &format!("+{}", remaining_cards),
+                                theme::PANEL_ALT,
+                                theme::BORDER,
+                                theme::TEXT_MUTED,
+                            );
+                        }
+                    });
+                }
             });
-
-            if seat.has_folded {
-                return;
-            }
-
-            if seat.hidden_card_count > 0 || !seat.up_cards.is_empty() {
-                ui.add_space(6.0);
-                let hidden_to_show = seat.hidden_card_count.min(2);
-                let remaining_hidden = seat.hidden_card_count.saturating_sub(hidden_to_show);
-                let up_to_show = seat.up_cards.len().min(1);
-                let remaining_up = seat.up_cards.len().saturating_sub(up_to_show);
-                let remaining_cards = remaining_hidden + remaining_up;
-
-                ui.horizontal(|ui| {
-                    for _ in 0..hidden_to_show {
-                        show_card_back_compact(ui);
-                    }
-                    for card in seat.up_cards.iter().take(up_to_show) {
-                        show_card_compact(ui, ctx, cache, *card);
-                    }
-                    if remaining_cards > 0 {
-                        theme::show_badge(
-                            ui,
-                            &format!("+{}", remaining_cards),
-                            theme::PANEL_ALT,
-                            theme::BORDER,
-                            theme::TEXT_MUTED,
-                        );
-                    }
-                });
-            }
         });
 }
 

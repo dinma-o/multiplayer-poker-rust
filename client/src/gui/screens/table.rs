@@ -1,5 +1,6 @@
 use common::protocol::{HandStep, PokerVariant};
 use common::wire::{PlayerView, PublicTableState, RequestOp, TableId};
+use image::load_from_memory;
 
 use super::super::{
     app::{PendingKind, PokerApp},
@@ -336,6 +337,12 @@ fn show_table_surface(
     let middle_gap = if compact { 12.0 } else { 16.0 };
     let bottom_row_gap = if compact { 28.0 } else { 34.0 };
     let pot_size = if compact { 28.0 } else { 31.0 };
+    let info_frame_max_width = if compact { 168.0 } else { 196.0 };
+    let chip_image_size = if compact {
+        egui::vec2(38.0, 38.0)
+    } else {
+        egui::vec2(46.0, 46.0)
+    };
 
     let render_seat = |ui: &mut egui::Ui,
                        ctx: &egui::Context,
@@ -367,66 +374,89 @@ fn show_table_surface(
                         .corner_radius(255.0)
                         .inner_margin(egui::Margin::symmetric(felt_margin, outer_margin))
                         .show(ui, |ui| {
-                            ui.set_min_height(table_height);
-                            ui.vertical_centered(|ui| {
-                                ui.add_space(6.0);
-                                ui.horizontal_centered(|ui| {
-                                    for seat_index in 0..3 {
-                                        render_seat(ui, ctx, &mut app.texture_cache, seat_index);
-                                        ui.add_space(top_row_gap);
-                                    }
-                                });
+                            let felt_width = ui.available_width();
+                            ui.allocate_ui_with_layout(
+                                egui::vec2(felt_width, table_height),
+                                egui::Layout::top_down(egui::Align::Center),
+                                |ui| {
+                                    ui.set_width(felt_width);
+                                    ui.set_max_width(felt_width);
 
-                                ui.add_space(middle_gap);
-                                theme::info_frame().show(ui, |ui| {
-                                    ui.vertical_centered(|ui| {
-                                        ui.label(theme::eyebrow("Main pot"));
-                                        ui.label(
-                                            egui::RichText::new(state.pot.to_string())
-                                                .size(pot_size)
-                                                .color(theme::TEXT)
-                                                .strong(),
-                                        );
-                                        ui.label(theme::small_muted(step_label(state.step)));
-                                    });
-                                });
-
-                                if state.variant == PokerVariant::TexasHoldEm {
-                                    ui.add_space(10.0);
+                                    ui.add_space(6.0);
                                     ui.horizontal_centered(|ui| {
-                                        let board = player_view
-                                            .map(|view| view.board_cards.clone())
-                                            .unwrap_or_else(|| state.board_cards.clone());
-                                        let placeholders =
-                                            ["Flop", "Flop", "Flop", "Turn", "River"];
-
-                                        for index in 0..5 {
-                                            if let Some(card) = board.get(index) {
-                                                show_card(ui, ctx, &mut app.texture_cache, *card);
-                                            } else {
-                                                show_card_slot(ui, placeholders[index]);
-                                            }
+                                        for seat_index in 0..3 {
+                                            render_seat(ui, ctx, &mut app.texture_cache, seat_index);
+                                            ui.add_space(top_row_gap);
                                         }
                                     });
-                                } else {
-                                    ui.add_space(10.0);
-                                    theme::show_badge(
-                                        ui,
-                                        &format!("Current bet {}", state.current_bet),
-                                        theme::PANEL_SOFT,
-                                        theme::BORDER,
-                                        theme::TEXT_MUTED,
-                                    );
-                                }
 
-                                ui.add_space(middle_gap);
-                                ui.horizontal_centered(|ui| {
-                                    render_seat(ui, ctx, &mut app.texture_cache, 3);
-                                    ui.add_space(bottom_row_gap);
-                                    render_seat(ui, ctx, &mut app.texture_cache, 4);
-                                });
-                                ui.add_space(6.0);
-                            });
+                                    ui.add_space(middle_gap);
+                                    ui.vertical_centered(|ui| {
+                                        ui.set_max_width(info_frame_max_width);
+                                        theme::info_frame().show(ui, |ui| {
+                                            ui.set_max_width(info_frame_max_width);
+                                            ui.vertical_centered(|ui| {
+                                                show_main_pot_image(
+                                                    ui,
+                                                    ctx,
+                                                    &mut app.texture_cache,
+                                                    chip_image_size,
+                                                );
+                                                ui.add_space(2.0);
+                                                ui.label(theme::eyebrow("Main pot"));
+                                                ui.label(
+                                                    egui::RichText::new(state.pot.to_string())
+                                                        .size(pot_size)
+                                                        .color(theme::TEXT)
+                                                        .strong(),
+                                                );
+                                                ui.label(theme::small_muted(step_label(state.step)));
+                                            });
+                                        });
+                                    });
+
+                                    if state.variant == PokerVariant::TexasHoldEm {
+                                        ui.add_space(10.0);
+                                        ui.horizontal_centered(|ui| {
+                                            let board = player_view
+                                                .map(|view| view.board_cards.clone())
+                                                .unwrap_or_else(|| state.board_cards.clone());
+                                            let placeholders =
+                                                ["Flop", "Flop", "Flop", "Turn", "River"];
+
+                                            for index in 0..5 {
+                                                if let Some(card) = board.get(index) {
+                                                    show_card(ui, ctx, &mut app.texture_cache, *card);
+                                                } else {
+                                                    show_card_slot(ui, placeholders[index]);
+                                                }
+                                            }
+                                        });
+                                    } else {
+                                        ui.add_space(10.0);
+                                        ui.vertical_centered(|ui| {
+                                            ui.set_max_width(info_frame_max_width);
+                                            theme::soft_panel_frame().show(ui, |ui| {
+                                                ui.set_max_width(info_frame_max_width);
+                                                ui.vertical_centered(|ui| {
+                                                    ui.label(theme::eyebrow("Current bet"));
+                                                    ui.label(theme::stat_value(
+                                                        state.current_bet.to_string(),
+                                                    ));
+                                                });
+                                            });
+                                        });
+                                    }
+
+                                    ui.add_space(middle_gap);
+                                    ui.horizontal_centered(|ui| {
+                                        render_seat(ui, ctx, &mut app.texture_cache, 3);
+                                        ui.add_space(bottom_row_gap);
+                                        render_seat(ui, ctx, &mut app.texture_cache, 4);
+                                    });
+                                    ui.add_space(6.0);
+                                },
+                            );
                         });
                 });
         });
@@ -438,6 +468,37 @@ fn show_waiting_panel(ui: &mut egui::Ui, title: &str, body: &str) {
         ui.label(theme::section_title(title));
         ui.label(theme::muted(body));
     });
+}
+
+fn show_main_pot_image(
+    ui: &mut egui::Ui,
+    ctx: &egui::Context,
+    cache: &mut std::collections::HashMap<String, egui::TextureHandle>,
+    size: egui::Vec2,
+) {
+    const CHIPS_TEXTURE_KEY: &str = "ui::stack_of_chips";
+    const CHIPS_TEXTURE_BYTES: &[u8] = include_bytes!("../../../assets/ui/stack_of_chips.png");
+
+    if !cache.contains_key(CHIPS_TEXTURE_KEY)
+        && let Ok(image) = load_from_memory(CHIPS_TEXTURE_BYTES)
+    {
+        let rgba = image.to_rgba8();
+        let (width, height) = rgba.dimensions();
+        let color_image = egui::ColorImage::from_rgba_unmultiplied(
+            [width as usize, height as usize],
+            rgba.as_raw(),
+        );
+        let texture = ctx.load_texture(
+            CHIPS_TEXTURE_KEY,
+            color_image,
+            egui::TextureOptions::default(),
+        );
+        cache.insert(CHIPS_TEXTURE_KEY.to_string(), texture);
+    }
+
+    if let Some(handle) = cache.get(CHIPS_TEXTURE_KEY) {
+        ui.add(egui::Image::new(handle).fit_to_exact_size(size));
+    }
 }
 
 fn primary_button(label: &str) -> egui::Button<'static> {
