@@ -6,7 +6,7 @@ use crate::gui::theme;
 
 /// Rendered size of every card image.
 pub const CARD_SIZE: egui::Vec2 = egui::vec2(54.0, 76.0);
-pub const COMPACT_CARD_SIZE: egui::Vec2 = egui::vec2(38.0, 54.0);
+pub const COMPACT_CARD_SIZE: egui::Vec2 = egui::vec2(34.0, 48.0);
 
 /// Render a face-up card. PNG bytes are embedded in the binary at compile time
 /// via `include_bytes!`, so no filesystem access is required at runtime.
@@ -88,15 +88,23 @@ fn show_card_back_at_size(ui: &mut egui::Ui, size: egui::Vec2, show_label: bool)
 }
 
 pub fn show_card_slot(ui: &mut egui::Ui, label: &str) {
+    show_card_slot_at_size(ui, label, CARD_SIZE, 16.0);
+}
+
+pub fn show_card_slot_compact(ui: &mut egui::Ui, label: &str) {
+    show_card_slot_at_size(ui, label, COMPACT_CARD_SIZE, 12.0);
+}
+
+fn show_card_slot_at_size(ui: &mut egui::Ui, label: &str, size: egui::Vec2, corner_radius: f32) {
     egui::Frame::new()
         .fill(egui::Color32::from_rgba_premultiplied(255, 255, 255, 10))
         .stroke(egui::Stroke::new(
             1.5,
             egui::Color32::from_rgba_premultiplied(255, 255, 255, 45),
         ))
-        .corner_radius(16.0)
+        .corner_radius(corner_radius)
         .show(ui, |ui| {
-            ui.set_min_size(CARD_SIZE);
+            ui.set_min_size(size);
             ui.centered_and_justified(|ui| {
                 ui.label(theme::small_muted(label));
             });

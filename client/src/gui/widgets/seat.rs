@@ -6,7 +6,7 @@ use crate::gui::theme;
 
 use super::card::{show_card_back_compact, show_card_compact};
 
-const SEAT_WIDTH: f32 = 112.0;
+const SEAT_WIDTH: f32 = 108.0;
 
 /// Render one seat box including cards.
 ///
@@ -48,11 +48,12 @@ pub fn show_seat(
         .fill(fill)
         .stroke(egui::Stroke::new(2.0, frame_color))
         .corner_radius(14.0)
-        .inner_margin(egui::Margin::same(8))
+        .inner_margin(egui::Margin::same(6))
         .show(ui, |ui| {
             ui.set_width(SEAT_WIDTH);
             ui.set_max_width(SEAT_WIDTH);
-            ui.set_max_height(75.0);
+            ui.set_max_height(68.0);
+            ui.spacing_mut().item_spacing = egui::vec2(6.0, 2.0);
 
             ui.vertical(|ui| {
                 ui.horizontal_wrapped(|ui| {
@@ -76,7 +77,7 @@ pub fn show_seat(
                 }
 
                 if seat.hidden_card_count > 0 || !seat.up_cards.is_empty() {
-                    ui.add_space(6.0);
+                    ui.add_space(4.0);
                     let up_to_show = seat.up_cards.len().min(2);
                     let hidden_limit = if up_to_show > 0 { 1 } else { 2 };
                     let hidden_to_show = seat.hidden_card_count.min(hidden_limit);

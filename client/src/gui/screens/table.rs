@@ -7,7 +7,7 @@ use super::super::{
     theme,
     widgets::{
         action_bar::show_action_bar,
-        card::{show_card, show_card_slot},
+        card::{show_card, show_card_compact, show_card_slot, show_card_slot_compact},
         discard_picker::show_discard_picker,
         event_log::show_event_log,
         results_panel::show_results,
@@ -321,27 +321,97 @@ fn show_table_surface(
 ) {
     let acting_id = state.acting_player_id;
     let dealer_seat = state.dealer_seat;
-    let available_width = ui.available_width().max(460.0);
-    let table_width = available_width.min(660.0);
-    let compact = table_width < 620.0 || ui.available_height() < 580.0;
-    let outer_margin = if compact { 10 } else { 12 };
-    let felt_margin = if compact { 10 } else { 12 };
-    let table_height = if state.variant == PokerVariant::TexasHoldEm {
-        if compact { 340.0 } else { 370.0 }
+    let available_width = ui.available_width().max(420.0);
+    let available_height = ui.available_height();
+    let narrow = available_width < 700.0;
+    let laptop_height = available_height < 820.0;
+    let compact = narrow || laptop_height;
+    let very_compact = available_width < 600.0 || available_height < 740.0;
+    let table_width_cap = if very_compact {
+        520.0
     } else if compact {
-        320.0
+        560.0
     } else {
-        350.0
+        600.0
     };
-    let top_row_gap = if compact { 6.0 } else { 8.0 };
-    let middle_gap = if compact { 12.0 } else { 16.0 };
-    let bottom_row_gap = if compact { 28.0 } else { 34.0 };
-    let pot_size = if compact { 28.0 } else { 31.0 };
-    let info_frame_max_width = if compact { 168.0 } else { 196.0 };
-    let chip_image_size = if compact {
-        egui::vec2(38.0, 38.0)
+    let table_width = available_width.min(table_width_cap);
+    let outer_margin = if very_compact {
+        6
+    } else if compact {
+        7
     } else {
-        egui::vec2(46.0, 46.0)
+        9
+    };
+    let felt_margin = if very_compact {
+        6
+    } else if compact {
+        7
+    } else {
+        9
+    };
+    let table_height = if state.variant == PokerVariant::TexasHoldEm {
+        if very_compact {
+            214.0
+        } else if compact {
+            236.0
+        } else {
+            284.0
+        }
+    } else if very_compact {
+        202.0
+    } else if compact {
+        220.0
+    } else {
+        258.0
+    };
+    let top_row_gap = if very_compact {
+        2.0
+    } else if compact {
+        3.0
+    } else {
+        5.0
+    };
+    let middle_gap = if very_compact {
+        4.0
+    } else if compact {
+        6.0
+    } else {
+        10.0
+    };
+    let bottom_row_gap = if very_compact {
+        10.0
+    } else if compact {
+        14.0
+    } else {
+        20.0
+    };
+    let board_gap = if very_compact {
+        2.0
+    } else if compact {
+        4.0
+    } else {
+        8.0
+    };
+    let pot_size = if very_compact {
+        18.0
+    } else if compact {
+        21.0
+    } else {
+        25.0
+    };
+    let info_frame_max_width = if very_compact {
+        136.0
+    } else if compact {
+        148.0
+    } else {
+        172.0
+    };
+    let chip_image_size = if very_compact {
+        egui::vec2(24.0, 24.0)
+    } else if compact {
+        egui::vec2(28.0, 28.0)
+    } else {
+        egui::vec2(34.0, 34.0)
     };
 
     let render_seat = |ui: &mut egui::Ui,
@@ -382,7 +452,7 @@ fn show_table_surface(
                                     ui.set_width(felt_width);
                                     ui.set_max_width(felt_width);
 
-                                    ui.add_space(6.0);
+                                    ui.add_space(if very_compact { 2.0 } else { 4.0 });
                                     ui.horizontal_centered(|ui| {
                                         for seat_index in 0..3 {
                                             render_seat(ui, ctx, &mut app.texture_cache, seat_index);
@@ -416,7 +486,7 @@ fn show_table_surface(
                                     });
 
                                     if state.variant == PokerVariant::TexasHoldEm {
-                                        ui.add_space(10.0);
+                                        ui.add_space(board_gap);
                                         ui.horizontal_centered(|ui| {
                                             let board = player_view
                                                 .map(|view| view.board_cards.clone())
@@ -426,14 +496,35 @@ fn show_table_surface(
 
                                             for index in 0..5 {
                                                 if let Some(card) = board.get(index) {
-                                                    show_card(ui, ctx, &mut app.texture_cache, *card);
+                                                    if compact {
+                                                        show_card_compact(
+                                                            ui,
+                                                            ctx,
+                                                            &mut app.texture_cache,
+                                                            *card,
+                                                        );
+                                                    } else {
+                                                        show_card(
+                                                            ui,
+                                                            ctx,
+                                                            &mut app.texture_cache,
+                                                            *card,
+                                                        );
+                                                    }
                                                 } else {
-                                                    show_card_slot(ui, placeholders[index]);
+                                                    if compact {
+                                                        show_card_slot_compact(
+                                                            ui,
+                                                            placeholders[index],
+                                                        );
+                                                    } else {
+                                                        show_card_slot(ui, placeholders[index]);
+                                                    }
                                                 }
                                             }
                                         });
                                     } else {
-                                        ui.add_space(10.0);
+                                        ui.add_space(board_gap);
                                         ui.vertical_centered(|ui| {
                                             ui.set_max_width(info_frame_max_width);
                                             theme::soft_panel_frame().show(ui, |ui| {
@@ -454,7 +545,7 @@ fn show_table_surface(
                                         ui.add_space(bottom_row_gap);
                                         render_seat(ui, ctx, &mut app.texture_cache, 4);
                                     });
-                                    ui.add_space(6.0);
+                                    ui.add_space(if very_compact { 2.0 } else { 4.0 });
                                 },
                             );
                         });
