@@ -1,6 +1,7 @@
 mod app;
 mod network;
 pub(crate) mod screens;
+pub(crate) mod theme;
 pub(crate) mod widgets;
 
 use app::PokerApp;

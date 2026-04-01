@@ -2,7 +2,9 @@ use std::collections::HashMap;
 
 use common::card_deck::Card;
 
-use super::card::{show_card, CARD_SIZE};
+use crate::gui::theme;
+
+use super::card::show_card;
 
 /// Render the discard picker for the Five Card Draw draw phase.
 ///
@@ -20,36 +22,47 @@ pub fn show_discard_picker(
     max_discards: usize,
     selected: &mut Vec<usize>,
 ) -> Option<Vec<usize>> {
-    ui.label(
-        egui::RichText::new(format!(
-            "Select cards to discard (max {max_discards}). Click to toggle. Leave all unselected to stand pat."
-        ))
-        .small()
-        .color(egui::Color32::from_gray(180)),
-    );
+    theme::soft_panel_frame().show(ui, |ui| {
+        ui.label(theme::small_muted(format!(
+            "Select up to {max_discards} card(s). Leave everything unselected to stand pat."
+        )));
+    });
 
     ui.add_space(6.0);
 
-    ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
         for (i, &card) in cards.iter().enumerate() {
             let is_selected = selected.contains(&i);
 
-            // Stroke colour: red border = will be discarded, subtle = kept
             let stroke = if is_selected {
-                egui::Stroke::new(3.0, egui::Color32::from_rgb(210, 50, 50))
+                egui::Stroke::new(2.0, theme::DANGER)
             } else {
-                egui::Stroke::new(1.5, egui::Color32::from_gray(80))
+                egui::Stroke::new(1.5, theme::BORDER)
             };
 
             let inner = egui::Frame::new()
+                .fill(if is_selected {
+                    theme::DANGER_SOFT
+                } else {
+                    theme::PANEL_SOFT
+                })
                 .stroke(stroke)
-                .inner_margin(egui::Margin::same(3))
-                .corner_radius(6.0)
+                .inner_margin(egui::Margin::same(6))
+                .corner_radius(18.0)
                 .show(ui, |ui| {
                     show_card(ui, ctx, cache, card);
+                    if is_selected {
+                        ui.centered_and_justified(|ui| {
+                            ui.label(
+                                egui::RichText::new("Marked to discard")
+                                    .small()
+                                    .color(theme::DANGER)
+                                    .strong(),
+                            );
+                        });
+                    }
                 });
 
-            // Make the whole card area clickable
             let response = inner.response.interact(egui::Sense::click());
 
             if response.clicked() {
@@ -58,25 +71,6 @@ pub fn show_discard_picker(
                 } else if selected.len() < max_discards {
                     selected.push(i);
                 }
-            }
-
-            // Red "DISCARD" label underneath selected cards
-            if is_selected {
-                ui.allocate_ui_at_rect(
-                    egui::Rect::from_min_size(
-                        inner.response.rect.left_bottom() + egui::vec2(0.0, 2.0),
-                        egui::vec2(CARD_SIZE.x + 6.0, 14.0),
-                    ),
-                    |ui| {
-                        ui.centered_and_justified(|ui| {
-                            ui.label(
-                                egui::RichText::new("DISCARD")
-                                    .small()
-                                    .color(egui::Color32::from_rgb(210, 50, 50)),
-                            );
-                        });
-                    },
-                );
             }
 
             ui.add_space(4.0);
@@ -89,14 +83,18 @@ pub fn show_discard_picker(
     let confirm_label = if selected.is_empty() {
         "Stand Pat (draw 0)".to_string()
     } else {
-        format!("Discard {} card{}", selected.len(), if selected.len() == 1 { "" } else { "s" })
+        format!(
+            "Discard {} card{}",
+            selected.len(),
+            if selected.len() == 1 { "" } else { "s" }
+        )
     };
 
     let mut result = None;
 
     ui.horizontal(|ui| {
         if ui
-            .add_enabled(!over_limit, egui::Button::new(confirm_label))
+            .add_enabled(!over_limit, primary_button(&confirm_label))
             .clicked()
         {
             let mut discards = selected.clone();
@@ -105,11 +103,33 @@ pub fn show_discard_picker(
         }
 
         if !selected.is_empty() {
-            if ui.button("Clear").clicked() {
+            if ui.add(secondary_button("Clear")).clicked() {
                 selected.clear();
             }
         }
     });
 
     result
+}
+
+fn primary_button(label: &str) -> egui::Button<'static> {
+    egui::Button::new(
+        egui::RichText::new(label.to_owned())
+            .color(theme::BACKGROUND)
+            .strong(),
+    )
+    .fill(theme::ACCENT_STRONG)
+    .stroke(egui::Stroke::new(1.0, theme::ACCENT))
+    .corner_radius(18.0)
+}
+
+fn secondary_button(label: &str) -> egui::Button<'static> {
+    egui::Button::new(
+        egui::RichText::new(label.to_owned())
+            .color(theme::TEXT)
+            .strong(),
+    )
+    .fill(theme::PANEL_ALT)
+    .stroke(egui::Stroke::new(1.0, theme::BORDER))
+    .corner_radius(18.0)
 }

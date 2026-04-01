@@ -126,6 +126,9 @@ pub struct PokerApp {
 
     // Cached GPU textures for card images, keyed by "rank_suit" e.g. "ace_hearts"
     pub texture_cache: HashMap<String, egui::TextureHandle>,
+
+    // Small-screen guidance can be dismissed while the viewport remains cramped.
+    pub small_screen_notice_dismissed: bool,
 }
 
 impl Default for PokerApp {
@@ -157,6 +160,7 @@ impl Default for PokerApp {
             selected_discards: Vec::new(),
             last_showdown: None,
             last_payout: None,
+            small_screen_notice_dismissed: false,
         }
     }
 }
@@ -294,15 +298,12 @@ impl PokerApp {
                         // Subscribe then fetch initial state — these go through the channel
                         // in order without blocking the UI.
                         if let Some(tx) = &self.cmd_tx {
-                            let _ = tx.send(GuiCommand::SendOp(
-                                RequestOp::SubscribeTable { table_id },
-                            ));
-                            let _ = tx.send(GuiCommand::SendOp(
-                                RequestOp::GetTableState { table_id },
-                            ));
-                            let _ = tx.send(GuiCommand::SendOp(
-                                RequestOp::GetPlayerView { table_id },
-                            ));
+                            let _ =
+                                tx.send(GuiCommand::SendOp(RequestOp::SubscribeTable { table_id }));
+                            let _ =
+                                tx.send(GuiCommand::SendOp(RequestOp::GetTableState { table_id }));
+                            let _ =
+                                tx.send(GuiCommand::SendOp(RequestOp::GetPlayerView { table_id }));
                         }
                         self.screen = Screen::Table { table_id };
                     }
@@ -314,23 +315,21 @@ impl PokerApp {
                     }
                 }
             }
-            Some(ResponsePayload::LeaveTable(result)) => {
-                match result.status {
-                    LeaveTableStatus::Left => {
-                        self.table_state = None;
-                        self.player_view = None;
-                        self.selected_discards.clear();
-                        self.input_bet.clear();
-                        self.enter_lobby();
-                    }
-                    LeaveTableStatus::LeavingAfterHand => {
-                        self.last_error = Some(
-                            "You will leave the table automatically after this hand finishes."
-                                .to_string(),
-                        );
-                    }
+            Some(ResponsePayload::LeaveTable(result)) => match result.status {
+                LeaveTableStatus::Left => {
+                    self.table_state = None;
+                    self.player_view = None;
+                    self.selected_discards.clear();
+                    self.input_bet.clear();
+                    self.enter_lobby();
                 }
-            }
+                LeaveTableStatus::LeavingAfterHand => {
+                    self.last_error = Some(
+                        "You will leave the table automatically after this hand finishes."
+                            .to_string(),
+                    );
+                }
+            },
             Some(ResponsePayload::TableState(state)) => {
                 self.table_state = Some(state);
             }
@@ -346,7 +345,10 @@ impl PokerApp {
             ClientEvent::TableUpdate(update) => {
                 // Sync local account balance from the authoritative seat state.
                 if let Some(account) = &mut self.account {
-                    if let Some(seat) = update.table_state.seats.iter()
+                    if let Some(seat) = update
+                        .table_state
+                        .seats
+                        .iter()
                         .find(|s| s.player_id == account.player_id)
                     {
                         account.balance = seat.balance;
@@ -426,6 +428,7 @@ impl PokerApp {
 
 impl eframe::App for PokerApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        super::theme::apply_theme(ctx);
         self.drain_channels();
 
         match self.screen.clone() {
@@ -436,5 +439,7 @@ impl eframe::App for PokerApp {
                 super::screens::table::show(self, ctx, table_id);
             }
         }
+
+        super::theme::show_small_screen_notice(ctx, &mut self.small_screen_notice_dismissed);
     }
 }

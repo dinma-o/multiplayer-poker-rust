@@ -2,8 +2,10 @@ use std::collections::HashMap;
 
 use common::card_deck::{Card, Rank, Suit};
 
+use crate::gui::theme;
+
 /// Rendered size of every card image.
-pub const CARD_SIZE: egui::Vec2 = egui::vec2(60.0, 84.0);
+pub const CARD_SIZE: egui::Vec2 = egui::vec2(54.0, 76.0);
 
 /// Render a face-up card. PNG bytes are embedded in the binary at compile time
 /// via `include_bytes!`, so no filesystem access is required at runtime.
@@ -39,23 +41,47 @@ pub fn show_card(
 /// Render a face-down card as a solid blue rounded frame.
 pub fn show_card_back(ui: &mut egui::Ui) {
     egui::Frame::new()
-        .fill(egui::Color32::from_rgb(30, 60, 160))
-        .stroke(egui::Stroke::new(1.5, egui::Color32::from_gray(200)))
-        .corner_radius(6.0)
+        .fill(theme::PANEL_SOFT)
+        .stroke(egui::Stroke::new(1.5, theme::BORDER))
+        .corner_radius(16.0)
         .show(ui, |ui| {
             ui.set_min_size(CARD_SIZE);
+            ui.centered_and_justified(|ui| {
+                ui.label(
+                    egui::RichText::new("POKER")
+                        .small()
+                        .strong()
+                        .color(theme::TEXT_MUTED),
+                );
+            });
+        });
+}
+
+pub fn show_card_slot(ui: &mut egui::Ui, label: &str) {
+    egui::Frame::new()
+        .fill(egui::Color32::from_rgba_premultiplied(255, 255, 255, 10))
+        .stroke(egui::Stroke::new(
+            1.5,
+            egui::Color32::from_rgba_premultiplied(255, 255, 255, 45),
+        ))
+        .corner_radius(16.0)
+        .show(ui, |ui| {
+            ui.set_min_size(CARD_SIZE);
+            ui.centered_and_justified(|ui| {
+                ui.label(theme::small_muted(label));
+            });
         });
 }
 
 fn show_placeholder(ui: &mut egui::Ui) {
     egui::Frame::new()
-        .fill(egui::Color32::from_rgb(160, 30, 30))
-        .stroke(egui::Stroke::new(1.5, egui::Color32::from_gray(200)))
-        .corner_radius(6.0)
+        .fill(theme::DANGER_SOFT)
+        .stroke(egui::Stroke::new(1.5, theme::DANGER))
+        .corner_radius(16.0)
         .show(ui, |ui| {
             ui.set_min_size(CARD_SIZE);
             ui.centered_and_justified(|ui| {
-                ui.label(egui::RichText::new("?").color(egui::Color32::WHITE));
+                ui.label(egui::RichText::new("?").color(theme::TEXT).strong());
             });
         });
 }
@@ -65,10 +91,8 @@ fn load_texture(ctx: &egui::Context, bytes: &[u8], name: &str) -> Option<egui::T
     let img = image::load_from_memory(bytes).ok()?;
     let rgba = img.to_rgba8();
     let (w, h) = rgba.dimensions();
-    let color_image = egui::ColorImage::from_rgba_unmultiplied(
-        [w as usize, h as usize],
-        rgba.as_raw(),
-    );
+    let color_image =
+        egui::ColorImage::from_rgba_unmultiplied([w as usize, h as usize], rgba.as_raw());
     Some(ctx.load_texture(name, color_image, egui::TextureOptions::default()))
 }
 
@@ -77,97 +101,99 @@ fn load_texture(ctx: &egui::Context, bytes: &[u8], name: &str) -> Option<egui::T
 fn card_bytes(key: &str) -> Option<&'static [u8]> {
     match key {
         // ── Aces ─────────────────────────────────────────────────────────────
-        "ace_of_clubs"      => Some(include_bytes!("../../../assets/cards/ace_of_clubs.png")),
-        "ace_of_diamonds"   => Some(include_bytes!("../../../assets/cards/ace_of_diamonds.png")),
-        "ace_of_hearts"     => Some(include_bytes!("../../../assets/cards/ace_of_hearts.png")),
-        "ace_of_spades"     => Some(include_bytes!("../../../assets/cards/ace_of_spades.png")),
+        "ace_of_clubs" => Some(include_bytes!("../../../assets/cards/ace_of_clubs.png")),
+        "ace_of_diamonds" => Some(include_bytes!("../../../assets/cards/ace_of_diamonds.png")),
+        "ace_of_hearts" => Some(include_bytes!("../../../assets/cards/ace_of_hearts.png")),
+        "ace_of_spades" => Some(include_bytes!("../../../assets/cards/ace_of_spades.png")),
         // ── 2s ───────────────────────────────────────────────────────────────
-        "2_of_clubs"        => Some(include_bytes!("../../../assets/cards/2_of_clubs.png")),
-        "2_of_diamonds"     => Some(include_bytes!("../../../assets/cards/2_of_diamonds.png")),
-        "2_of_hearts"       => Some(include_bytes!("../../../assets/cards/2_of_hearts.png")),
-        "2_of_spades"       => Some(include_bytes!("../../../assets/cards/2_of_spades.png")),
+        "2_of_clubs" => Some(include_bytes!("../../../assets/cards/2_of_clubs.png")),
+        "2_of_diamonds" => Some(include_bytes!("../../../assets/cards/2_of_diamonds.png")),
+        "2_of_hearts" => Some(include_bytes!("../../../assets/cards/2_of_hearts.png")),
+        "2_of_spades" => Some(include_bytes!("../../../assets/cards/2_of_spades.png")),
         // ── 3s ───────────────────────────────────────────────────────────────
-        "3_of_clubs"        => Some(include_bytes!("../../../assets/cards/3_of_clubs.png")),
-        "3_of_diamonds"     => Some(include_bytes!("../../../assets/cards/3_of_diamonds.png")),
-        "3_of_hearts"       => Some(include_bytes!("../../../assets/cards/3_of_hearts.png")),
-        "3_of_spades"       => Some(include_bytes!("../../../assets/cards/3_of_spades.png")),
+        "3_of_clubs" => Some(include_bytes!("../../../assets/cards/3_of_clubs.png")),
+        "3_of_diamonds" => Some(include_bytes!("../../../assets/cards/3_of_diamonds.png")),
+        "3_of_hearts" => Some(include_bytes!("../../../assets/cards/3_of_hearts.png")),
+        "3_of_spades" => Some(include_bytes!("../../../assets/cards/3_of_spades.png")),
         // ── 4s ───────────────────────────────────────────────────────────────
-        "4_of_clubs"        => Some(include_bytes!("../../../assets/cards/4_of_clubs.png")),
-        "4_of_diamonds"     => Some(include_bytes!("../../../assets/cards/4_of_diamonds.png")),
-        "4_of_hearts"       => Some(include_bytes!("../../../assets/cards/4_of_hearts.png")),
-        "4_of_spades"       => Some(include_bytes!("../../../assets/cards/4_of_spades.png")),
+        "4_of_clubs" => Some(include_bytes!("../../../assets/cards/4_of_clubs.png")),
+        "4_of_diamonds" => Some(include_bytes!("../../../assets/cards/4_of_diamonds.png")),
+        "4_of_hearts" => Some(include_bytes!("../../../assets/cards/4_of_hearts.png")),
+        "4_of_spades" => Some(include_bytes!("../../../assets/cards/4_of_spades.png")),
         // ── 5s ───────────────────────────────────────────────────────────────
-        "5_of_clubs"        => Some(include_bytes!("../../../assets/cards/5_of_clubs.png")),
-        "5_of_diamonds"     => Some(include_bytes!("../../../assets/cards/5_of_diamonds.png")),
-        "5_of_hearts"       => Some(include_bytes!("../../../assets/cards/5_of_hearts.png")),
-        "5_of_spades"       => Some(include_bytes!("../../../assets/cards/5_of_spades.png")),
+        "5_of_clubs" => Some(include_bytes!("../../../assets/cards/5_of_clubs.png")),
+        "5_of_diamonds" => Some(include_bytes!("../../../assets/cards/5_of_diamonds.png")),
+        "5_of_hearts" => Some(include_bytes!("../../../assets/cards/5_of_hearts.png")),
+        "5_of_spades" => Some(include_bytes!("../../../assets/cards/5_of_spades.png")),
         // ── 6s ───────────────────────────────────────────────────────────────
-        "6_of_clubs"        => Some(include_bytes!("../../../assets/cards/6_of_clubs.png")),
-        "6_of_diamonds"     => Some(include_bytes!("../../../assets/cards/6_of_diamonds.png")),
-        "6_of_hearts"       => Some(include_bytes!("../../../assets/cards/6_of_hearts.png")),
-        "6_of_spades"       => Some(include_bytes!("../../../assets/cards/6_of_spades.png")),
+        "6_of_clubs" => Some(include_bytes!("../../../assets/cards/6_of_clubs.png")),
+        "6_of_diamonds" => Some(include_bytes!("../../../assets/cards/6_of_diamonds.png")),
+        "6_of_hearts" => Some(include_bytes!("../../../assets/cards/6_of_hearts.png")),
+        "6_of_spades" => Some(include_bytes!("../../../assets/cards/6_of_spades.png")),
         // ── 7s ───────────────────────────────────────────────────────────────
-        "7_of_clubs"        => Some(include_bytes!("../../../assets/cards/7_of_clubs.png")),
-        "7_of_diamonds"     => Some(include_bytes!("../../../assets/cards/7_of_diamonds.png")),
-        "7_of_hearts"       => Some(include_bytes!("../../../assets/cards/7_of_hearts.png")),
-        "7_of_spades"       => Some(include_bytes!("../../../assets/cards/7_of_spades.png")),
+        "7_of_clubs" => Some(include_bytes!("../../../assets/cards/7_of_clubs.png")),
+        "7_of_diamonds" => Some(include_bytes!("../../../assets/cards/7_of_diamonds.png")),
+        "7_of_hearts" => Some(include_bytes!("../../../assets/cards/7_of_hearts.png")),
+        "7_of_spades" => Some(include_bytes!("../../../assets/cards/7_of_spades.png")),
         // ── 8s ───────────────────────────────────────────────────────────────
-        "8_of_clubs"        => Some(include_bytes!("../../../assets/cards/8_of_clubs.png")),
-        "8_of_diamonds"     => Some(include_bytes!("../../../assets/cards/8_of_diamonds.png")),
-        "8_of_hearts"       => Some(include_bytes!("../../../assets/cards/8_of_hearts.png")),
-        "8_of_spades"       => Some(include_bytes!("../../../assets/cards/8_of_spades.png")),
+        "8_of_clubs" => Some(include_bytes!("../../../assets/cards/8_of_clubs.png")),
+        "8_of_diamonds" => Some(include_bytes!("../../../assets/cards/8_of_diamonds.png")),
+        "8_of_hearts" => Some(include_bytes!("../../../assets/cards/8_of_hearts.png")),
+        "8_of_spades" => Some(include_bytes!("../../../assets/cards/8_of_spades.png")),
         // ── 9s ───────────────────────────────────────────────────────────────
-        "9_of_clubs"        => Some(include_bytes!("../../../assets/cards/9_of_clubs.png")),
-        "9_of_diamonds"     => Some(include_bytes!("../../../assets/cards/9_of_diamonds.png")),
-        "9_of_hearts"       => Some(include_bytes!("../../../assets/cards/9_of_hearts.png")),
-        "9_of_spades"       => Some(include_bytes!("../../../assets/cards/9_of_spades.png")),
+        "9_of_clubs" => Some(include_bytes!("../../../assets/cards/9_of_clubs.png")),
+        "9_of_diamonds" => Some(include_bytes!("../../../assets/cards/9_of_diamonds.png")),
+        "9_of_hearts" => Some(include_bytes!("../../../assets/cards/9_of_hearts.png")),
+        "9_of_spades" => Some(include_bytes!("../../../assets/cards/9_of_spades.png")),
         // ── 10s ──────────────────────────────────────────────────────────────
-        "10_of_clubs"       => Some(include_bytes!("../../../assets/cards/10_of_clubs.png")),
-        "10_of_diamonds"    => Some(include_bytes!("../../../assets/cards/10_of_diamonds.png")),
-        "10_of_hearts"      => Some(include_bytes!("../../../assets/cards/10_of_hearts.png")),
-        "10_of_spades"      => Some(include_bytes!("../../../assets/cards/10_of_spades.png")),
+        "10_of_clubs" => Some(include_bytes!("../../../assets/cards/10_of_clubs.png")),
+        "10_of_diamonds" => Some(include_bytes!("../../../assets/cards/10_of_diamonds.png")),
+        "10_of_hearts" => Some(include_bytes!("../../../assets/cards/10_of_hearts.png")),
+        "10_of_spades" => Some(include_bytes!("../../../assets/cards/10_of_spades.png")),
         // ── Jacks ────────────────────────────────────────────────────────────
-        "jack_of_clubs"     => Some(include_bytes!("../../../assets/cards/jack_of_clubs.png")),
-        "jack_of_diamonds"  => Some(include_bytes!("../../../assets/cards/jack_of_diamonds.png")),
-        "jack_of_hearts"    => Some(include_bytes!("../../../assets/cards/jack_of_hearts.png")),
-        "jack_of_spades"    => Some(include_bytes!("../../../assets/cards/jack_of_spades.png")),
+        "jack_of_clubs" => Some(include_bytes!("../../../assets/cards/jack_of_clubs.png")),
+        "jack_of_diamonds" => Some(include_bytes!("../../../assets/cards/jack_of_diamonds.png")),
+        "jack_of_hearts" => Some(include_bytes!("../../../assets/cards/jack_of_hearts.png")),
+        "jack_of_spades" => Some(include_bytes!("../../../assets/cards/jack_of_spades.png")),
         // ── Queens ───────────────────────────────────────────────────────────
-        "queen_of_clubs"    => Some(include_bytes!("../../../assets/cards/queen_of_clubs.png")),
-        "queen_of_diamonds" => Some(include_bytes!("../../../assets/cards/queen_of_diamonds.png")),
-        "queen_of_hearts"   => Some(include_bytes!("../../../assets/cards/queen_of_hearts.png")),
-        "queen_of_spades"   => Some(include_bytes!("../../../assets/cards/queen_of_spades.png")),
+        "queen_of_clubs" => Some(include_bytes!("../../../assets/cards/queen_of_clubs.png")),
+        "queen_of_diamonds" => Some(include_bytes!(
+            "../../../assets/cards/queen_of_diamonds.png"
+        )),
+        "queen_of_hearts" => Some(include_bytes!("../../../assets/cards/queen_of_hearts.png")),
+        "queen_of_spades" => Some(include_bytes!("../../../assets/cards/queen_of_spades.png")),
         // ── Kings ────────────────────────────────────────────────────────────
-        "king_of_clubs"     => Some(include_bytes!("../../../assets/cards/king_of_clubs.png")),
-        "king_of_diamonds"  => Some(include_bytes!("../../../assets/cards/king_of_diamonds.png")),
-        "king_of_hearts"    => Some(include_bytes!("../../../assets/cards/king_of_hearts.png")),
-        "king_of_spades"    => Some(include_bytes!("../../../assets/cards/king_of_spades.png")),
+        "king_of_clubs" => Some(include_bytes!("../../../assets/cards/king_of_clubs.png")),
+        "king_of_diamonds" => Some(include_bytes!("../../../assets/cards/king_of_diamonds.png")),
+        "king_of_hearts" => Some(include_bytes!("../../../assets/cards/king_of_hearts.png")),
+        "king_of_spades" => Some(include_bytes!("../../../assets/cards/king_of_spades.png")),
         _ => None,
     }
 }
 
 fn rank_str(rank: Rank) -> &'static str {
     match rank {
-        Rank::Ace   => "ace",
-        Rank::Two   => "2",
+        Rank::Ace => "ace",
+        Rank::Two => "2",
         Rank::Three => "3",
-        Rank::Four  => "4",
-        Rank::Five  => "5",
-        Rank::Six   => "6",
+        Rank::Four => "4",
+        Rank::Five => "5",
+        Rank::Six => "6",
         Rank::Seven => "7",
         Rank::Eight => "8",
-        Rank::Nine  => "9",
-        Rank::Ten   => "10",
-        Rank::Jack  => "jack",
+        Rank::Nine => "9",
+        Rank::Ten => "10",
+        Rank::Jack => "jack",
         Rank::Queen => "queen",
-        Rank::King  => "king",
+        Rank::King => "king",
     }
 }
 
 fn suit_str(suit: Suit) -> &'static str {
     match suit {
-        Suit::Hearts   => "hearts",
+        Suit::Hearts => "hearts",
         Suit::Diamonds => "diamonds",
-        Suit::Clubs    => "clubs",
-        Suit::Spades   => "spades",
+        Suit::Clubs => "clubs",
+        Suit::Spades => "spades",
     }
 }
