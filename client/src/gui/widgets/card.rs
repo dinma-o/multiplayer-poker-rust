@@ -6,6 +6,7 @@ use crate::gui::theme;
 
 /// Rendered size of every card image.
 pub const CARD_SIZE: egui::Vec2 = egui::vec2(54.0, 76.0);
+pub const COMPACT_CARD_SIZE: egui::Vec2 = egui::vec2(38.0, 54.0);
 
 /// Render a face-up card. PNG bytes are embedded in the binary at compile time
 /// via `include_bytes!`, so no filesystem access is required at runtime.
@@ -14,6 +15,25 @@ pub fn show_card(
     ctx: &egui::Context,
     cache: &mut HashMap<String, egui::TextureHandle>,
     card: Card,
+) {
+    show_card_at_size(ui, ctx, cache, card, CARD_SIZE);
+}
+
+pub fn show_card_compact(
+    ui: &mut egui::Ui,
+    ctx: &egui::Context,
+    cache: &mut HashMap<String, egui::TextureHandle>,
+    card: Card,
+) {
+    show_card_at_size(ui, ctx, cache, card, COMPACT_CARD_SIZE);
+}
+
+fn show_card_at_size(
+    ui: &mut egui::Ui,
+    ctx: &egui::Context,
+    cache: &mut HashMap<String, egui::TextureHandle>,
+    card: Card,
+    size: egui::Vec2,
 ) {
     let key = format!("{}_of_{}", rank_str(card.rank()), suit_str(card.suit()));
 
@@ -32,28 +52,38 @@ pub fn show_card(
     }
 
     if let Some(handle) = cache.get(&key) {
-        ui.add(egui::Image::new(handle).fit_to_exact_size(CARD_SIZE));
+        ui.add(egui::Image::new(handle).fit_to_exact_size(size));
     } else {
-        show_placeholder(ui);
+        show_placeholder_at_size(ui, size);
     }
 }
 
 /// Render a face-down card as a solid blue rounded frame.
 pub fn show_card_back(ui: &mut egui::Ui) {
+    show_card_back_at_size(ui, CARD_SIZE, true);
+}
+
+pub fn show_card_back_compact(ui: &mut egui::Ui) {
+    show_card_back_at_size(ui, COMPACT_CARD_SIZE, false);
+}
+
+fn show_card_back_at_size(ui: &mut egui::Ui, size: egui::Vec2, show_label: bool) {
     egui::Frame::new()
         .fill(theme::PANEL_SOFT)
         .stroke(egui::Stroke::new(1.5, theme::BORDER))
-        .corner_radius(16.0)
+        .corner_radius(if show_label { 16.0 } else { 12.0 })
         .show(ui, |ui| {
-            ui.set_min_size(CARD_SIZE);
-            ui.centered_and_justified(|ui| {
-                ui.label(
-                    egui::RichText::new("POKER")
-                        .small()
-                        .strong()
-                        .color(theme::TEXT_MUTED),
-                );
-            });
+            ui.set_min_size(size);
+            if show_label {
+                ui.centered_and_justified(|ui| {
+                    ui.label(
+                        egui::RichText::new("POKER")
+                            .small()
+                            .strong()
+                            .color(theme::TEXT_MUTED),
+                    );
+                });
+            }
         });
 }
 
@@ -74,12 +104,16 @@ pub fn show_card_slot(ui: &mut egui::Ui, label: &str) {
 }
 
 fn show_placeholder(ui: &mut egui::Ui) {
+    show_placeholder_at_size(ui, CARD_SIZE);
+}
+
+fn show_placeholder_at_size(ui: &mut egui::Ui, size: egui::Vec2) {
     egui::Frame::new()
         .fill(theme::DANGER_SOFT)
         .stroke(egui::Stroke::new(1.5, theme::DANGER))
         .corner_radius(16.0)
         .show(ui, |ui| {
-            ui.set_min_size(CARD_SIZE);
+            ui.set_min_size(size);
             ui.centered_and_justified(|ui| {
                 ui.label(egui::RichText::new("?").color(theme::TEXT).strong());
             });

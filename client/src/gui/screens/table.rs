@@ -326,22 +326,22 @@ fn show_table_surface(
 ) {
     let acting_id = state.acting_player_id;
     let dealer_seat = state.dealer_seat;
-    let available_width = ui.available_width().max(520.0);
-    let table_width = available_width.min(780.0);
-    let compact = table_width < 700.0 || ui.available_height() < 620.0;
-    let outer_margin = if compact { 12 } else { 14 };
-    let felt_margin = if compact { 12 } else { 16 };
+    let available_width = ui.available_width().max(460.0);
+    let table_width = available_width.min(660.0);
+    let compact = table_width < 620.0 || ui.available_height() < 580.0;
+    let outer_margin = if compact { 10 } else { 12 };
+    let felt_margin = if compact { 10 } else { 12 };
     let table_height = if state.variant == PokerVariant::TexasHoldEm {
-        if compact { 410.0 } else { 450.0 }
+        if compact { 340.0 } else { 370.0 }
     } else if compact {
-        380.0
+        320.0
     } else {
-        420.0
+        350.0
     };
-    let top_row_gap = if compact { 8.0 } else { 10.0 };
-    let middle_gap = if compact { 18.0 } else { 24.0 };
-    let bottom_row_gap = if compact { 44.0 } else { 52.0 };
-    let pot_size = if compact { 34.0 } else { 38.0 };
+    let top_row_gap = if compact { 6.0 } else { 8.0 };
+    let middle_gap = if compact { 12.0 } else { 16.0 };
+    let bottom_row_gap = if compact { 28.0 } else { 34.0 };
+    let pot_size = if compact { 28.0 } else { 31.0 };
 
     let render_seat = |ui: &mut egui::Ui,
                        ctx: &egui::Context,
@@ -375,7 +375,7 @@ fn show_table_surface(
                         .show(ui, |ui| {
                             ui.set_min_height(table_height);
                             ui.vertical_centered(|ui| {
-                                ui.add_space(8.0);
+                                ui.add_space(6.0);
                                 ui.horizontal_centered(|ui| {
                                     for seat_index in 0..3 {
                                         render_seat(ui, ctx, &mut app.texture_cache, seat_index);
@@ -398,7 +398,7 @@ fn show_table_surface(
                                 });
 
                                 if state.variant == PokerVariant::TexasHoldEm {
-                                    ui.add_space(14.0);
+                                    ui.add_space(10.0);
                                     ui.horizontal_centered(|ui| {
                                         let board = player_view
                                             .map(|view| view.board_cards.clone())
@@ -415,7 +415,7 @@ fn show_table_surface(
                                         }
                                     });
                                 } else {
-                                    ui.add_space(14.0);
+                                    ui.add_space(10.0);
                                     theme::show_badge(
                                         ui,
                                         &format!("Current bet {}", state.current_bet),
@@ -431,7 +431,7 @@ fn show_table_surface(
                                     ui.add_space(bottom_row_gap);
                                     render_seat(ui, ctx, &mut app.texture_cache, 4);
                                 });
-                                ui.add_space(8.0);
+                                ui.add_space(6.0);
                             });
                         });
                 });

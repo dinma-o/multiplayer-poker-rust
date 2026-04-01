@@ -4,7 +4,9 @@ use common::wire::PublicSeatState;
 
 use crate::gui::theme;
 
-use super::card::{show_card, show_card_back};
+use super::card::{show_card_back_compact, show_card_compact};
+
+const SEAT_WIDTH: f32 = 112.0;
 
 /// Render one seat box including cards.
 ///
@@ -45,50 +47,28 @@ pub fn show_seat(
     egui::Frame::new()
         .fill(fill)
         .stroke(egui::Stroke::new(2.0, frame_color))
-        .corner_radius(16.0)
-        .inner_margin(egui::Margin::same(10))
+        .corner_radius(14.0)
+        .inner_margin(egui::Margin::same(8))
         .show(ui, |ui| {
-            ui.set_min_width(132.0);
+            ui.set_width(SEAT_WIDTH);
+            ui.set_max_width(SEAT_WIDTH);
 
-            ui.horizontal(|ui| {
-                ui.vertical(|ui| {
-                    ui.horizontal_wrapped(|ui| {
-                        ui.label(
-                            egui::RichText::new(&seat.player_name)
-                                .color(text_color)
-                                .strong(),
-                        );
-                        if is_me {
-                            theme::show_badge(
-                                ui,
-                                "You",
-                                theme::PANEL_SOFT,
-                                theme::INFO,
-                                theme::INFO,
-                            );
-                        }
-                        if is_dealer {
-                            theme::show_badge(
-                                ui,
-                                "Dealer",
-                                theme::GOLD_SOFT,
-                                theme::GOLD,
-                                theme::GOLD,
-                            );
-                        }
-                    });
-                    ui.label(theme::small_muted(status));
-                });
-
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
-                    theme::show_badge(
-                        ui,
-                        &format!("{} chips", seat.balance),
-                        theme::PANEL_ALT,
-                        theme::BORDER,
-                        text_color,
+            ui.vertical(|ui| {
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(
+                        egui::RichText::new(&seat.player_name)
+                            .color(text_color)
+                            .strong(),
                     );
+                    if is_me {
+                        theme::show_badge(ui, "You", theme::PANEL_SOFT, theme::INFO, theme::INFO);
+                    }
+                    if is_dealer {
+                        theme::show_badge(ui, "Dealer", theme::GOLD_SOFT, theme::GOLD, theme::GOLD);
+                    }
                 });
+                ui.label(theme::small_muted(format!("{} chips", seat.balance)));
+                ui.label(theme::small_muted(status));
             });
 
             if seat.has_folded {
@@ -96,17 +76,32 @@ pub fn show_seat(
             }
 
             if seat.hidden_card_count > 0 || !seat.up_cards.is_empty() {
-                ui.add_space(8.0);
-                ui.horizontal_wrapped(|ui| {
-                    for _ in 0..seat.hidden_card_count {
-                        show_card_back(ui);
+                ui.add_space(6.0);
+                let hidden_to_show = seat.hidden_card_count.min(2);
+                let remaining_hidden = seat.hidden_card_count.saturating_sub(hidden_to_show);
+                let up_to_show = seat.up_cards.len().min(1);
+                let remaining_up = seat.up_cards.len().saturating_sub(up_to_show);
+                let remaining_cards = remaining_hidden + remaining_up;
+
+                ui.horizontal(|ui| {
+                    for _ in 0..hidden_to_show {
+                        show_card_back_compact(ui);
                     }
-                    for card in &seat.up_cards {
-                        show_card(ui, ctx, cache, *card);
+                    for card in seat.up_cards.iter().take(up_to_show) {
+                        show_card_compact(ui, ctx, cache, *card);
+                    }
+                    if remaining_cards > 0 {
+                        theme::show_badge(
+                            ui,
+                            &format!("+{}", remaining_cards),
+                            theme::PANEL_ALT,
+                            theme::BORDER,
+                            theme::TEXT_MUTED,
+                        );
                     }
                 });
             }
-        });
+        }); 
 }
 
 /// Render an empty seat placeholder.
@@ -114,10 +109,11 @@ pub fn show_empty_seat(ui: &mut egui::Ui) {
     egui::Frame::new()
         .fill(theme::PANEL_SOFT)
         .stroke(egui::Stroke::new(1.0, theme::BORDER_SOFT))
-        .corner_radius(16.0)
-        .inner_margin(egui::Margin::same(10))
+        .corner_radius(14.0)
+        .inner_margin(egui::Margin::same(8))
         .show(ui, |ui| {
-            ui.set_min_width(132.0);
+            ui.set_width(SEAT_WIDTH);
+            ui.set_max_width(SEAT_WIDTH);
             ui.label(theme::small_muted("Empty seat"));
         });
 }
