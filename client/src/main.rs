@@ -6,6 +6,19 @@ const DEFAULT_PORT: u16 = 8080;
 fn main() {
     let mut args: Vec<String> = env::args().skip(1).collect();
 
+    if let Some(preview_name) = parse_flag_value(&args, "--gui-preview")
+        .unwrap_or_else(|err| {
+            eprintln!("{err}");
+            std::process::exit(2);
+        })
+    {
+        if let Err(err) = poker_gui::gui::run_preview(&preview_name) {
+            eprintln!("{err}");
+            std::process::exit(2);
+        }
+        return;
+    }
+
     if args.iter().any(|a| a == "--gui") {
         poker_gui::gui::run();
         return;
@@ -43,4 +56,18 @@ fn parse_address(args: impl Iterator<Item = String>) -> String {
     }
 
     format!("{host}:{port}")
+}
+
+fn parse_flag_value(args: &[String], flag: &str) -> Result<Option<String>, String> {
+    if let Some(index) = args.iter().position(|arg| arg == flag) {
+        if let Some(value) = args.get(index + 1) {
+            Ok(Some(value.clone()))
+        } else {
+            Err(format!(
+                "Expected a screen name after {flag}. Available previews: connect, login, lobby, table."
+            ))
+        }
+    } else {
+        Ok(None)
+    }
 }

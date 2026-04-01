@@ -101,7 +101,7 @@ pub fn show_seat(
                     }
                 });
             }
-        }); 
+        });
 }
 
 /// Render an empty seat placeholder.
