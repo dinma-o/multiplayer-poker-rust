@@ -457,9 +457,10 @@ fn print_events(events: &[Event]) {
                 allowed,
                 call_amount,
                 min_raise,
+                max_amount,
             } => {
                 println!(
-                    "action requested for {player_name}: allowed={allowed:?} call={call_amount:?} min_raise={min_raise:?}"
+                    "action requested for {player_name}: allowed={allowed:?} call={call_amount:?} min_raise={min_raise:?} max_amount={max_amount:?}"
                 );
             }
             Event::DrawRequested {

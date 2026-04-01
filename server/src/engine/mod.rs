@@ -126,11 +126,13 @@ impl GameEngine {
                         allowed,
                         call_amount,
                         min_raise,
+                        max_amount,
                         ..
                     } => Some(ActionPrompt {
                         allowed_actions: allowed,
                         call_amount,
                         min_raise,
+                        max_amount,
                         max_discards: None,
                     }),
                     _ => None,
@@ -146,6 +148,7 @@ impl GameEngine {
                     allowed_actions: vec![AllowedAction::Draw],
                     call_amount: None,
                     min_raise: None,
+                    max_amount: None,
                     max_discards: Some(five_card_draw::MAX_DISCARDS),
                 })
             }
@@ -463,28 +466,37 @@ impl GameEngine {
                         allowed,
                         call_amount,
                         min_raise,
+                        max_amount,
                         ..
                     } = self.action_requested_event_for(pid, &pname)
                     {
                         let allow_call = allowed.iter().any(|a| matches!(a, AllowedAction::Call));
-                        let allow_raise = allowed.iter().any(|a| matches!(a, AllowedAction::Raise));
+                        let allow_amount = allowed
+                            .iter()
+                            .any(|a| matches!(a, AllowedAction::Bet | AllowedAction::Raise));
                         let call_text = if allow_call {
                             Self::format_opt_chips(call_amount)
                         } else {
                             "n/a".into()
                         };
-                        let min_raise_text = if allow_raise {
+                        let min_raise_text = if allow_amount {
                             Self::format_opt_chips(min_raise)
+                        } else {
+                            "n/a".into()
+                        };
+                        let max_amount_text = if allow_amount {
+                            Self::format_opt_chips(max_amount)
                         } else {
                             "n/a".into()
                         };
 
                         lines.push(format!(
-                            "To act: {} | allowed: {} | call: {} | min_raise: {}",
+                            "To act: {} | allowed: {} | call: {} | min_raise: {} | max_amount: {}",
                             pname,
                             Self::format_allowed_actions(&allowed),
                             call_text,
-                            min_raise_text
+                            min_raise_text,
+                            max_amount_text
                         ));
                     } else {
                         lines.push(format!("To act: {}", pname));

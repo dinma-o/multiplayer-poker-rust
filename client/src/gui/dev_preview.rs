@@ -105,14 +105,14 @@ fn apply_table_preview(app: &mut PokerApp) {
         HistoryEntry {
             index: 1,
             kind: HistoryKind::Info,
-            message: "Noah posted big blind 40".to_string(),
+            message: "Noah posted big blind 20".to_string(),
             showdown_results: None,
             payout_results: None,
         },
         HistoryEntry {
             index: 2,
             kind: HistoryKind::Info,
-            message: "Maya called 40".to_string(),
+            message: "Maya called 20".to_string(),
             showdown_results: None,
             payout_results: None,
         },
@@ -181,7 +181,7 @@ fn preview_table_state(table_id: u64) -> PublicTableState {
         dealer_seat: 1,
         acting_player_id: Some(1),
         pot: 320,
-        current_bet: 40,
+        current_bet: 20,
         board_cards: vec![
             card(Rank::Queen, Suit::Clubs),
             card(Rank::Ten, Suit::Diamonds),
@@ -260,8 +260,9 @@ fn preview_player_view(table_id: u64) -> PlayerView {
                 AllowedAction::Call,
                 AllowedAction::Raise,
             ],
-            call_amount: Some(40),
-            min_raise: Some(80),
+            call_amount: Some(20),
+            min_raise: Some(5),
+            max_amount: Some(20),
             max_discards: None,
         }),
     }

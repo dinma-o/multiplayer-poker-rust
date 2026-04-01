@@ -269,13 +269,7 @@ fn show_right_sidebar(
                         );
                     }
                 } else {
-                    let balance = app
-                        .account
-                        .as_ref()
-                        .map(|account| account.balance)
-                        .unwrap_or(0);
-                    if let Some(action) = show_action_bar(ui, &prompt, balance, &mut app.input_bet)
-                    {
+                    if let Some(action) = show_action_bar(ui, &prompt, &mut app.input_bet) {
                         app.send_op(
                             PendingKind::SubmitAction,
                             RequestOp::SubmitAction { table_id, action },

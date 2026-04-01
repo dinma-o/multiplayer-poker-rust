@@ -211,6 +211,13 @@ fn last_action_requested_min_raise(events: &[Event]) -> Option<i64> {
     })
 }
 
+fn last_action_requested_max_amount(events: &[Event]) -> Option<i64> {
+    events.iter().rev().find_map(|e| match e {
+        Event::ActionRequested { max_amount, .. } => *max_amount,
+        _ => None,
+    })
+}
+
 fn apply_passive_betting_action(
     engine: &mut GameEngine,
     events_with_prompt: &[Event],
@@ -899,6 +906,96 @@ fn stud_completion_moves_to_fourth_street_with_visible_best_opener() {
     let allowed = last_action_requested_allowed(&close_events);
     assert!(allowed.contains(&AllowedAction::Check));
     assert!(allowed.contains(&AllowedAction::Bet));
+}
+
+#[test]
+fn five_card_draw_prompt_reports_server_max_amounts() {
+    let mut fx = EngineFixture::new_two_players_with_seed(42);
+
+    let start_events = start_to_betting_round1(&mut fx.engine);
+    assert_nonempty_no_error(&start_events);
+    assert_eq!(last_action_requested_max_amount(&start_events), Some(25));
+
+    let opener = last_action_requested_player(&start_events);
+    let raise_prompt_events = fx.engine.apply(Command::Action(ActionCmd::Bet {
+        player_name: opener,
+        amount: 5,
+    }));
+    assert_nonempty_no_error(&raise_prompt_events);
+
+    let allowed = last_action_requested_allowed(&raise_prompt_events);
+    assert!(allowed.contains(&AllowedAction::Raise));
+    assert_eq!(
+        last_action_requested_min_raise(&raise_prompt_events),
+        Some(5)
+    );
+    assert_eq!(
+        last_action_requested_max_amount(&raise_prompt_events),
+        Some(35)
+    );
+}
+
+#[test]
+fn five_card_draw_prompt_omits_raise_when_player_cannot_afford_it() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let path = tmp.path().join("accounts.json");
+
+    let mut store = AccountStore::load(&path).expect("load account store");
+    store
+        .create_account("alice", "1234", 10)
+        .expect("create alice");
+    store
+        .create_account("bob", "1234", 1_000)
+        .expect("create bob");
+
+    let table = PokerTable::new();
+    let mut engine = GameEngine::new(Arc::new(Mutex::new(store)), table);
+
+    let join_alice = engine.apply(Command::Lobby(LobbyCmd::Join {
+        player_name: "alice".to_string(),
+        pin: "1234".to_string(),
+    }));
+    assert_nonempty_no_error(&join_alice);
+
+    let join_bob = engine.apply(Command::Lobby(LobbyCmd::Join {
+        player_name: "bob".to_string(),
+        pin: "1234".to_string(),
+    }));
+    assert_nonempty_no_error(&join_bob);
+
+    let seed_events = engine.apply(Command::Lobby(LobbyCmd::SetRngSeed { seed: 7 }));
+    assert_nonempty_no_error(&seed_events);
+
+    let start_events = start_to_betting_round1(&mut engine);
+    assert_nonempty_no_error(&start_events);
+
+    let first_actor = last_action_requested_player(&start_events);
+    let prompt_events = if first_actor == "bob" {
+        let bet_events = engine.apply(Command::Action(ActionCmd::Bet {
+            player_name: "bob".to_string(),
+            amount: 5,
+        }));
+        assert_nonempty_no_error(&bet_events);
+        bet_events
+    } else {
+        let check_events = engine.apply(Command::Action(ActionCmd::Check {
+            player_name: "alice".to_string(),
+        }));
+        assert_nonempty_no_error(&check_events);
+
+        let bet_events = engine.apply(Command::Action(ActionCmd::Bet {
+            player_name: "bob".to_string(),
+            amount: 5,
+        }));
+        assert_nonempty_no_error(&bet_events);
+        bet_events
+    };
+
+    assert_eq!(last_action_requested_player(&prompt_events), "alice");
+    let allowed = last_action_requested_allowed(&prompt_events);
+    assert!(allowed.contains(&AllowedAction::Call));
+    assert!(!allowed.contains(&AllowedAction::Raise));
+    assert_eq!(last_action_requested_max_amount(&prompt_events), None);
 }
 
 #[test]

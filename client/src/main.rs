@@ -6,12 +6,10 @@ const DEFAULT_PORT: u16 = 8080;
 fn main() {
     let mut args: Vec<String> = env::args().skip(1).collect();
 
-    if let Some(preview_name) = parse_flag_value(&args, "--gui-preview")
-        .unwrap_or_else(|err| {
-            eprintln!("{err}");
-            std::process::exit(2);
-        })
-    {
+    if let Some(preview_name) = parse_flag_value(&args, "--gui-preview").unwrap_or_else(|err| {
+        eprintln!("{err}");
+        std::process::exit(2);
+    }) {
         if let Err(err) = poker_gui::gui::run_preview(&preview_name) {
             eprintln!("{err}");
             std::process::exit(2);

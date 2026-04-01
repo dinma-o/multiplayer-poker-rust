@@ -468,10 +468,11 @@ fn format_player_view(view: &PlayerView) -> String {
 
 fn format_action_prompt(prompt: &ActionPrompt) -> String {
     format!(
-        "Action: {} | call={} | min_raise={} | max_discards={}",
+        "Action: {} | call={} | min_raise={} | max_amount={} | max_discards={}",
         format_allowed_actions(&prompt.allowed_actions),
         format_optional_chips(prompt.call_amount),
         format_optional_chips(prompt.min_raise),
+        format_optional_chips(prompt.max_amount),
         format_optional_usize(prompt.max_discards)
     )
 }
@@ -831,10 +832,9 @@ mod tests {
 
         assert!(output.contains("Player view for alice (player #7)"));
         assert!(output.contains("Private cards: Q♣ J♦"));
-        assert!(
-            output
-                .contains("Action: check, call, raise | call=10 | min_raise=20 | max_discards=n/a")
-        );
+        assert!(output.contains(
+            "Action: check, call, raise | call=10 | min_raise=20 | max_amount=25 | max_discards=n/a"
+        ));
     }
 
     #[test]
@@ -1011,6 +1011,7 @@ mod tests {
                 ],
                 call_amount: Some(10),
                 min_raise: Some(20),
+                max_amount: Some(25),
                 max_discards: None,
             }),
         }

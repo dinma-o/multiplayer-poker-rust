@@ -142,6 +142,7 @@ pub enum Event {
         allowed: Vec<AllowedAction>,
         call_amount: Option<Chips>,
         min_raise: Option<Chips>,
+        max_amount: Option<Chips>,
     },
 
     DrawRequested {

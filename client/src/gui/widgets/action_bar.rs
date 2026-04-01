@@ -11,7 +11,6 @@ use crate::gui::theme;
 pub fn show_action_bar(
     ui: &mut egui::Ui,
     prompt: &ActionPrompt,
-    balance: Chips,
     bet_input: &mut String,
 ) -> Option<PlayerAction> {
     let mut chosen: Option<PlayerAction> = None;
@@ -20,7 +19,12 @@ pub fn show_action_bar(
     let has_raise = prompt.allowed_actions.contains(&AllowedAction::Raise);
     let needs_amount = has_bet || has_raise;
     let min = prompt.min_raise.unwrap_or(1);
-    let max = balance.max(min);
+    let max = prompt.max_amount.unwrap_or(min).max(min);
+    let amount_label = if has_bet {
+        "Bet amount"
+    } else {
+        "Raise amount"
+    };
 
     if needs_amount {
         if bet_input.is_empty() {
@@ -29,7 +33,7 @@ pub fn show_action_bar(
 
         theme::soft_panel_frame().show(ui, |ui| {
             ui.horizontal(|ui| {
-                ui.label(theme::small_muted("Raise amount"));
+                ui.label(theme::small_muted(amount_label));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.label(
                         egui::RichText::new(bet_input.clone())
@@ -68,6 +72,8 @@ pub fn show_action_bar(
                 if let Ok(value) = bet_input.parse::<Chips>() {
                     if value > max {
                         *bet_input = max.to_string();
+                    } else if value < min {
+                        *bet_input = min.to_string();
                     }
                 }
             }

@@ -283,6 +283,7 @@ pub struct ActionPrompt {
     pub allowed_actions: Vec<AllowedAction>,
     pub call_amount: Option<Chips>,
     pub min_raise: Option<Chips>,
+    pub max_amount: Option<Chips>,
     pub max_discards: Option<usize>,
 }
 
