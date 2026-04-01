@@ -569,10 +569,10 @@ impl GameEngine {
             .and_then(|pid| self.table.hand_state().player_up_cards(pid))
             .map(|cards| cards.len())
         {
-            Some(2) => "fourth street",
-            Some(3) => "fifth street",
-            Some(4) => "sixth street",
-            _ => "next street",
+            Some(2) => "visible fourth street",
+            Some(3) => "visible fifth street",
+            Some(4) => "visible sixth street",
+            _ => "visible next street",
         };
 
         events.push(self.emit_info(format!(

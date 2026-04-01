@@ -507,9 +507,8 @@ fn format_action_prompt(prompt: &ActionPrompt) -> String {
     }
 
     if format_optional_chips(prompt.min_raise) != "n/a"{
-        output.push_str(&format!("Min Raise: {} \n", format_optional_chips(prompt.min_raise)));
+        output.push_str(&format!("Min Bet/Raise: {} \n", format_optional_chips(prompt.min_raise)));
     }
-
     if format_optional_usize(prompt.max_discards) != "n/a"{
         output.push_str(&format!("Max Number of Discards: {} \n", format_optional_usize(prompt.max_discards)));
     }
