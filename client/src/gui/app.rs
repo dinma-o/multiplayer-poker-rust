@@ -23,6 +23,12 @@ pub enum Screen {
     Table { table_id: TableId },
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TableViewMode {
+    Seated,
+    Spectating,
+}
+
 // ---------------------------------------------------------------------------
 // LoginTab — which tab is active on the login screen
 // ---------------------------------------------------------------------------
@@ -89,6 +95,7 @@ pub struct PokerApp {
     pub tables: Vec<TableSummary>,
 
     // Active table state
+    pub table_view_mode: Option<TableViewMode>,
     pub table_state: Option<PublicTableState>,
     pub player_view: Option<PlayerView>,
     pub event_log: Vec<HistoryEntry>,
@@ -143,6 +150,7 @@ impl Default for PokerApp {
             session_id: None,
             account: None,
             tables: Vec::new(),
+            table_view_mode: None,
             table_state: None,
             player_view: None,
             event_log: Vec::new(),
@@ -186,9 +194,33 @@ impl PokerApp {
 
     /// Transition to the Lobby screen and immediately refresh the table list.
     pub fn enter_lobby(&mut self) {
+        self.table_view_mode = None;
         self.screen = Screen::Lobby;
         self.last_error = None;
         self.send_op(PendingKind::ListTables, RequestOp::ListTables);
+    }
+
+    pub fn open_table(&mut self, table_id: TableId, mode: TableViewMode) {
+        self.table_view_mode = Some(mode);
+        self.reset_table_view_state();
+        self.last_error = None;
+        self.screen = Screen::Table { table_id };
+    }
+
+    pub fn watch_table(&mut self, table_id: TableId) {
+        self.open_table(table_id, TableViewMode::Spectating);
+        self.send_op(
+            PendingKind::Subscribe,
+            RequestOp::SubscribeTable { table_id },
+        );
+    }
+
+    pub fn leave_spectated_table(&mut self, table_id: TableId) {
+        if let Some(tx) = &self.cmd_tx {
+            let _ = tx.send(GuiCommand::SendOp(RequestOp::UnsubscribeTable { table_id }));
+        }
+        self.reset_table_view_state();
+        self.enter_lobby();
     }
 
     /// Send a request op to the network thread and record it as pending.
@@ -280,6 +312,7 @@ impl PokerApp {
             Some(ResponsePayload::Logout(_)) => {
                 self.session_id = None;
                 self.account = None;
+                self.table_view_mode = None;
                 self.screen = Screen::Login;
             }
             Some(ResponsePayload::Tables(list)) => {
@@ -294,7 +327,7 @@ impl PokerApp {
                 let table_id = result.table_id;
                 match result.status {
                     SeatAssignmentStatus::Seated => {
-                        self.last_error = None;
+                        self.open_table(table_id, TableViewMode::Seated);
                         // Subscribe then fetch initial state — these go through the channel
                         // in order without blocking the UI.
                         if let Some(tx) = &self.cmd_tx {
@@ -305,7 +338,6 @@ impl PokerApp {
                             let _ =
                                 tx.send(GuiCommand::SendOp(RequestOp::GetPlayerView { table_id }));
                         }
-                        self.screen = Screen::Table { table_id };
                     }
                     SeatAssignmentStatus::Queued => {
                         self.last_error = Some(
@@ -317,10 +349,7 @@ impl PokerApp {
             }
             Some(ResponsePayload::LeaveTable(result)) => match result.status {
                 LeaveTableStatus::Left => {
-                    self.table_state = None;
-                    self.player_view = None;
-                    self.selected_discards.clear();
-                    self.input_bet.clear();
+                    self.reset_table_view_state();
                     self.enter_lobby();
                 }
                 LeaveTableStatus::LeavingAfterHand => {
@@ -334,6 +363,7 @@ impl PokerApp {
                 self.table_state = Some(state);
             }
             Some(ResponsePayload::PlayerView(view)) => {
+                self.table_view_mode = Some(TableViewMode::Seated);
                 self.player_view = Some(view);
             }
             _ => {}
@@ -365,6 +395,7 @@ impl PokerApp {
                     // Clear stale per-hand input state when a new PlayerView arrives.
                     self.selected_discards.clear();
                     self.input_bet.clear();
+                    self.table_view_mode = Some(TableViewMode::Seated);
                     self.player_view = Some(view);
                 }
                 for entry in &update.events {
@@ -379,13 +410,8 @@ impl PokerApp {
             ClientEvent::SessionClosed(msg) => {
                 self.session_id = None;
                 self.account = None;
-                self.table_state = None;
-                self.player_view = None;
-                self.event_log.clear();
-                self.last_showdown = None;
-                self.last_payout = None;
-                self.selected_discards.clear();
-                self.input_bet.clear();
+                self.table_view_mode = None;
+                self.reset_table_view_state();
                 use common::wire::SessionCloseReason;
                 self.status_msg = match msg.reason {
                     SessionCloseReason::ReplacedByLogin => {
@@ -400,13 +426,8 @@ impl PokerApp {
                 self.cmd_tx = None;
                 self.resp_rx = None;
                 self.push_rx = None;
-                self.table_state = None;
-                self.player_view = None;
-                self.event_log.clear();
-                self.last_showdown = None;
-                self.last_payout = None;
-                self.selected_discards.clear();
-                self.input_bet.clear();
+                self.table_view_mode = None;
+                self.reset_table_view_state();
                 self.status_msg = "Connection lost — please reconnect".to_string();
                 self.screen = Screen::Connect;
             }
@@ -415,9 +436,8 @@ impl PokerApp {
                 self.cmd_tx = None;
                 self.resp_rx = None;
                 self.push_rx = None;
-                self.table_state = None;
-                self.player_view = None;
-                self.event_log.clear();
+                self.table_view_mode = None;
+                self.reset_table_view_state();
                 self.status_msg = format!("Connection error: {msg}");
                 self.screen = Screen::Connect;
             }
@@ -441,5 +461,17 @@ impl eframe::App for PokerApp {
         }
 
         super::theme::show_small_screen_notice(ctx, &mut self.small_screen_notice_dismissed);
+    }
+}
+
+impl PokerApp {
+    fn reset_table_view_state(&mut self) {
+        self.table_state = None;
+        self.player_view = None;
+        self.event_log.clear();
+        self.last_showdown = None;
+        self.last_payout = None;
+        self.selected_discards.clear();
+        self.input_bet.clear();
     }
 }

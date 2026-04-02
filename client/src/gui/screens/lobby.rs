@@ -135,7 +135,7 @@ fn show_overview_column(ui: &mut egui::Ui, app: &PokerApp) {
 
 fn show_tables_column(ui: &mut egui::Ui, app: &mut PokerApp) {
     let is_pending = app.is_request_pending();
-    let mut join_id: Option<u64> = None;
+    let mut table_action: Option<TableCardAction> = None;
 
     theme::panel_frame().show(ui, |ui| {
         ui.horizontal(|ui| {
@@ -171,8 +171,8 @@ fn show_tables_column(ui: &mut egui::Ui, app: &mut PokerApp) {
                 .max_height(360.0)
                 .show(ui, |ui| {
                     for table in &app.tables {
-                        if show_table_card(ui, table, !is_pending) {
-                            join_id = Some(table.table_id);
+                        if let Some(action) = show_table_card(ui, table, !is_pending) {
+                            table_action = Some(action);
                         }
                         ui.add_space(10.0);
                     }
@@ -180,8 +180,15 @@ fn show_tables_column(ui: &mut egui::Ui, app: &mut PokerApp) {
         }
     });
 
-    if let Some(table_id) = join_id {
-        app.send_op(PendingKind::JoinTable, RequestOp::JoinTable { table_id });
+    if let Some(action) = table_action {
+        match action {
+            TableCardAction::Join(table_id) => {
+                app.send_op(PendingKind::JoinTable, RequestOp::JoinTable { table_id });
+            }
+            TableCardAction::Watch(table_id) => {
+                app.watch_table(table_id);
+            }
+        }
     }
 
     ui.add_space(16.0);
@@ -288,8 +295,18 @@ fn show_account_column(ui: &mut egui::Ui, app: &mut PokerApp) {
     }
 }
 
-fn show_table_card(ui: &mut egui::Ui, table: &TableSummary, enabled: bool) -> bool {
-    let mut join_clicked = false;
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TableCardAction {
+    Join(u64),
+    Watch(u64),
+}
+
+fn show_table_card(
+    ui: &mut egui::Ui,
+    table: &TableSummary,
+    enabled: bool,
+) -> Option<TableCardAction> {
+    let mut action = None;
 
     theme::soft_panel_frame().show(ui, |ui| {
         ui.horizontal(|ui| {
@@ -300,8 +317,11 @@ fn show_table_card(ui: &mut egui::Ui, table: &TableSummary, enabled: bool) -> bo
             });
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
-                if ui.add_enabled(enabled, secondary_button("Join")).clicked() {
-                    join_clicked = true;
+                if ui.add_enabled(enabled, primary_button("Join")).clicked() {
+                    action = Some(TableCardAction::Join(table.table_id));
+                }
+                if ui.add_enabled(enabled, secondary_button("Watch")).clicked() {
+                    action = Some(TableCardAction::Watch(table.table_id));
                 }
             });
         });
@@ -323,9 +343,13 @@ fn show_table_card(ui: &mut egui::Ui, table: &TableSummary, enabled: bool) -> bo
                 theme::TEXT_MUTED,
             );
         });
+        ui.add_space(4.0);
+        ui.label(theme::small_muted(
+            "Join to take a seat, or watch to follow the public table state without sitting in.",
+        ));
     });
 
-    join_clicked
+    action
 }
 
 fn show_variant_option(

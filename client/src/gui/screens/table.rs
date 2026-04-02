@@ -3,7 +3,7 @@ use common::wire::{PlayerView, PublicTableState, RequestOp, TableId};
 use image::load_from_memory;
 
 use super::super::{
-    app::{PendingKind, PokerApp},
+    app::{PendingKind, PokerApp, TableViewMode},
     theme,
     widgets::{
         action_bar::show_action_bar,
@@ -18,6 +18,8 @@ use super::super::{
 pub fn show(app: &mut PokerApp, ctx: &egui::Context, table_id: TableId) {
     let my_player_id = app.account.as_ref().map(|account| account.player_id);
     let player_view = app.player_view.clone();
+    let table_view_mode = app.table_view_mode.unwrap_or(TableViewMode::Seated);
+    let is_spectating = table_view_mode == TableViewMode::Spectating;
     let state = app
         .table_state
         .clone()
@@ -68,6 +70,15 @@ pub fn show(app: &mut PokerApp, ctx: &egui::Context, table_id: TableId) {
                     theme::BORDER_SOFT,
                     theme::TEXT_MUTED,
                 );
+                if is_spectating {
+                    theme::show_badge(
+                        ui,
+                        "Spectating",
+                        theme::PANEL_SOFT,
+                        theme::INFO,
+                        theme::TEXT,
+                    );
+                }
                 theme::show_badge(
                     ui,
                     &format!("Pot {}", state.pot),
@@ -79,7 +90,14 @@ pub fn show(app: &mut PokerApp, ctx: &egui::Context, table_id: TableId) {
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui
-                    .add_enabled(!is_pending, secondary_button("Leave table"))
+                    .add_enabled(
+                        !is_pending,
+                        secondary_button(if is_spectating {
+                            "Stop watching"
+                        } else {
+                            "Leave table"
+                        }),
+                    )
                     .clicked()
                 {
                     leave_clicked = true;
@@ -90,7 +108,11 @@ pub fn show(app: &mut PokerApp, ctx: &egui::Context, table_id: TableId) {
     });
 
     if leave_clicked {
-        app.send_op(PendingKind::LeaveTable, RequestOp::LeaveTable { table_id });
+        if is_spectating {
+            app.leave_spectated_table(table_id);
+        } else {
+            app.send_op(PendingKind::LeaveTable, RequestOp::LeaveTable { table_id });
+        }
         return;
     }
 
@@ -124,12 +146,24 @@ pub fn show(app: &mut PokerApp, ctx: &egui::Context, table_id: TableId) {
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
                     if let Some(state) = &state {
-                        show_right_sidebar(ui, ctx, app, state, table_id, player_view.as_ref());
+                        show_right_sidebar(
+                            ui,
+                            ctx,
+                            app,
+                            state,
+                            table_id,
+                            player_view.as_ref(),
+                            table_view_mode,
+                        );
                     } else {
                         show_waiting_panel(
                             ui,
                             "Syncing seat data",
-                            "Your hand and actions will appear here once the table payload arrives.",
+                            if is_spectating {
+                                "Public seat and pot information will appear here once the first table update arrives."
+                            } else {
+                                "Your hand and actions will appear here once the table payload arrives."
+                            },
                         );
                     }
                 });
@@ -192,8 +226,11 @@ fn show_right_sidebar(
     state: &PublicTableState,
     table_id: TableId,
     player_view: Option<&PlayerView>,
+    table_view_mode: TableViewMode,
 ) {
-    if let Some(view) = player_view {
+    let is_spectating = table_view_mode == TableViewMode::Spectating;
+
+    if !is_spectating && let Some(view) = player_view {
         let has_cards = !view.private_cards.is_empty() || !view.up_cards.is_empty();
         if has_cards {
             theme::panel_frame().show(ui, |ui| {
@@ -228,7 +265,12 @@ fn show_right_sidebar(
     theme::panel_frame().show(ui, |ui| {
         ui.label(theme::eyebrow("Action"));
 
-        if state.step == HandStep::WaitingForPlayers {
+        if is_spectating {
+            ui.label(theme::section_title("Spectator view"));
+            ui.label(theme::muted(
+                "You are subscribed to public table updates only. Seats, pot, board cards, and history will keep updating here while you watch.",
+            ));
+        } else if state.step == HandStep::WaitingForPlayers {
             ui.label(theme::section_title("Ready to deal"));
             ui.label(theme::muted(
                 "The room is idle. Start the next hand when enough players are seated.",
