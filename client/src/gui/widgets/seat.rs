@@ -66,7 +66,7 @@ pub fn show_seat(
                         theme::show_badge(ui, "You", theme::PANEL_SOFT, theme::INFO, theme::INFO);
                     }
                     if is_dealer {
-                        theme::show_badge(ui, "Dealer", theme::GOLD_SOFT, theme::GOLD, theme::GOLD);
+                        theme::show_badge(ui, "D", theme::GOLD, theme::GOLD, theme::BACKGROUND);
                     }
                 });
                 ui.label(theme::small_muted(format!("{} chips", seat.balance)));

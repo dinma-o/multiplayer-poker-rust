@@ -71,9 +71,9 @@ pub fn show(app: &mut PokerApp, ctx: &egui::Context, table_id: TableId) {
                 theme::show_badge(
                     ui,
                     &format!("Pot {}", state.pot),
-                    theme::ACCENT_GLOW,
+                    theme::ACCENT_STRONG,
                     theme::ACCENT,
-                    theme::ACCENT,
+                    theme::BACKGROUND,
                 );
             }
 
@@ -117,6 +117,9 @@ pub fn show(app: &mut PokerApp, ctx: &egui::Context, table_id: TableId) {
         .resizable(false)
         .default_width(right_panel_width)
         .show(ctx, |ui| {
+            ui.set_width(right_panel_width);
+            ui.set_min_width(right_panel_width);
+            ui.set_max_width(right_panel_width);
             egui::ScrollArea::vertical()
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
@@ -455,7 +458,12 @@ fn show_table_surface(
                                     ui.add_space(if very_compact { 2.0 } else { 4.0 });
                                     ui.horizontal_centered(|ui| {
                                         for seat_index in 0..3 {
-                                            render_seat(ui, ctx, &mut app.texture_cache, seat_index);
+                                            render_seat(
+                                                ui,
+                                                ctx,
+                                                &mut app.texture_cache,
+                                                seat_index,
+                                            );
                                             ui.add_space(top_row_gap);
                                         }
                                     });
@@ -480,7 +488,9 @@ fn show_table_surface(
                                                         .color(theme::TEXT)
                                                         .strong(),
                                                 );
-                                                ui.label(theme::small_muted(step_label(state.step)));
+                                                ui.label(theme::small_muted(step_label(
+                                                    state.step,
+                                                )));
                                             });
                                         });
                                     });

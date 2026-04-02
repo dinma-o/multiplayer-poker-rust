@@ -236,6 +236,7 @@ fn apply_draw_table_preview(app: &mut PokerApp) {
 
     app.screen = Screen::Table { table_id };
     app.account = Some(preview_account());
+    app.selected_discards = vec![1, 3];
     app.table_state = Some(PublicTableState {
         table_id,
         variant: PokerVariant::FiveCardDraw,
@@ -288,7 +289,8 @@ fn apply_draw_table_preview(app: &mut PokerApp) {
         history_info(1, "Noah opened for 10"),
         history_info(2, "You called 10"),
         history_info(3, "Maya called 10"),
-        history_prompt(4),
+        history_info(4, "You marked 2 cards to discard"),
+        history_prompt(5),
     ];
     app.last_showdown = Some(HistoryEntry {
         index: 90,

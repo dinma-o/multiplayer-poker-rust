@@ -48,19 +48,9 @@ pub fn show_discard_picker(
                 })
                 .stroke(stroke)
                 .inner_margin(egui::Margin::same(6))
-                .corner_radius(18.0)
+                    .corner_radius(18.0)
                 .show(ui, |ui| {
                     show_card(ui, ctx, cache, card);
-                    if is_selected {
-                        ui.centered_and_justified(|ui| {
-                            ui.label(
-                                egui::RichText::new("Marked to discard")
-                                    .small()
-                                    .color(theme::DANGER)
-                                    .strong(),
-                            );
-                        });
-                    }
                 });
 
             let response = inner.response.interact(egui::Sense::click());
