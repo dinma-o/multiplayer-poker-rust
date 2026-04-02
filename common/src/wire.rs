@@ -2,7 +2,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     card_deck::Card,
-    protocol::{AllowedAction, Chips, HandStep, PayoutLine, PlayerId, PokerVariant, ShowdownLine},
+    protocol::{
+        AllowedAction, AnimationFace, AnimationStreet, AnimationTarget, Chips, HandStep,
+        PayoutLine, PlayerId, PokerVariant, ShowdownLine,
+    },
 };
 
 pub type SessionId = String;
@@ -10,6 +13,7 @@ pub type TableId = u64;
 pub type RequestId = String;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+/// One request sent from a client to the server over the newline-delimited TCP protocol.
 pub struct ClientRequest {
     pub request_id: RequestId,
     pub session_id: Option<SessionId>,
@@ -17,6 +21,7 @@ pub struct ClientRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+/// Direct response to a single `ClientRequest`.
 pub struct ServerResponse {
     pub request_id: RequestId,
     pub ok: bool,
@@ -46,6 +51,10 @@ impl ServerResponse {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "type", rename_all = "snake_case")]
+/// Top-level TCP message.
+///
+/// `Response` is request-scoped, while `TableUpdate` and `SessionClosed` are unsolicited push
+/// messages tied to a subscribed table or a connection-level session change.
 pub enum ServerMessage {
     Response { response: ServerResponse },
     TableUpdate(TableUpdateMessage),
@@ -241,6 +250,10 @@ pub struct OperationReceipt {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+/// Public snapshot of a table.
+///
+/// This is safe to show to spectators and opponents. Hidden hole cards are represented only as a
+/// count on each seat.
 pub struct PublicTableState {
     pub table_id: TableId,
     pub variant: PokerVariant,
@@ -267,6 +280,7 @@ pub struct PublicSeatState {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+/// Session-scoped private state for the seated player who requested it.
 pub struct PlayerView {
     pub table_id: TableId,
     pub player_id: PlayerId,
@@ -279,10 +293,25 @@ pub struct PlayerView {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+/// One animation instruction derived from an internal `protocol::Event::Deal`.
+///
+/// The server redacts `card` and `target_index` when the receiving session should not see the
+/// underlying private card.
+pub struct AnimationCue {
+    pub street: AnimationStreet,
+    pub target: AnimationTarget,
+    pub seat: Option<usize>,
+    pub face: AnimationFace,
+    pub card: Option<Card>,
+    pub target_index: Option<usize>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ActionPrompt {
     pub allowed_actions: Vec<AllowedAction>,
     pub call_amount: Option<Chips>,
     pub min_raise: Option<Chips>,
+    pub max_amount: Option<Chips>,
     pub max_discards: Option<usize>,
 }
 
@@ -304,11 +333,17 @@ pub struct TableHistory {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+/// Push message for a subscribed table.
+///
+/// Combines the authoritative public table state, an optional private player view, filtered
+/// history entries, and optional animation cues for the just-applied engine events.
 pub struct TableUpdateMessage {
     pub table_id: TableId,
     pub table_state: PublicTableState,
     pub player_view: Option<PlayerView>,
     pub events: Vec<HistoryEntry>,
+    #[serde(default)]
+    pub animation_cues: Vec<AnimationCue>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -461,12 +496,44 @@ mod tests {
                     payout_results: None,
                 },
             ],
+            animation_cues: vec![AnimationCue {
+                street: AnimationStreet::FiveCardDrawInitial,
+                target: AnimationTarget::Seat,
+                seat: Some(0),
+                face: AnimationFace::Down,
+                card: Some(Card::new(Rank::King, Suit::Hearts)),
+                target_index: Some(0),
+            }],
         };
 
         let msg = ServerMessage::table_update(update);
         let json = serde_json::to_string(&msg).expect("serialize message");
         let decoded: ServerMessage = serde_json::from_str(&json).expect("deserialize message");
         assert_eq!(decoded, msg);
+    }
+
+    #[test]
+    fn table_update_defaults_animation_cues_when_missing() {
+        let json = r#"{
+            "table_id": 1,
+            "table_state": {
+                "table_id": 1,
+                "variant": "five_card_draw",
+                "step": "waiting_for_players",
+                "dealer_seat": 0,
+                "acting_player_id": null,
+                "pot": 0,
+                "current_bet": 0,
+                "board_cards": [],
+                "seats": []
+            },
+            "player_view": null,
+            "events": []
+        }"#;
+
+        let decoded: TableUpdateMessage =
+            serde_json::from_str(json).expect("deserialize update without animation_cues");
+        assert!(decoded.animation_cues.is_empty());
     }
 
     #[test]

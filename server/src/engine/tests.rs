@@ -2,7 +2,8 @@ use super::GameEngine;
 use crate::{account_store::AccountStore, table::PokerTable};
 use common::constants::seven_card_stud;
 use common::protocol::{
-    ActionCmd, AllowedAction, Command, Event, HandStep, LobbyCmd, PlayerId, PokerVariant,
+    ActionCmd, AllowedAction, AnimationFace, AnimationStreet, AnimationTarget, Command, DealEvent,
+    Event, HandStep, LobbyCmd, PlayerId, PokerVariant,
 };
 use std::sync::{Arc, Mutex};
 use tempfile::TempDir;
@@ -177,6 +178,16 @@ fn showdown_results(events: &[Event]) -> Vec<(String, String)> {
         .expect("expected Showdown event")
 }
 
+fn deal_events(events: &[Event]) -> Vec<DealEvent> {
+    events
+        .iter()
+        .filter_map(|e| match e {
+            Event::Deal { deal } => Some(deal.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
 fn apply_check(engine: &mut GameEngine, player_name: String) -> Vec<Event> {
     engine.apply(Command::Action(ActionCmd::Check { player_name }))
 }
@@ -207,6 +218,13 @@ fn set_stud_variant(engine: &mut GameEngine) -> Vec<Event> {
 fn last_action_requested_min_raise(events: &[Event]) -> Option<i64> {
     events.iter().rev().find_map(|e| match e {
         Event::ActionRequested { min_raise, .. } => *min_raise,
+        _ => None,
+    })
+}
+
+fn last_action_requested_max_amount(events: &[Event]) -> Option<i64> {
+    events.iter().rev().find_map(|e| match e {
+        Event::ActionRequested { max_amount, .. } => *max_amount,
         _ => None,
     })
 }
@@ -445,6 +463,24 @@ fn golden_flow_start_hand_stops_at_betting_round1() {
 }
 
 #[test]
+fn five_card_draw_initial_deal_emits_round_robin_private_cues() {
+    let mut fx = EngineFixture::new_two_players_with_seed(42);
+
+    let events = start_to_betting_round1(&mut fx.engine);
+    let deals = deal_events(&events);
+    let order = fx.engine.table.action_order();
+
+    assert_eq!(deals.len(), 10);
+    for (index, deal) in deals.iter().enumerate() {
+        assert_eq!(deal.street, AnimationStreet::FiveCardDrawInitial);
+        assert_eq!(deal.target, AnimationTarget::Seat);
+        assert_eq!(deal.face, AnimationFace::Down);
+        assert_eq!(deal.player_id, Some(order[index % order.len()]));
+        assert_eq!(deal.target_index, index / order.len());
+    }
+}
+
+#[test]
 fn golden_flow_betting_completes_stops_at_draw_phase() {
     let mut fx = EngineFixture::new_two_players_with_seed(42);
 
@@ -491,6 +527,35 @@ fn golden_flow_draw_to_betting2_then_showdown_payout_waiting() {
             HandStep::Payout,
             HandStep::WaitingForPlayers,
         ],
+    );
+}
+
+#[test]
+fn five_card_draw_replacement_emits_one_cue_per_new_card() {
+    let mut fx = EngineFixture::new_two_players_with_seed(42);
+    let (_start_events, _check1_events, draw_phase_events) = advance_to_draw_phase(&mut fx.engine);
+    let draw_player = last_draw_requested_player(&draw_phase_events);
+
+    let draw_events = fx.engine.apply(Command::Action(ActionCmd::Draw {
+        player_name: draw_player,
+        discard: vec![3, 1],
+    }));
+    let deals = deal_events(&draw_events);
+
+    assert_eq!(deals.len(), 2);
+    assert_eq!(
+        deals.iter().map(|deal| deal.street).collect::<Vec<_>>(),
+        vec![
+            AnimationStreet::FiveCardDrawReplacement,
+            AnimationStreet::FiveCardDrawReplacement,
+        ]
+    );
+    assert_eq!(
+        deals
+            .iter()
+            .map(|deal| deal.target_index)
+            .collect::<Vec<_>>(),
+        vec![1, 3]
     );
 }
 
@@ -681,6 +746,25 @@ fn holdem_golden_flow_preflop_completes_flop_dealt_stops_at_flop_betting() {
 }
 
 #[test]
+fn holdem_flop_emits_three_ordered_board_cues() {
+    let mut fx = EngineFixture::new_two_players_with_seed(42);
+    let set_variant_events = set_holdem_variant(&mut fx.engine);
+    assert_nonempty_no_error(&set_variant_events);
+
+    let (_start_events, _call_events, flop_events) = advance_holdem_to_flop_betting(&mut fx.engine);
+    let deals = deal_events(&flop_events);
+
+    assert_eq!(deals.len(), 3);
+    for (index, deal) in deals.iter().enumerate() {
+        assert_eq!(deal.street, AnimationStreet::HoldemFlop);
+        assert_eq!(deal.target, AnimationTarget::Board);
+        assert_eq!(deal.face, AnimationFace::Board);
+        assert_eq!(deal.player_id, None);
+        assert_eq!(deal.target_index, index);
+    }
+}
+
+#[test]
 fn holdem_golden_flow_complete_streets_showdown_payout_waiting() {
     let mut fx = EngineFixture::new_two_players_with_seed(42);
     let set_variant_events = set_holdem_variant(&mut fx.engine);
@@ -823,6 +907,43 @@ fn stud_start_hand_deals_third_street_and_seeds_bring_in() {
 }
 
 #[test]
+fn stud_third_street_emits_two_down_passes_then_one_up_pass() {
+    let mut fx = EngineFixture::new_three_players_with_seed(42);
+    let set_variant_events = set_stud_variant(&mut fx.engine);
+    assert_nonempty_no_error(&set_variant_events);
+
+    let start_events = start_to_betting_round1(&mut fx.engine);
+    let deals = deal_events(&start_events);
+    let active_in_order: Vec<PlayerId> = fx
+        .engine
+        .table
+        .action_order()
+        .into_iter()
+        .filter(|pid| fx.engine.table.is_active_player(*pid))
+        .collect();
+
+    assert_eq!(deals.len(), active_in_order.len() * 3);
+    for (index, deal) in deals.iter().enumerate().take(active_in_order.len() * 2) {
+        assert_eq!(deal.street, AnimationStreet::StudThirdDown);
+        assert_eq!(deal.target, AnimationTarget::Seat);
+        assert_eq!(deal.face, AnimationFace::Down);
+        assert_eq!(
+            deal.player_id,
+            Some(active_in_order[index % active_in_order.len()])
+        );
+    }
+    for (index, deal) in deals.iter().enumerate().skip(active_in_order.len() * 2) {
+        assert_eq!(deal.street, AnimationStreet::StudThirdUp);
+        assert_eq!(deal.target, AnimationTarget::Seat);
+        assert_eq!(deal.face, AnimationFace::Up);
+        assert_eq!(
+            deal.player_id,
+            Some(active_in_order[(index - active_in_order.len() * 2) % active_in_order.len()])
+        );
+    }
+}
+
+#[test]
 fn stud_completion_moves_to_fourth_street_with_visible_best_opener() {
     let mut fx = EngineFixture::new_three_players_with_seed(42);
     let set_variant_events = set_stud_variant(&mut fx.engine);
@@ -899,6 +1020,96 @@ fn stud_completion_moves_to_fourth_street_with_visible_best_opener() {
     let allowed = last_action_requested_allowed(&close_events);
     assert!(allowed.contains(&AllowedAction::Check));
     assert!(allowed.contains(&AllowedAction::Bet));
+}
+
+#[test]
+fn five_card_draw_prompt_reports_server_max_amounts() {
+    let mut fx = EngineFixture::new_two_players_with_seed(42);
+
+    let start_events = start_to_betting_round1(&mut fx.engine);
+    assert_nonempty_no_error(&start_events);
+    assert_eq!(last_action_requested_max_amount(&start_events), Some(25));
+
+    let opener = last_action_requested_player(&start_events);
+    let raise_prompt_events = fx.engine.apply(Command::Action(ActionCmd::Bet {
+        player_name: opener,
+        amount: 5,
+    }));
+    assert_nonempty_no_error(&raise_prompt_events);
+
+    let allowed = last_action_requested_allowed(&raise_prompt_events);
+    assert!(allowed.contains(&AllowedAction::Raise));
+    assert_eq!(
+        last_action_requested_min_raise(&raise_prompt_events),
+        Some(5)
+    );
+    assert_eq!(
+        last_action_requested_max_amount(&raise_prompt_events),
+        Some(35)
+    );
+}
+
+#[test]
+fn five_card_draw_prompt_omits_raise_when_player_cannot_afford_it() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let path = tmp.path().join("accounts.json");
+
+    let mut store = AccountStore::load(&path).expect("load account store");
+    store
+        .create_account("alice", "1234", 10)
+        .expect("create alice");
+    store
+        .create_account("bob", "1234", 1_000)
+        .expect("create bob");
+
+    let table = PokerTable::new();
+    let mut engine = GameEngine::new(Arc::new(Mutex::new(store)), table);
+
+    let join_alice = engine.apply(Command::Lobby(LobbyCmd::Join {
+        player_name: "alice".to_string(),
+        pin: "1234".to_string(),
+    }));
+    assert_nonempty_no_error(&join_alice);
+
+    let join_bob = engine.apply(Command::Lobby(LobbyCmd::Join {
+        player_name: "bob".to_string(),
+        pin: "1234".to_string(),
+    }));
+    assert_nonempty_no_error(&join_bob);
+
+    let seed_events = engine.apply(Command::Lobby(LobbyCmd::SetRngSeed { seed: 7 }));
+    assert_nonempty_no_error(&seed_events);
+
+    let start_events = start_to_betting_round1(&mut engine);
+    assert_nonempty_no_error(&start_events);
+
+    let first_actor = last_action_requested_player(&start_events);
+    let prompt_events = if first_actor == "bob" {
+        let bet_events = engine.apply(Command::Action(ActionCmd::Bet {
+            player_name: "bob".to_string(),
+            amount: 5,
+        }));
+        assert_nonempty_no_error(&bet_events);
+        bet_events
+    } else {
+        let check_events = engine.apply(Command::Action(ActionCmd::Check {
+            player_name: "alice".to_string(),
+        }));
+        assert_nonempty_no_error(&check_events);
+
+        let bet_events = engine.apply(Command::Action(ActionCmd::Bet {
+            player_name: "bob".to_string(),
+            amount: 5,
+        }));
+        assert_nonempty_no_error(&bet_events);
+        bet_events
+    };
+
+    assert_eq!(last_action_requested_player(&prompt_events), "alice");
+    let allowed = last_action_requested_allowed(&prompt_events);
+    assert!(allowed.contains(&AllowedAction::Call));
+    assert!(!allowed.contains(&AllowedAction::Raise));
+    assert_eq!(last_action_requested_max_amount(&prompt_events), None);
 }
 
 #[test]

@@ -5,6 +5,10 @@ use crate::{
     table::PokerTable,
 };
 
+/// Mutable per-table runtime owned by a single worker thread.
+///
+/// This keeps the game engine and the emitted event history together so snapshots, history
+/// requests, and state mutations all refer to the same serialized timeline.
 pub struct TableRuntime {
     pub engine: GameEngine,
     history: Vec<Event>,
@@ -22,6 +26,8 @@ impl TableRuntime {
         }
     }
 
+    /// Applies a command and appends the emitted events to the table-local history in the same
+    /// order subscribers observed them.
     pub fn apply(&mut self, cmd: Command) -> Vec<Event> {
         let events = self.engine.apply(cmd);
         self.record_events(&events);

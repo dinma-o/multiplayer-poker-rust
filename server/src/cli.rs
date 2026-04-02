@@ -452,14 +452,16 @@ fn print_events(events: &[Event]) {
                 "hand({player_name}): {:?}",
                 cards.iter().map(|c| c.to_string()).collect::<Vec<_>>()
             ),
+            Event::Deal { .. } => {}
             Event::ActionRequested {
                 player_name,
                 allowed,
                 call_amount,
                 min_raise,
+                max_amount,
             } => {
                 println!(
-                    "action requested for {player_name}: allowed={allowed:?} call={call_amount:?} min_raise={min_raise:?}"
+                    "action requested for {player_name}: allowed={allowed:?} call={call_amount:?} min_raise={min_raise:?} max_amount={max_amount:?}"
                 );
             }
             Event::DrawRequested {

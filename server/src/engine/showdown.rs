@@ -35,7 +35,9 @@ impl GameEngine {
                     .unwrap_or_else(|| format!("best={:?}", r.category))
             } else {
                 match self.table.hand_state().player_hand(pid) {
-                    Some(hand) => format!("{} -> cards: {:?}", self.format_cards(&hand), r.category),
+                    Some(hand) => {
+                        format!("{} -> cards: {:?}", self.format_cards(&hand), r.category)
+                    }
                     None => format!("{:?}", r.category),
                 }
             };
@@ -105,8 +107,8 @@ impl GameEngine {
         let hole_text = hole_text.join(", ");
         let board_text = board_text.join(", ");
         Some(format!(
-            "board: {:?} hole: {:?} => {:?}",
-            board_text, hole_text, rank.category
+            "board=[{board_text}] hole=[{hole_text}] => {:?}",
+            rank.category
         ))
     }
 
@@ -127,8 +129,8 @@ impl GameEngine {
         let all_text = all_text.join(", ");
         let up_text = up_text.join(", ");
         Some(format!(
-            "cards: {:?} shown: {:?} => {:?}",
-            all_text, up_text, rank.category
+            "cards=[{all_text}] up=[{up_text}] => {:?}",
+            rank.category
         ))
     }
 }

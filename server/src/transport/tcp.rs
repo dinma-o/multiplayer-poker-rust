@@ -293,6 +293,8 @@ fn handle_subscribe_request(
 ) -> io::Result<()> {
     match app.get_table_state(table_id) {
         Ok(_) => {
+            // Subscriptions live at the transport layer because they are tied to a concrete TCP
+            // connection, not just to the logical session id inside a request payload.
             registry
                 .lock()
                 .expect("connection registry lock poisoned")
@@ -353,6 +355,8 @@ fn process_request_outcome(
     registry: &SharedConnectionRegistry,
 ) -> io::Result<()> {
     let response = outcome.response.clone();
+    // The initiating client always sees its direct response first. After that we can safely
+    // mutate transport bookkeeping and fan out push updates derived from the same outcome.
     send_message(writer_tx, ServerMessage::response(response.clone()))?;
 
     apply_connection_response_state(connection_id, &response, registry);
@@ -474,6 +478,8 @@ fn cleanup_connection(
             }
         };
 
+        // Re-login can move the same logical session onto a new socket. Only treat this close as
+        // a real player disconnect if no sibling connection still owns that session id.
         removed
             .session_id
             .filter(|session_id| !registry.has_active_session_elsewhere(session_id))
