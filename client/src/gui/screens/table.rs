@@ -1,5 +1,5 @@
-use common::protocol::{HandStep, PokerVariant};
-use common::wire::{PlayerView, PublicTableState, RequestOp, TableId};
+use common::protocol::{AnimationFace, AnimationTarget, HandStep, PokerVariant};
+use common::wire::{AnimationCue, PlayerView, PublicTableState, RequestOp, TableId};
 use image::load_from_memory;
 
 use super::super::{
@@ -7,7 +7,10 @@ use super::super::{
     theme,
     widgets::{
         action_bar::show_action_bar,
-        card::{show_card, show_card_compact, show_card_slot, show_card_slot_compact},
+        card::{
+            show_card, show_card_back, show_card_back_compact, show_card_compact, show_card_slot,
+            show_card_slot_compact, CARD_SIZE, COMPACT_CARD_SIZE,
+        },
         discard_picker::show_discard_picker,
         event_log::show_event_log,
         results_panel::show_results,
@@ -229,6 +232,7 @@ fn show_right_sidebar(
     table_view_mode: TableViewMode,
 ) {
     let is_spectating = table_view_mode == TableViewMode::Spectating;
+    let action_locked = app.is_action_locked();
 
     if !is_spectating && let Some(view) = player_view {
         let has_cards = !view.private_cards.is_empty() || !view.up_cards.is_empty();
@@ -276,7 +280,7 @@ fn show_right_sidebar(
                 "The room is idle. Start the next hand when enough players are seated.",
             ));
             if ui
-                .add_enabled(!app.is_request_pending(), primary_button("Start hand"))
+                .add_enabled(!action_locked, primary_button("Start hand"))
                 .clicked()
             {
                 app.send_op(PendingKind::StartHand, RequestOp::StartHand { table_id });
@@ -291,7 +295,7 @@ fn show_right_sidebar(
             ));
             ui.add_space(6.0);
 
-            ui.add_enabled_ui(!app.is_request_pending(), |ui| {
+            ui.add_enabled_ui(!action_locked, |ui| {
                 if let Some(max_discards) = prompt.max_discards {
                     let private_cards = player_view
                         .map(|view| view.private_cards.clone())
@@ -477,7 +481,7 @@ fn show_table_surface(
         ui.set_max_width(table_width);
         ui.set_width(table_width);
 
-        theme::table_shell_frame().show(ui, |ui| {
+        let shell = theme::table_shell_frame().show(ui, |ui| {
             egui::Frame::new()
                 .fill(theme::TABLE_WOOD)
                 .corner_radius(255.0)
@@ -603,6 +607,18 @@ fn show_table_surface(
                         });
                 });
         });
+
+        if let Some((cue, progress)) = app.current_animation_overlay(ctx.input(|input| input.time)) {
+            paint_deal_animation_overlay(
+                ctx,
+                &mut app.texture_cache,
+                &cue,
+                progress,
+                shell.response.rect,
+                compact,
+                very_compact,
+            );
+        }
     });
 }
 
@@ -611,6 +627,166 @@ fn show_waiting_panel(ui: &mut egui::Ui, title: &str, body: &str) {
         ui.label(theme::section_title(title));
         ui.label(theme::muted(body));
     });
+}
+
+fn paint_deal_animation_overlay(
+    ctx: &egui::Context,
+    cache: &mut std::collections::HashMap<String, egui::TextureHandle>,
+    cue: &AnimationCue,
+    progress: f32,
+    table_rect: egui::Rect,
+    compact: bool,
+    very_compact: bool,
+) {
+    let size = if compact { COMPACT_CARD_SIZE } else { CARD_SIZE };
+    let start = deck_origin(table_rect, compact, very_compact);
+    let end = animation_target_center(cue, table_rect, compact, very_compact);
+    let eased = 1.0 - (1.0 - progress).powi(3);
+    let center = egui::pos2(
+        start.x + (end.x - start.x) * eased,
+        start.y + (end.y - start.y) * eased,
+    );
+    let top_left = egui::pos2(center.x - size.x * 0.5, center.y - size.y * 0.5);
+
+    egui::Area::new(egui::Id::new("deal_animation_overlay"))
+        .order(egui::Order::Foreground)
+        .fixed_pos(top_left)
+        .interactable(false)
+        .show(ctx, |ui| {
+            if matches!(cue.face, AnimationFace::Down) || cue.card.is_none() {
+                if compact {
+                    show_card_back_compact(ui, ctx, cache);
+                } else {
+                    show_card_back(ui, ctx, cache);
+                }
+            } else if let Some(card) = cue.card {
+                if compact {
+                    show_card_compact(ui, ctx, cache, card);
+                } else {
+                    show_card(ui, ctx, cache, card);
+                }
+            }
+        });
+}
+
+fn deck_origin(table_rect: egui::Rect, compact: bool, very_compact: bool) -> egui::Pos2 {
+    let x_offset = if very_compact {
+        54.0
+    } else if compact {
+        60.0
+    } else {
+        72.0
+    };
+    let y_offset = if very_compact {
+        18.0
+    } else if compact {
+        22.0
+    } else {
+        28.0
+    };
+
+    egui::pos2(table_rect.center().x + x_offset, table_rect.center().y - y_offset)
+}
+
+fn animation_target_center(
+    cue: &AnimationCue,
+    table_rect: egui::Rect,
+    compact: bool,
+    very_compact: bool,
+) -> egui::Pos2 {
+    match cue.target {
+        AnimationTarget::Board => board_target_center(cue, table_rect, compact, very_compact),
+        AnimationTarget::Seat => seat_target_center(cue, table_rect, compact, very_compact),
+    }
+}
+
+fn board_target_center(
+    cue: &AnimationCue,
+    table_rect: egui::Rect,
+    compact: bool,
+    very_compact: bool,
+) -> egui::Pos2 {
+    let size = if compact { COMPACT_CARD_SIZE } else { CARD_SIZE };
+    let gap = if very_compact {
+        2.0
+    } else if compact {
+        4.0
+    } else {
+        8.0
+    };
+    let total_width = size.x * 5.0 + gap * 4.0;
+    let start_x = table_rect.center().x - total_width * 0.5 + size.x * 0.5;
+    let y = table_rect.center().y
+        + if very_compact {
+            48.0
+        } else if compact {
+            56.0
+        } else {
+            68.0
+        };
+    let index = cue.target_index.unwrap_or(0).min(4) as f32;
+
+    egui::pos2(start_x + index * (size.x + gap), y)
+}
+
+fn seat_target_center(
+    cue: &AnimationCue,
+    table_rect: egui::Rect,
+    compact: bool,
+    very_compact: bool,
+) -> egui::Pos2 {
+    const SEAT_WIDTH: f32 = 108.0;
+    let top_gap = if very_compact {
+        2.0
+    } else if compact {
+        3.0
+    } else {
+        5.0
+    };
+    let bottom_gap = if very_compact {
+        10.0
+    } else if compact {
+        14.0
+    } else {
+        20.0
+    };
+    let top_total = SEAT_WIDTH * 3.0 + top_gap * 2.0;
+    let bottom_total = SEAT_WIDTH * 2.0 + bottom_gap;
+    let top_start_x = table_rect.center().x - top_total * 0.5;
+    let bottom_start_x = table_rect.center().x - bottom_total * 0.5;
+    let top_y = table_rect.top()
+        + if very_compact {
+            58.0
+        } else if compact {
+            62.0
+        } else {
+            70.0
+        };
+    let bottom_y = table_rect.bottom()
+        - if very_compact {
+            48.0
+        } else if compact {
+            52.0
+        } else {
+            58.0
+        };
+
+    let seat = cue.seat.unwrap_or(0);
+    let base_x = match seat {
+        0..=2 => top_start_x + seat as f32 * (SEAT_WIDTH + top_gap) + SEAT_WIDTH * 0.5,
+        3 => bottom_start_x + SEAT_WIDTH * 0.5,
+        4 => bottom_start_x + SEAT_WIDTH + bottom_gap + SEAT_WIDTH * 0.5,
+        _ => table_rect.center().x,
+    };
+    let y = if seat <= 2 { top_y } else { bottom_y };
+    let raw_index = cue.target_index.unwrap_or(0).min(4) as f32;
+    let fan_offset = match cue.face {
+        AnimationFace::Down => (raw_index.min(2.0) - 1.0) * 10.0,
+        AnimationFace::Up => (raw_index.min(3.0) - 1.5) * 12.0,
+        AnimationFace::Board => 0.0,
+    };
+
+    egui::pos2(base_x + fan_offset, y)
 }
 
 fn show_main_pot_image(

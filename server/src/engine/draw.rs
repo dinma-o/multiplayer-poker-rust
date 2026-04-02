@@ -55,11 +55,28 @@ impl GameEngine {
 
         let mut new_hand = hand.clone();
         new_hand.replace_from_deck(&discard, &mut self.deck);
+        let mut replacement_indices = discard.clone();
+        replacement_indices.sort_unstable();
 
         // Store updated hand
         self.table
             .hand_state_mut()
             .set_player_hand(pid, new_hand.clone());
+
+        for idx in replacement_indices {
+            if let Some(card) = new_hand.get(idx) {
+                events.push(Event::Deal {
+                    deal: DealEvent {
+                        street: AnimationStreet::FiveCardDrawReplacement,
+                        target: AnimationTarget::Seat,
+                        player_id: Some(pid),
+                        face: AnimationFace::Down,
+                        card,
+                        target_index: idx,
+                    },
+                });
+            }
+        }
 
         // Emit private hand event
         let cards = self

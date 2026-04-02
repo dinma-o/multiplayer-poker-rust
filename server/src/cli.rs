@@ -452,6 +452,7 @@ fn print_events(events: &[Event]) {
                 "hand({player_name}): {:?}",
                 cards.iter().map(|c| c.to_string()).collect::<Vec<_>>()
             ),
+            Event::Deal { .. } => {}
             Event::ActionRequested {
                 player_name,
                 allowed,

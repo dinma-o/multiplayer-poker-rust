@@ -877,6 +877,7 @@ mod tests {
                 sample_showdown_history_entry(),
                 sample_payout_history_entry(),
             ],
+            animation_cues: vec![],
         });
 
         assert!(output.contains("[push table 1]"));

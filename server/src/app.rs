@@ -3,13 +3,16 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 
 use common::{
-    protocol::{AccountCmd, ActionCmd, Command, Event, HandStep, LobbyCmd, PlayerId, PokerVariant},
+    protocol::{
+        AccountCmd, ActionCmd, AnimationFace, AnimationTarget, Command, DealEvent, Event,
+        HandStep, LobbyCmd, PlayerId, PokerVariant,
+    },
     wire::{
-        AccountProfile, ClientRequest, ErrorCode, ErrorPayload, HistoryEntry, HistoryKind,
-        JoinTableResult, LeaveTableResult, LeaveTableStatus, LoginResult, LogoutResult,
-        OperationReceipt, PlayerAction, PlayerView, PublicSeatState, PublicTableState, RequestOp,
-        ResponsePayload, SeatAssignmentStatus, ServerResponse, SessionId, TableHistory, TableId,
-        TableList, TableSummary, TableUpdateMessage,
+        AccountProfile, AnimationCue, ClientRequest, ErrorCode, ErrorPayload, HistoryEntry,
+        HistoryKind, JoinTableResult, LeaveTableResult, LeaveTableStatus, LoginResult,
+        LogoutResult, OperationReceipt, PlayerAction, PlayerView, PublicSeatState,
+        PublicTableState, RequestOp, ResponsePayload, SeatAssignmentStatus, ServerResponse,
+        SessionId, TableHistory, TableId, TableList, TableSummary, TableUpdateMessage,
     },
 };
 
@@ -767,16 +770,23 @@ impl ServerApp {
         events: &[Event],
     ) -> AppResult<TableUpdateMessage> {
         let table_state = self.get_table_state(table_id)?;
+        let viewer_id = session_id.and_then(|session_id| {
+            self.require_session(session_id)
+                .ok()
+                .map(|session| session.account_id)
+        });
         let player_view = match session_id {
             Some(session_id) => self.get_player_view(session_id, table_id).ok(),
             None => None,
         };
+        let animation_cues = Self::build_animation_cues(events, viewer_id, &table_state);
 
         Ok(TableUpdateMessage {
             table_id,
             table_state,
             player_view,
             events: Self::history_entries(events),
+            animation_cues,
         })
     }
 
@@ -846,6 +856,62 @@ impl ServerApp {
             board_cards: state.board_cards,
             action_prompt: state.action_prompt,
         }
+    }
+
+    fn build_animation_cues(
+        events: &[Event],
+        viewer_id: Option<PlayerId>,
+        table_state: &PublicTableState,
+    ) -> Vec<AnimationCue> {
+        events
+            .iter()
+            .filter_map(|event| match event {
+                Event::Deal { deal } => Self::animation_cue_for_deal(deal, viewer_id, table_state),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn animation_cue_for_deal(
+        deal: &DealEvent,
+        viewer_id: Option<PlayerId>,
+        table_state: &PublicTableState,
+    ) -> Option<AnimationCue> {
+        let seat = match deal.player_id {
+            Some(player_id) => table_state
+                .seats
+                .iter()
+                .find(|seat| seat.player_id == player_id)
+                .map(|seat| seat.seat),
+            None => None,
+        };
+
+        if deal.target == AnimationTarget::Seat && seat.is_none() {
+            return None;
+        }
+
+        let owns_private_card = deal.player_id == viewer_id;
+        let is_public_card = !matches!(deal.face, AnimationFace::Down);
+
+        Some(AnimationCue {
+            street: deal.street,
+            target: deal.target,
+            seat,
+            face: deal.face,
+            card: if is_public_card || owns_private_card {
+                Some(deal.card)
+            } else {
+                None
+            },
+            target_index: if deal.target == AnimationTarget::Board
+                || is_public_card
+                || owns_private_card
+            {
+                Some(deal.target_index)
+            } else {
+                None
+            },
+        })
     }
 
     fn acting_player_id(table: &PokerTable) -> Option<PlayerId> {
@@ -942,16 +1008,16 @@ impl ServerApp {
                 None,
                 None,
             ),
-            Event::PrivateHand { .. } => return None,
+            Event::PrivateHand { .. } | Event::Deal { .. } => return None,
             Event::Showdown { results } => (
                 HistoryKind::Showdown,
-                format!("Showdown: {} result(s)", results.len()),
+                format!("showdown: {} result(s)", results.len()),
                 Some(results.clone()),
                 None,
             ),
             Event::Payout { winners } => (
                 HistoryKind::Payout,
-                format!("Payout: {} winner(s)", winners.len()),
+                format!("payout: {} winner(s)", winners.len()),
                 None,
                 Some(winners.clone()),
             ),
@@ -1319,5 +1385,97 @@ mod tests {
             .expect("update payout results");
         assert_eq!(update_results.len(), 2);
         assert_eq!(update_results[1].player_id, 2);
+    }
+
+    #[test]
+    fn deal_animation_cues_redact_private_cards_for_other_sessions() {
+        let fx = test_app();
+        fx.app
+            .create_account("alice".into(), "1234".into(), 500)
+            .expect("create alice");
+        fx.app
+            .create_account("bob".into(), "1234".into(), 500)
+            .expect("create bob");
+
+        let alice = fx.app.login("alice".into(), "1234".into()).expect("login alice");
+        let bob = fx.app.login("bob".into(), "1234".into()).expect("login bob");
+        let table = fx.app.list_tables().tables[0].clone();
+        fx.app
+            .join_table(&alice.session_id, table.table_id)
+            .expect("join alice");
+        fx.app
+            .join_table(&bob.session_id, table.table_id)
+            .expect("join bob");
+
+        let private_deal = Event::Deal {
+            deal: DealEvent {
+                street: common::protocol::AnimationStreet::HoldemPreflop,
+                target: common::protocol::AnimationTarget::Seat,
+                player_id: Some(alice.account.player_id),
+                face: common::protocol::AnimationFace::Down,
+                card: common::card_deck::Card::new(
+                    common::card_deck::Rank::Ace,
+                    common::card_deck::Suit::Spades,
+                ),
+                target_index: 1,
+            },
+        };
+
+        let owner_update = fx
+            .app
+            .build_table_update_for_session(table.table_id, Some(&alice.session_id), &[private_deal.clone()])
+            .expect("owner update");
+        assert_eq!(owner_update.animation_cues.len(), 1);
+        assert_eq!(
+            owner_update.animation_cues[0].card,
+            Some(common::card_deck::Card::new(
+                common::card_deck::Rank::Ace,
+                common::card_deck::Suit::Spades,
+            ))
+        );
+        assert_eq!(owner_update.animation_cues[0].target_index, Some(1));
+
+        let other_update = fx
+            .app
+            .build_table_update_for_session(table.table_id, Some(&bob.session_id), &[private_deal.clone()])
+            .expect("other update");
+        assert_eq!(other_update.animation_cues.len(), 1);
+        assert_eq!(other_update.animation_cues[0].card, None);
+        assert_eq!(other_update.animation_cues[0].target_index, None);
+
+        let spectator_update = fx
+            .app
+            .build_table_update_for_session(table.table_id, None, &[private_deal])
+            .expect("spectator update");
+        assert_eq!(spectator_update.animation_cues.len(), 1);
+        assert_eq!(spectator_update.animation_cues[0].card, None);
+        assert_eq!(spectator_update.animation_cues[0].target_index, None);
+    }
+
+    #[test]
+    fn build_table_update_has_empty_animation_cues_for_non_deal_events() {
+        let fx = test_app();
+        fx.app
+            .create_account("alice".into(), "1234".into(), 500)
+            .expect("create alice");
+        let login = fx.app.login("alice".into(), "1234".into()).expect("login");
+        let table = fx.app.list_tables().tables[0].clone();
+        fx.app
+            .join_table(&login.session_id, table.table_id)
+            .expect("join table");
+
+        let update = fx
+            .app
+            .build_table_update_for_session(
+                table.table_id,
+                Some(&login.session_id),
+                &[Event::Info {
+                    message: "alice bet 10".into(),
+                }],
+            )
+            .expect("table update");
+
+        assert!(update.animation_cues.is_empty());
+        assert_eq!(update.events.len(), 1);
     }
 }

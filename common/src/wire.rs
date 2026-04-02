@@ -2,7 +2,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     card_deck::Card,
-    protocol::{AllowedAction, Chips, HandStep, PayoutLine, PlayerId, PokerVariant, ShowdownLine},
+    protocol::{
+        AllowedAction, AnimationFace, AnimationStreet, AnimationTarget, Chips, HandStep,
+        PayoutLine, PlayerId, PokerVariant, ShowdownLine,
+    },
 };
 
 pub type SessionId = String;
@@ -279,6 +282,16 @@ pub struct PlayerView {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AnimationCue {
+    pub street: AnimationStreet,
+    pub target: AnimationTarget,
+    pub seat: Option<usize>,
+    pub face: AnimationFace,
+    pub card: Option<Card>,
+    pub target_index: Option<usize>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ActionPrompt {
     pub allowed_actions: Vec<AllowedAction>,
     pub call_amount: Option<Chips>,
@@ -310,6 +323,8 @@ pub struct TableUpdateMessage {
     pub table_state: PublicTableState,
     pub player_view: Option<PlayerView>,
     pub events: Vec<HistoryEntry>,
+    #[serde(default)]
+    pub animation_cues: Vec<AnimationCue>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -462,12 +477,44 @@ mod tests {
                     payout_results: None,
                 },
             ],
+            animation_cues: vec![AnimationCue {
+                street: AnimationStreet::FiveCardDrawInitial,
+                target: AnimationTarget::Seat,
+                seat: Some(0),
+                face: AnimationFace::Down,
+                card: Some(Card::new(Rank::King, Suit::Hearts)),
+                target_index: Some(0),
+            }],
         };
 
         let msg = ServerMessage::table_update(update);
         let json = serde_json::to_string(&msg).expect("serialize message");
         let decoded: ServerMessage = serde_json::from_str(&json).expect("deserialize message");
         assert_eq!(decoded, msg);
+    }
+
+    #[test]
+    fn table_update_defaults_animation_cues_when_missing() {
+        let json = r#"{
+            "table_id": 1,
+            "table_state": {
+                "table_id": 1,
+                "variant": "five_card_draw",
+                "step": "waiting_for_players",
+                "dealer_seat": 0,
+                "acting_player_id": null,
+                "pot": 0,
+                "current_bet": 0,
+                "board_cards": [],
+                "seats": []
+            },
+            "player_view": null,
+            "events": []
+        }"#;
+
+        let decoded: TableUpdateMessage =
+            serde_json::from_str(json).expect("deserialize update without animation_cues");
+        assert!(decoded.animation_cues.is_empty());
     }
 
     #[test]

@@ -30,6 +30,14 @@ pub fn show_card_compact(
     show_card_at_size(ui, ctx, cache, card, COMPACT_CARD_SIZE);
 }
 
+pub fn show_card_back(
+    ui: &mut egui::Ui,
+    ctx: &egui::Context,
+    cache: &mut HashMap<String, egui::TextureHandle>,
+) {
+    show_card_back_at_size(ui, ctx, cache, CARD_SIZE);
+}
+
 fn show_card_at_size(
     ui: &mut egui::Ui,
     ctx: &egui::Context,

@@ -322,18 +322,11 @@ impl GameEngine {
         // Deal 5 hole cards round-robin (one card to each player, five times).
         for _ in 0..5 {
             for pid in &active {
-                if let Some(card) = self.deck.deal_card() {
-                    let mut cards = self
-                        .table
-                        .hand_state()
-                        .player_hole_cards(pid)
-                        .cloned()
-                        .unwrap_or_default();
-                    cards.push(card);
-                    self.table
-                        .hand_state_mut()
-                        .set_player_hole_cards(*pid, cards);
-                }
+                let _ = self.deal_down_card_to_player(
+                    &mut events,
+                    AnimationStreet::FiveCardDrawInitial,
+                    *pid,
+                );
             }
         }
 
@@ -393,18 +386,8 @@ impl GameEngine {
         // Deal Hold'em hole cards round-robin (one card to each player, twice).
         for _ in 0..2 {
             for pid in &active {
-                if let Some(card) = self.deck.deal_card() {
-                    let mut cards = self
-                        .table
-                        .hand_state()
-                        .player_hole_cards(pid)
-                        .cloned()
-                        .unwrap_or_default();
-                    cards.push(card);
-                    self.table
-                        .hand_state_mut()
-                        .set_player_hole_cards(*pid, cards);
-                }
+                let _ =
+                    self.deal_down_card_to_player(&mut events, AnimationStreet::HoldemPreflop, *pid);
             }
         }
         // Hold'em hole cards are private: only shown via ViewHand.
@@ -459,17 +442,13 @@ impl GameEngine {
 
         for _ in 0..2 {
             for pid in &active {
-                if let Some(card) = self.deck.deal_card() {
-                    self.push_card_to_player_hand(*pid, card);
-                }
+                let _ =
+                    self.deal_down_card_to_player(&mut events, AnimationStreet::StudThirdDown, *pid);
             }
         }
 
         for pid in &active {
-            if let Some(card) = self.deck.deal_card() {
-                self.push_card_to_player_hand(*pid, card);
-                self.table.hand_state_mut().push_player_up_card(*pid, card);
-            }
+            let _ = self.deal_up_card_to_player(&mut events, AnimationStreet::StudThirdUp, *pid);
         }
 
         for pid in &active {
@@ -511,9 +490,7 @@ impl GameEngine {
             .collect();
 
         for pid in &active {
-            if let Some(card) = self.deck.deal_card() {
-                self.push_card_to_player_hand(*pid, card);
-            }
+            let _ = self.deal_down_card_to_player(&mut events, AnimationStreet::StudSeventh, *pid);
         }
 
         for pid in &active {
@@ -556,12 +533,19 @@ impl GameEngine {
             .into_iter()
             .filter(|pid| self.table.is_active_player(*pid))
             .collect();
+        let street = match active
+            .first()
+            .and_then(|pid| self.table.hand_state().player_up_cards(pid))
+            .map(|cards| cards.len())
+        {
+            Some(1) => AnimationStreet::StudFourth,
+            Some(2) => AnimationStreet::StudFifth,
+            Some(3) => AnimationStreet::StudSixth,
+            _ => AnimationStreet::StudFourth,
+        };
 
         for pid in &active {
-            if let Some(card) = self.deck.deal_card() {
-                self.push_card_to_player_hand(*pid, card);
-                self.table.hand_state_mut().push_player_up_card(*pid, card);
-            }
+            let _ = self.deal_up_card_to_player(&mut events, street, *pid);
         }
 
         let street_name = match active
@@ -618,9 +602,12 @@ impl GameEngine {
         }
 
         for _ in 0..cards_to_deal {
-            if let Some(card) = self.deck.deal_card() {
-                self.table.hand_state_mut().push_board_card(card);
-            }
+            let _ = self.deal_board_card(&mut events, match board_len {
+                0 => AnimationStreet::HoldemFlop,
+                3 => AnimationStreet::HoldemTurn,
+                4 => AnimationStreet::HoldemRiver,
+                _ => unreachable!("validated board progression"),
+            });
         }
 
         let board_text = self
@@ -884,6 +871,101 @@ impl GameEngine {
         self.table
             .hand_state_mut()
             .set_player_hole_cards(player_id, cards);
+    }
+
+    fn record_deal_event(
+        &self,
+        events: &mut Vec<Event>,
+        street: AnimationStreet,
+        target: AnimationTarget,
+        player_id: Option<PlayerId>,
+        face: AnimationFace,
+        card: common::card_deck::Card,
+        target_index: usize,
+    ) {
+        events.push(Event::Deal {
+            deal: DealEvent {
+                street,
+                target,
+                player_id,
+                face,
+                card,
+                target_index,
+            },
+        });
+    }
+
+    fn deal_down_card_to_player(
+        &mut self,
+        events: &mut Vec<Event>,
+        street: AnimationStreet,
+        player_id: PlayerId,
+    ) -> Option<common::card_deck::Card> {
+        let card = self.deck.deal_card()?;
+        let target_index = self
+            .table
+            .hand_state()
+            .player_hole_cards(&player_id)
+            .map(|cards| cards.len())
+            .unwrap_or(0);
+        self.push_card_to_player_hand(player_id, card);
+        self.record_deal_event(
+            events,
+            street,
+            AnimationTarget::Seat,
+            Some(player_id),
+            AnimationFace::Down,
+            card,
+            target_index,
+        );
+        Some(card)
+    }
+
+    fn deal_up_card_to_player(
+        &mut self,
+        events: &mut Vec<Event>,
+        street: AnimationStreet,
+        player_id: PlayerId,
+    ) -> Option<common::card_deck::Card> {
+        let card = self.deck.deal_card()?;
+        let target_index = self
+            .table
+            .hand_state()
+            .player_up_cards(&player_id)
+            .map(|cards| cards.len())
+            .unwrap_or(0);
+        self.push_card_to_player_hand(player_id, card);
+        self.table.hand_state_mut().push_player_up_card(player_id, card);
+        self.record_deal_event(
+            events,
+            street,
+            AnimationTarget::Seat,
+            Some(player_id),
+            AnimationFace::Up,
+            card,
+            target_index,
+        );
+        Some(card)
+    }
+
+    fn deal_board_card(
+        &mut self,
+        events: &mut Vec<Event>,
+        street: AnimationStreet,
+    ) -> Option<common::card_deck::Card> {
+        let card = self.deck.deal_card()?;
+        let target_index = self.table.hand_state().board_cards().len();
+        self.table.hand_state_mut().push_board_card(card);
+        self.record_deal_event(
+            events,
+            street,
+            AnimationTarget::Board,
+            None,
+            AnimationFace::Board,
+            card,
+            target_index,
+        );
+        Some(card)
     }
 
     fn burn_one_card(&mut self) {

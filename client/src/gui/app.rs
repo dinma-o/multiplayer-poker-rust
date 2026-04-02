@@ -1,10 +1,11 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::mpsc::{Receiver, Sender};
 
-use common::protocol::{HandStep, PokerVariant};
+use common::protocol::{AnimationStreet, AnimationTarget, HandStep, PokerVariant};
 use common::wire::{
-    AccountProfile, HistoryEntry, HistoryKind, LeaveTableStatus, PlayerView, PublicTableState,
-    RequestOp, ResponsePayload, SeatAssignmentStatus, SessionId, TableId, TableSummary,
+    AccountProfile, AnimationCue, HistoryEntry, HistoryKind, LeaveTableStatus, PlayerView,
+    PublicTableState, RequestOp, ResponsePayload, SeatAssignmentStatus, SessionId, TableId,
+    TableSummary, TableUpdateMessage,
 };
 
 use crate::state::ClientEvent;
@@ -70,6 +71,22 @@ pub enum GuiCommand {
     SendOp(RequestOp),
 }
 
+#[derive(Debug, Clone)]
+struct DealAnimationState {
+    target_table_state: PublicTableState,
+    target_player_view: Option<PlayerView>,
+    pending_events: Vec<HistoryEntry>,
+    cues: Vec<AnimationCue>,
+    cue_index: usize,
+    cue_started_at: f64,
+}
+
+impl DealAnimationState {
+    fn current_cue(&self) -> Option<&AnimationCue> {
+        self.cues.get(self.cue_index)
+    }
+}
+
 // ---------------------------------------------------------------------------
 // PokerApp
 // ---------------------------------------------------------------------------
@@ -99,6 +116,8 @@ pub struct PokerApp {
     pub table_state: Option<PublicTableState>,
     pub player_view: Option<PlayerView>,
     pub event_log: Vec<HistoryEntry>,
+    queued_table_updates: VecDeque<TableUpdateMessage>,
+    active_deal_animation: Option<DealAnimationState>,
 
     // In-flight request tracking: request_id -> what it was for
     pub pending: HashMap<String, PendingKind>,
@@ -154,6 +173,8 @@ impl Default for PokerApp {
             table_state: None,
             player_view: None,
             event_log: Vec::new(),
+            queued_table_updates: VecDeque::new(),
+            active_deal_animation: None,
             pending: HashMap::new(),
             last_error: None,
             status_msg: String::new(),
@@ -236,6 +257,14 @@ impl PokerApp {
     /// Returns true if any request is currently in-flight.
     pub fn is_request_pending(&self) -> bool {
         !self.pending.is_empty()
+    }
+
+    pub fn is_deal_animation_active(&self) -> bool {
+        self.active_deal_animation.is_some()
+    }
+
+    pub fn is_action_locked(&self) -> bool {
+        self.is_request_pending() || self.is_deal_animation_active()
     }
 
     /// Drain both incoming channels without blocking.
@@ -373,39 +402,11 @@ impl PokerApp {
     fn handle_push_event(&mut self, event: ClientEvent) {
         match event {
             ClientEvent::TableUpdate(update) => {
-                // Sync local account balance from the authoritative seat state.
-                if let Some(account) = &mut self.account {
-                    if let Some(seat) = update
-                        .table_state
-                        .seats
-                        .iter()
-                        .find(|s| s.player_id == account.player_id)
-                    {
-                        account.balance = seat.balance;
-                    }
-                }
-                // A new hand starting is signalled by the typed HandStep on the
-                // incoming table state — no string matching required.
                 if update.table_state.step == HandStep::CollectForcedBets {
                     self.last_showdown = None;
                     self.last_payout = None;
                 }
-                self.table_state = Some(update.table_state);
-                if let Some(view) = update.player_view {
-                    // Clear stale per-hand input state when a new PlayerView arrives.
-                    self.selected_discards.clear();
-                    self.input_bet.clear();
-                    self.table_view_mode = Some(TableViewMode::Seated);
-                    self.player_view = Some(view);
-                }
-                for entry in &update.events {
-                    match entry.kind {
-                        HistoryKind::Showdown => self.last_showdown = Some(entry.clone()),
-                        HistoryKind::Payout => self.last_payout = Some(entry.clone()),
-                        _ => {}
-                    }
-                }
-                self.event_log.extend(update.events);
+                self.queued_table_updates.push_back(update);
             }
             ClientEvent::SessionClosed(msg) => {
                 self.session_id = None;
@@ -444,12 +445,387 @@ impl PokerApp {
             ClientEvent::UnexpectedResponse(_) => {}
         }
     }
+
+    fn apply_table_update_immediately(&mut self, update: TableUpdateMessage) {
+        self.commit_table_update(update.table_state, update.player_view, update.events);
+    }
+
+    fn commit_table_update(
+        &mut self,
+        table_state: PublicTableState,
+        player_view: Option<PlayerView>,
+        events: Vec<HistoryEntry>,
+    ) {
+        self.sync_account_balance(&table_state);
+        self.table_state = Some(table_state);
+        if let Some(view) = player_view {
+            self.selected_discards.clear();
+            self.input_bet.clear();
+            self.table_view_mode = Some(TableViewMode::Seated);
+            self.player_view = Some(view);
+        }
+        for entry in &events {
+            match entry.kind {
+                HistoryKind::Showdown => self.last_showdown = Some(entry.clone()),
+                HistoryKind::Payout => self.last_payout = Some(entry.clone()),
+                _ => {}
+            }
+        }
+        self.event_log.extend(events);
+    }
+
+    fn sync_account_balance(&mut self, table_state: &PublicTableState) {
+        if let Some(account) = &mut self.account
+            && let Some(seat) = table_state
+                .seats
+                .iter()
+                .find(|seat| seat.player_id == account.player_id)
+        {
+            account.balance = seat.balance;
+        }
+    }
+
+    fn update_deal_animation(&mut self, now: f64) {
+        loop {
+            if let Some(animation) = &self.active_deal_animation {
+                let Some(cue) = animation.current_cue().cloned() else {
+                    let finished = self
+                        .active_deal_animation
+                        .take()
+                        .expect("animation exists");
+                    self.commit_table_update(
+                        finished.target_table_state,
+                        finished.target_player_view,
+                        finished.pending_events,
+                    );
+                    continue;
+                };
+
+                let elapsed = now - animation.cue_started_at;
+                if elapsed < Self::cue_duration_seconds(&cue) {
+                    break;
+                }
+
+                let target_table_state = animation.target_table_state.clone();
+                let target_player_view = animation.target_player_view.clone();
+                self.apply_animation_cue(&cue, &target_table_state, target_player_view.as_ref());
+
+                let mut finished = false;
+                if let Some(animation) = &mut self.active_deal_animation {
+                    animation.cue_index += 1;
+                    if animation.cue_index >= animation.cues.len() {
+                        finished = true;
+                    } else {
+                        animation.cue_started_at = now;
+                    }
+                }
+
+                if finished {
+                    let finished = self
+                        .active_deal_animation
+                        .take()
+                        .expect("animation exists");
+                    self.commit_table_update(
+                        finished.target_table_state,
+                        finished.target_player_view,
+                        finished.pending_events,
+                    );
+                    continue;
+                }
+            } else {
+                let Some(update) = self.queued_table_updates.pop_front() else {
+                    break;
+                };
+
+                if update.animation_cues.is_empty() {
+                    self.apply_table_update_immediately(update);
+                    continue;
+                }
+
+                let (base_table_state, base_player_view) = self.animation_base_for_update(&update);
+                self.table_state = Some(base_table_state);
+                self.player_view = base_player_view;
+                if self.player_view.is_some() {
+                    self.table_view_mode = Some(TableViewMode::Seated);
+                }
+                self.active_deal_animation = Some(DealAnimationState {
+                    target_table_state: update.table_state,
+                    target_player_view: update.player_view,
+                    pending_events: update.events,
+                    cues: update.animation_cues,
+                    cue_index: 0,
+                    cue_started_at: now,
+                });
+                break;
+            }
+        }
+    }
+
+    fn animation_base_for_update(
+        &self,
+        update: &TableUpdateMessage,
+    ) -> (PublicTableState, Option<PlayerView>) {
+        let table_state = match &self.table_state {
+            Some(state) if state.table_id == update.table_id => state.clone(),
+            _ => Self::rewind_table_state(&update.table_state, &update.animation_cues),
+        };
+
+        let player_view = match (&self.player_view, &update.player_view) {
+            (Some(view), Some(target))
+                if view.table_id == target.table_id && view.player_id == target.player_id =>
+            {
+                Some(view.clone())
+            }
+            (_, Some(target)) => Some(Self::rewind_player_view(target, &update.animation_cues)),
+            _ => None,
+        };
+
+        (table_state, player_view)
+    }
+
+    fn rewind_table_state(
+        target: &PublicTableState,
+        cues: &[AnimationCue],
+    ) -> PublicTableState {
+        let mut state = target.clone();
+
+        for cue in cues.iter().rev() {
+            match cue.target {
+                AnimationTarget::Board => {
+                    if let Some(index) = cue.target_index && index < state.board_cards.len() {
+                        state.board_cards.remove(index);
+                    }
+                }
+                AnimationTarget::Seat => {
+                    let Some(seat_index) = cue.seat else {
+                        continue;
+                    };
+                    let Some(seat) = state.seats.iter_mut().find(|seat| seat.seat == seat_index)
+                    else {
+                        continue;
+                    };
+
+                    match cue.street {
+                        AnimationStreet::FiveCardDrawInitial
+                        | AnimationStreet::HoldemPreflop
+                        | AnimationStreet::StudThirdDown
+                        | AnimationStreet::StudSeventh => {
+                            seat.hidden_card_count = seat.hidden_card_count.saturating_sub(1);
+                        }
+                        AnimationStreet::StudThirdUp
+                        | AnimationStreet::StudFourth
+                        | AnimationStreet::StudFifth
+                        | AnimationStreet::StudSixth => {
+                            if let Some(index) = cue.target_index {
+                                if index < seat.up_cards.len() {
+                                    seat.up_cards.remove(index);
+                                }
+                            } else {
+                                let _ = seat.up_cards.pop();
+                            }
+                        }
+                        AnimationStreet::FiveCardDrawReplacement => {}
+                        AnimationStreet::HoldemFlop
+                        | AnimationStreet::HoldemTurn
+                        | AnimationStreet::HoldemRiver => {}
+                    }
+
+                    seat.is_in_hand = seat.hidden_card_count > 0 || !seat.up_cards.is_empty();
+                }
+            }
+        }
+
+        state
+    }
+
+    fn rewind_player_view(target: &PlayerView, cues: &[AnimationCue]) -> PlayerView {
+        let mut view = target.clone();
+
+        for cue in cues.iter().rev() {
+            match cue.target {
+                AnimationTarget::Board => {
+                    if let Some(index) = cue.target_index && index < view.board_cards.len() {
+                        view.board_cards.remove(index);
+                    }
+                }
+                AnimationTarget::Seat => {
+                    if cue.card.is_none() || cue.seat != view.seat {
+                        continue;
+                    }
+
+                    match cue.street {
+                        AnimationStreet::FiveCardDrawReplacement => {}
+                        AnimationStreet::FiveCardDrawInitial
+                        | AnimationStreet::HoldemPreflop
+                        | AnimationStreet::StudThirdDown
+                        | AnimationStreet::StudSeventh => {
+                            if let Some(index) = cue.target_index && index < view.private_cards.len()
+                            {
+                                view.private_cards.remove(index);
+                            }
+                        }
+                        AnimationStreet::StudThirdUp
+                        | AnimationStreet::StudFourth
+                        | AnimationStreet::StudFifth
+                        | AnimationStreet::StudSixth => {
+                            if let Some(index) = cue.target_index && index < view.up_cards.len() {
+                                view.up_cards.remove(index);
+                            }
+                            let _ = view.private_cards.pop();
+                        }
+                        AnimationStreet::HoldemFlop
+                        | AnimationStreet::HoldemTurn
+                        | AnimationStreet::HoldemRiver => {}
+                    }
+                }
+            }
+        }
+
+        view
+    }
+
+    fn apply_animation_cue(
+        &mut self,
+        cue: &AnimationCue,
+        target_table_state: &PublicTableState,
+        target_player_view: Option<&PlayerView>,
+    ) {
+        match cue.target {
+            AnimationTarget::Board => {
+                if let Some(card) = cue.card
+                    && let Some(state) = &mut self.table_state
+                    && let Some(index) = cue.target_index
+                    && index <= state.board_cards.len()
+                    && state.board_cards.len() < target_table_state.board_cards.len()
+                {
+                    state.board_cards.insert(index, card);
+                }
+
+                if let Some(card) = cue.card
+                    && let Some(view) = &mut self.player_view
+                    && let Some(index) = cue.target_index
+                    && index <= view.board_cards.len()
+                    && let Some(target_view) = target_player_view
+                    && view.board_cards.len() < target_view.board_cards.len()
+                {
+                    view.board_cards.insert(index, card);
+                }
+            }
+            AnimationTarget::Seat => {
+                if let Some(state) = &mut self.table_state
+                    && let Some(seat_index) = cue.seat
+                    && let Some(seat) = state.seats.iter_mut().find(|seat| seat.seat == seat_index)
+                    && let Some(target_seat) = target_table_state
+                        .seats
+                        .iter()
+                        .find(|target_seat| target_seat.seat == seat_index)
+                {
+                    match cue.street {
+                        AnimationStreet::FiveCardDrawInitial
+                        | AnimationStreet::HoldemPreflop
+                        | AnimationStreet::StudThirdDown
+                        | AnimationStreet::StudSeventh => {
+                            if seat.hidden_card_count < target_seat.hidden_card_count {
+                                seat.hidden_card_count += 1;
+                            }
+                        }
+                        AnimationStreet::StudThirdUp
+                        | AnimationStreet::StudFourth
+                        | AnimationStreet::StudFifth
+                        | AnimationStreet::StudSixth => {
+                            if let Some(card) = cue.card
+                                && seat.up_cards.len() < target_seat.up_cards.len()
+                            {
+                                let index = cue.target_index.unwrap_or(seat.up_cards.len());
+                                if index <= seat.up_cards.len() {
+                                    seat.up_cards.insert(index, card);
+                                }
+                            }
+                        }
+                        AnimationStreet::FiveCardDrawReplacement => {}
+                        AnimationStreet::HoldemFlop
+                        | AnimationStreet::HoldemTurn
+                        | AnimationStreet::HoldemRiver => {}
+                    }
+
+                    seat.is_in_hand =
+                        target_seat.is_in_hand || seat.hidden_card_count > 0 || !seat.up_cards.is_empty();
+                }
+
+                if let Some(card) = cue.card
+                    && let Some(view) = &mut self.player_view
+                    && cue.seat == view.seat
+                {
+                    match cue.street {
+                        AnimationStreet::FiveCardDrawReplacement => {
+                            if let Some(index) = cue.target_index {
+                                if index < view.private_cards.len() {
+                                    view.private_cards[index] = card;
+                                } else if index == view.private_cards.len() {
+                                    view.private_cards.push(card);
+                                }
+                            }
+                        }
+                        AnimationStreet::FiveCardDrawInitial
+                        | AnimationStreet::HoldemPreflop
+                        | AnimationStreet::StudThirdDown
+                        | AnimationStreet::StudSeventh => {
+                            let index = cue.target_index.unwrap_or(view.private_cards.len());
+                            if index <= view.private_cards.len() {
+                                view.private_cards.insert(index, card);
+                            }
+                        }
+                        AnimationStreet::StudThirdUp
+                        | AnimationStreet::StudFourth
+                        | AnimationStreet::StudFifth
+                        | AnimationStreet::StudSixth => {
+                            let up_index = cue.target_index.unwrap_or(view.up_cards.len());
+                            if up_index <= view.up_cards.len() {
+                                view.up_cards.insert(up_index, card);
+                            }
+                            if let Some(target_view) = target_player_view
+                                && view.private_cards.len() < target_view.private_cards.len()
+                            {
+                                view.private_cards.push(card);
+                            }
+                        }
+                        AnimationStreet::HoldemFlop
+                        | AnimationStreet::HoldemTurn
+                        | AnimationStreet::HoldemRiver => {}
+                    }
+                }
+            }
+        }
+    }
+
+    fn cue_duration_seconds(cue: &AnimationCue) -> f64 {
+        match cue.target {
+            AnimationTarget::Board => 0.24,
+            AnimationTarget::Seat => match cue.street {
+                AnimationStreet::FiveCardDrawReplacement => 0.16,
+                _ => 0.18,
+            },
+        }
+    }
+
+    pub fn current_animation_overlay(&self, now: f64) -> Option<(AnimationCue, f32)> {
+        let animation = self.active_deal_animation.as_ref()?;
+        let cue = animation.current_cue()?.clone();
+        let duration = Self::cue_duration_seconds(&cue).max(f64::EPSILON);
+        let progress = ((now - animation.cue_started_at) / duration).clamp(0.0, 1.0) as f32;
+        Some((cue, progress))
+    }
 }
 
 impl eframe::App for PokerApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         super::theme::apply_theme(ctx);
         self.drain_channels();
+        self.update_deal_animation(ctx.input(|input| input.time));
+
+        if self.is_deal_animation_active() || !self.queued_table_updates.is_empty() {
+            ctx.request_repaint();
+        }
 
         match self.screen.clone() {
             Screen::Connect => super::screens::connect::show(self, ctx),
@@ -471,7 +847,172 @@ impl PokerApp {
         self.event_log.clear();
         self.last_showdown = None;
         self.last_payout = None;
+        self.queued_table_updates.clear();
+        self.active_deal_animation = None;
         self.selected_discards.clear();
         self.input_bet.clear();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use common::card_deck::{Card, Rank, Suit};
+    use common::protocol::{AnimationFace, AllowedAction};
+
+    fn sample_table_state(step: HandStep, hidden_card_count: usize) -> PublicTableState {
+        PublicTableState {
+            table_id: 1,
+            variant: PokerVariant::TexasHoldEm,
+            step,
+            dealer_seat: 0,
+            acting_player_id: Some(7),
+            pot: 15,
+            current_bet: 5,
+            board_cards: vec![],
+            seats: vec![common::wire::PublicSeatState {
+                seat: 0,
+                player_id: 7,
+                player_name: "alice".into(),
+                balance: 495,
+                is_connected: true,
+                is_in_hand: hidden_card_count > 0,
+                has_folded: false,
+                hidden_card_count,
+                up_cards: vec![],
+            }],
+        }
+    }
+
+    fn sample_player_view(private_cards: Vec<Card>) -> PlayerView {
+        PlayerView {
+            table_id: 1,
+            player_id: 7,
+            player_name: "alice".into(),
+            seat: Some(0),
+            private_cards,
+            up_cards: vec![],
+            board_cards: vec![],
+            action_prompt: Some(common::wire::ActionPrompt {
+                allowed_actions: vec![AllowedAction::Call],
+                call_amount: Some(5),
+                min_raise: None,
+                max_amount: None,
+                max_discards: None,
+            }),
+        }
+    }
+
+    fn sample_history_entry(index: u64, message: &str) -> HistoryEntry {
+        HistoryEntry {
+            index,
+            kind: HistoryKind::Info,
+            message: message.to_string(),
+            showdown_results: None,
+            payout_results: None,
+        }
+    }
+
+    fn sample_animation_update() -> TableUpdateMessage {
+        TableUpdateMessage {
+            table_id: 1,
+            table_state: sample_table_state(HandStep::BettingRound1, 1),
+            player_view: Some(sample_player_view(vec![Card::new(Rank::Ace, Suit::Spades)])),
+            events: vec![sample_history_entry(1, "alice to act")],
+            animation_cues: vec![AnimationCue {
+                street: AnimationStreet::HoldemPreflop,
+                target: AnimationTarget::Seat,
+                seat: Some(0),
+                face: AnimationFace::Down,
+                card: Some(Card::new(Rank::Ace, Suit::Spades)),
+                target_index: Some(0),
+            }],
+        }
+    }
+
+    #[test]
+    fn table_update_with_animation_cues_waits_for_commit() {
+        let mut app = PokerApp::default();
+        app.table_state = Some(sample_table_state(HandStep::WaitingForPlayers, 0));
+        app.player_view = Some(sample_player_view(vec![]));
+
+        app.handle_push_event(ClientEvent::TableUpdate(sample_animation_update()));
+        assert_eq!(
+            app.table_state.as_ref().map(|state| state.step),
+            Some(HandStep::WaitingForPlayers)
+        );
+
+        app.update_deal_animation(0.0);
+        assert!(app.is_deal_animation_active());
+        assert_eq!(app.event_log.len(), 0);
+        assert_eq!(
+            app.table_state.as_ref().map(|state| state.hidden_card_count_for_test()),
+            Some(0)
+        );
+
+        app.update_deal_animation(1.0);
+        assert!(!app.is_deal_animation_active());
+        assert_eq!(
+            app.table_state.as_ref().map(|state| state.step),
+            Some(HandStep::BettingRound1)
+        );
+        assert_eq!(app.event_log.len(), 1);
+        assert_eq!(
+            app.player_view
+                .as_ref()
+                .map(|view| view.private_cards.len()),
+            Some(1)
+        );
+    }
+
+    #[test]
+    fn action_lock_stays_active_while_animation_is_running() {
+        let mut app = PokerApp::default();
+        app.table_state = Some(sample_table_state(HandStep::WaitingForPlayers, 0));
+        app.player_view = Some(sample_player_view(vec![]));
+
+        app.handle_push_event(ClientEvent::TableUpdate(sample_animation_update()));
+        app.update_deal_animation(0.0);
+        assert!(app.is_action_locked());
+
+        app.update_deal_animation(1.0);
+        assert!(!app.is_deal_animation_active());
+        assert!(!app.is_request_pending());
+    }
+
+    #[test]
+    fn table_update_without_animation_cues_applies_immediately() {
+        let mut app = PokerApp::default();
+        let update = TableUpdateMessage {
+            table_id: 1,
+            table_state: sample_table_state(HandStep::BettingRound1, 0),
+            player_view: Some(sample_player_view(vec![])),
+            events: vec![sample_history_entry(2, "alice checked")],
+            animation_cues: vec![],
+        };
+
+        app.handle_push_event(ClientEvent::TableUpdate(update));
+        app.update_deal_animation(0.0);
+
+        assert!(!app.is_deal_animation_active());
+        assert_eq!(
+            app.table_state.as_ref().map(|state| state.step),
+            Some(HandStep::BettingRound1)
+        );
+        assert_eq!(app.event_log.len(), 1);
+    }
+
+    trait TestSeatCount {
+        fn hidden_card_count_for_test(&self) -> usize;
+    }
+
+    impl TestSeatCount for PublicTableState {
+        fn hidden_card_count_for_test(&self) -> usize {
+            self.seats
+                .iter()
+                .find(|seat| seat.seat == 0)
+                .map(|seat| seat.hidden_card_count)
+                .unwrap_or(0)
+        }
     }
 }

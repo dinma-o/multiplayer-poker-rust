@@ -3,8 +3,8 @@ use common::{
     constants::{five_card_draw, seven_card_stud},
     hand_rank::{self},
     protocol::{
-        AccountCmd, ActionCmd, AllowedAction, Command, Event, HandStep, LobbyCmd, PlayerId,
-        PlayerSummary, ShowdownLine,
+        AccountCmd, ActionCmd, AllowedAction, AnimationFace, AnimationStreet, AnimationTarget,
+        Command, DealEvent, Event, HandStep, LobbyCmd, PlayerId, PlayerSummary, ShowdownLine,
     },
     wire::ActionPrompt,
 };
