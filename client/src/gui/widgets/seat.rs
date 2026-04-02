@@ -90,7 +90,7 @@ pub fn show_seat(
                             show_card_compact(ui, ctx, cache, *card);
                         }
                         for _ in 0..hidden_to_show {
-                            show_card_back_compact(ui);
+                            show_card_back_compact(ui, ctx, cache);
                         }
                         if remaining_cards > 0 {
                             theme::show_badge(
