@@ -14,8 +14,11 @@ enum StepKind {
 }
 
 impl GameEngine {
+    /// Advances the state machine through every automatic phase until player input is required or
+    /// a hand fully ends.
     pub fn run_automatic_steps(&mut self) -> Vec<Event> {
-        // Go through the steps in the state machine that don't require player input starting at the current step.
+        // Each helper is allowed to advance the table step, so we re-check after every call
+        // instead of assuming a single fixed flow across all variants.
         let mut events = Vec::new();
         loop {
             let step = self.table.current_step();
@@ -386,8 +389,11 @@ impl GameEngine {
         // Deal Hold'em hole cards round-robin (one card to each player, twice).
         for _ in 0..2 {
             for pid in &active {
-                let _ =
-                    self.deal_down_card_to_player(&mut events, AnimationStreet::HoldemPreflop, *pid);
+                let _ = self.deal_down_card_to_player(
+                    &mut events,
+                    AnimationStreet::HoldemPreflop,
+                    *pid,
+                );
             }
         }
         // Hold'em hole cards are private: only shown via ViewHand.
@@ -442,8 +448,11 @@ impl GameEngine {
 
         for _ in 0..2 {
             for pid in &active {
-                let _ =
-                    self.deal_down_card_to_player(&mut events, AnimationStreet::StudThirdDown, *pid);
+                let _ = self.deal_down_card_to_player(
+                    &mut events,
+                    AnimationStreet::StudThirdDown,
+                    *pid,
+                );
             }
         }
 
@@ -602,12 +611,15 @@ impl GameEngine {
         }
 
         for _ in 0..cards_to_deal {
-            let _ = self.deal_board_card(&mut events, match board_len {
-                0 => AnimationStreet::HoldemFlop,
-                3 => AnimationStreet::HoldemTurn,
-                4 => AnimationStreet::HoldemRiver,
-                _ => unreachable!("validated board progression"),
-            });
+            let _ = self.deal_board_card(
+                &mut events,
+                match board_len {
+                    0 => AnimationStreet::HoldemFlop,
+                    3 => AnimationStreet::HoldemTurn,
+                    4 => AnimationStreet::HoldemRiver,
+                    _ => unreachable!("validated board progression"),
+                },
+            );
         }
 
         let board_text = self
@@ -824,6 +836,8 @@ impl GameEngine {
             return vec![self.emit_error("No active players for betting round")];
         }
 
+        // The generic betting state machine does not know where blinds or the stud bring-in came
+        // from, so callers seed those forced contributions before normal action starts.
         self.table.hand_state_mut().start_betting_round(order);
         self.table
             .hand_state_mut()
@@ -851,6 +865,7 @@ impl GameEngine {
         let is_active = |pid: PlayerId| seated_set.contains(&pid) && !folded_set.contains(&pid);
 
         let br = self.table.hand_state_mut().betting_mut().unwrap();
+        // Skip anyone who is seated but already inactive before we emit the first action prompt.
         while !br.pending.is_empty() && !is_active(br.current_player()) {
             Self::advance_to_next_actor_local(br, &is_active);
         }
@@ -935,7 +950,9 @@ impl GameEngine {
             .map(|cards| cards.len())
             .unwrap_or(0);
         self.push_card_to_player_hand(player_id, card);
-        self.table.hand_state_mut().push_player_up_card(player_id, card);
+        self.table
+            .hand_state_mut()
+            .push_player_up_card(player_id, card);
         self.record_deal_event(
             events,
             street,

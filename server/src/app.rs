@@ -4,8 +4,8 @@ use std::sync::{Arc, Mutex, RwLock};
 
 use common::{
     protocol::{
-        AccountCmd, ActionCmd, AnimationFace, AnimationTarget, Command, DealEvent, Event,
-        HandStep, LobbyCmd, PlayerId, PokerVariant,
+        AccountCmd, ActionCmd, AnimationFace, AnimationTarget, Command, DealEvent, Event, HandStep,
+        LobbyCmd, PlayerId, PokerVariant,
     },
     wire::{
         AccountProfile, AnimationCue, ClientRequest, ErrorCode, ErrorPayload, HistoryEntry,
@@ -44,6 +44,10 @@ pub struct RequestOutcome {
     pub invalidated_sessions: Vec<SessionId>,
 }
 
+/// Top-level request facade for the server crate.
+///
+/// `ServerApp` owns account/session coordination and delegates all mutable table work to
+/// per-table worker threads through `TableHandle`.
 pub struct ServerApp {
     pub accounts: SharedAccountStore,
     sessions: Mutex<SessionStore>,
@@ -294,6 +298,8 @@ impl ServerApp {
             .map(|(result, _events)| result)
     }
 
+    /// Authenticates the caller against the current session and forwards the join through the
+    /// target table worker so seating stays serialized with the rest of that table's state.
     fn join_table_detail(
         &self,
         session_id: &str,
@@ -336,6 +342,8 @@ impl ServerApp {
             .map(|(result, _events)| result)
     }
 
+    /// Distinguishes between an immediate lobby leave and a deferred mid-hand leave so callers
+    /// can show the right UX without re-reading table state.
     fn leave_table_detail(
         &self,
         session_id: &str,
@@ -369,6 +377,8 @@ impl ServerApp {
             .map(|(result, _events)| result)
     }
 
+    /// Verifies that the session actually belongs to a seated player before asking the table
+    /// worker to advance from lobby state into a new hand.
     fn start_hand_detail(
         &self,
         session_id: &str,
@@ -495,6 +505,10 @@ impl ServerApp {
         self.handle_request_outcome(request).response
     }
 
+    /// Returns the direct response plus transport-facing side effects.
+    ///
+    /// The TCP layer uses the extra metadata to invalidate replaced sessions and to push fresh
+    /// table snapshots to every subscriber after the initiating response has been sent.
     pub fn handle_request_outcome(&self, request: ClientRequest) -> RequestOutcome {
         let request_id = request.request_id.clone();
         match self.dispatch_request_outcome(request) {
@@ -570,6 +584,7 @@ impl ServerApp {
         let session_id = request.session_id.as_deref();
 
         match request.op {
+            // Sessionless account lifecycle.
             RequestOp::CreateAccount { name, pin, amount } => self
                 .create_account(name, pin, amount)
                 .map(|payload| (ResponsePayload::Account(payload), Vec::new(), Vec::new())),
@@ -586,6 +601,8 @@ impl ServerApp {
                 let (result, table_changes) = self.logout_detail(session_id)?;
                 Ok((ResponsePayload::Logout(result), table_changes, Vec::new()))
             }
+            // Account balance changes may affect visible stack sizes on any table where the
+            // player is seated, even though they do not generate engine events.
             RequestOp::Deposit { amount } => {
                 let session_id = Self::require_session_id(session_id)?;
                 let session = self.require_session(session_id)?;
@@ -611,6 +628,8 @@ impl ServerApp {
                 Vec::new(),
                 Vec::new(),
             )),
+            // Table mutations return both the immediate response payload and the event stream
+            // needed to build subscriber updates for that table.
             RequestOp::CreateTable { variant } => self
                 .create_table(Self::require_session_id(session_id)?, variant)
                 .map(|payload| (ResponsePayload::Table(payload), Vec::new(), Vec::new())),
@@ -763,6 +782,11 @@ impl ServerApp {
         }
     }
 
+    /// Builds the subscriber update exactly as a given session is allowed to see it.
+    ///
+    /// The public table snapshot is shared by everyone, while `player_view` and the animation
+    /// cue payload are scoped to the subscribing session so private cards stay redacted for
+    /// opponents and spectators.
     pub fn build_table_update_for_session(
         &self,
         table_id: TableId,
@@ -770,6 +794,8 @@ impl ServerApp {
         events: &[Event],
     ) -> AppResult<TableUpdateMessage> {
         let table_state = self.get_table_state(table_id)?;
+        // Resolve the viewer up front so we can redact deal cues for everyone except the seat
+        // owner that is meant to see a given private card.
         let viewer_id = session_id.and_then(|session_id| {
             self.require_session(session_id)
                 .ok()
@@ -799,6 +825,8 @@ impl ServerApp {
         let accounts = self.account_map();
         let hand_state = table.hand_state();
 
+        // Public seat state keeps private information at arm's length: callers get visible
+        // up-cards plus a count of hidden cards, never another player's hole cards.
         let seats = table
             .seated_players()
             .into_iter()
@@ -1050,6 +1078,8 @@ impl ServerApp {
         TableChangeNotice { table_id, events }
     }
 
+    /// Synthesizes "empty" table changes for balance-only updates so seated clients still get a
+    /// fresh table snapshot with the new chip counts.
     fn visible_table_changes_for_player(&self, player_id: PlayerId) -> Vec<TableChangeNotice> {
         self.table_handles()
             .into_iter()
@@ -1397,8 +1427,14 @@ mod tests {
             .create_account("bob".into(), "1234".into(), 500)
             .expect("create bob");
 
-        let alice = fx.app.login("alice".into(), "1234".into()).expect("login alice");
-        let bob = fx.app.login("bob".into(), "1234".into()).expect("login bob");
+        let alice = fx
+            .app
+            .login("alice".into(), "1234".into())
+            .expect("login alice");
+        let bob = fx
+            .app
+            .login("bob".into(), "1234".into())
+            .expect("login bob");
         let table = fx.app.list_tables().tables[0].clone();
         fx.app
             .join_table(&alice.session_id, table.table_id)
@@ -1423,7 +1459,11 @@ mod tests {
 
         let owner_update = fx
             .app
-            .build_table_update_for_session(table.table_id, Some(&alice.session_id), &[private_deal.clone()])
+            .build_table_update_for_session(
+                table.table_id,
+                Some(&alice.session_id),
+                &[private_deal.clone()],
+            )
             .expect("owner update");
         assert_eq!(owner_update.animation_cues.len(), 1);
         assert_eq!(
@@ -1437,7 +1477,11 @@ mod tests {
 
         let other_update = fx
             .app
-            .build_table_update_for_session(table.table_id, Some(&bob.session_id), &[private_deal.clone()])
+            .build_table_update_for_session(
+                table.table_id,
+                Some(&bob.session_id),
+                &[private_deal.clone()],
+            )
             .expect("other update");
         assert_eq!(other_update.animation_cues.len(), 1);
         assert_eq!(other_update.animation_cues[0].card, None);

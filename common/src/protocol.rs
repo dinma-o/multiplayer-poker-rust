@@ -37,6 +37,8 @@ pub enum AnimationFace {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// Internal engine deal event. The server later redacts this into a viewer-specific
+/// `wire::AnimationCue` before it is pushed to clients.
 pub struct DealEvent {
     pub street: AnimationStreet,
     pub target: AnimationTarget,
@@ -56,6 +58,9 @@ pub enum PokerVariant {
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+/// Variant-agnostic hand timeline.
+///
+/// Some variants simply skip over the steps they do not use when the engine auto-advances.
 pub enum HandStep {
     WaitingForPlayers,
     CollectForcedBets, // ante or blinds later
@@ -149,6 +154,10 @@ pub enum ActionCmd {
 // -------------------- Events --------------------
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// Internal event stream produced by the game engine.
+///
+/// The CLI can print these directly. The TCP server converts them into public history entries,
+/// table updates, and private cues depending on the recipient.
 pub enum Event {
     Ok,
     Info {

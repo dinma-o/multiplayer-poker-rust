@@ -35,6 +35,10 @@ mod tests;
 
 pub type SharedAccountStore = Arc<Mutex<AccountStore>>;
 
+/// Core game coordinator for one table.
+///
+/// `GameEngine` owns the variant-specific state machine, account mutations tied to gameplay, and
+/// the event stream that the CLI and TCP layers translate into their respective outputs.
 pub struct GameEngine {
     pub accounts: SharedAccountStore,
     pub table: PokerTable,

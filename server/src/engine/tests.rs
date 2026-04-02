@@ -551,7 +551,10 @@ fn five_card_draw_replacement_emits_one_cue_per_new_card() {
         ]
     );
     assert_eq!(
-        deals.iter().map(|deal| deal.target_index).collect::<Vec<_>>(),
+        deals
+            .iter()
+            .map(|deal| deal.target_index)
+            .collect::<Vec<_>>(),
         vec![1, 3]
     );
 }
@@ -924,7 +927,10 @@ fn stud_third_street_emits_two_down_passes_then_one_up_pass() {
         assert_eq!(deal.street, AnimationStreet::StudThirdDown);
         assert_eq!(deal.target, AnimationTarget::Seat);
         assert_eq!(deal.face, AnimationFace::Down);
-        assert_eq!(deal.player_id, Some(active_in_order[index % active_in_order.len()]));
+        assert_eq!(
+            deal.player_id,
+            Some(active_in_order[index % active_in_order.len()])
+        );
     }
     for (index, deal) in deals.iter().enumerate().skip(active_in_order.len() * 2) {
         assert_eq!(deal.street, AnimationStreet::StudThirdUp);

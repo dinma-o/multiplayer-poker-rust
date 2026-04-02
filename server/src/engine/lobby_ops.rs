@@ -234,7 +234,11 @@ impl GameEngine {
         self.handle_player_removed_midhand(pid, pname)
     }
 
-    // Single entry point for "player removed mid-hand" behavior.
+    /// Shared path for disconnects and explicit leaves that happen while a hand is active.
+    ///
+    /// We model the removal as a fold for the current hand, queue the structural leave on the
+    /// table, and then resume or fast-forward the hand depending on how many active players
+    /// remain.
     fn handle_player_removed_midhand(&mut self, pid: PlayerId, pname: &str) -> Vec<Event> {
         let mut events = Vec::new();
 
@@ -242,6 +246,7 @@ impl GameEngine {
             return events;
         }
 
+        // First update the hand-level bookkeeping as though the player had folded right now.
         let removal = self.apply_midhand_fold_equivalent(pid);
         self.update_midhand_leave_flags(pid);
 
@@ -249,6 +254,7 @@ impl GameEngine {
             "{pname} disconnected: folded and will leave after the hand"
         )));
 
+        // Then either award the pot immediately or resume whichever decision phase was active.
         if let Some(fast_forward_events) = self.fast_forward_if_single_active_player_remains() {
             events.extend(fast_forward_events);
             return events;
@@ -319,6 +325,8 @@ impl GameEngine {
 
         match self.table.current_step() {
             HandStep::BettingRound1 | HandStep::BettingRound2 => {
+                // If the removed player was the actor, advance the betting cursor until it lands
+                // on someone who is still live in this hand.
                 if let Some(br) = self.table.hand_state().betting() {
                     if br.pending.is_empty() {
                         self.table.hand_state_mut().end_betting_round();
@@ -357,6 +365,8 @@ impl GameEngine {
                 }
             }
             HandStep::DrawPhase => {
+                // Draw rounds are similar: either the round is over, or we prompt the next
+                // remaining player if the disconnected player was the active drawer.
                 if removal.draw_done {
                     self.table.hand_state_mut().end_draw_round();
                     self.table.advance_table_state();

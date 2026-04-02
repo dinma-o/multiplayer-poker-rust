@@ -13,6 +13,10 @@ use common::wire::{
 type PendingMap = Arc<Mutex<HashMap<RequestId, Sender<ServerResponse>>>>;
 type SharedSession = Arc<Mutex<Option<SessionId>>>;
 
+/// Thin newline-delimited TCP client with a background reader thread.
+///
+/// Requests are sent synchronously by `send`, while the reader thread demultiplexes responses and
+/// push messages back onto channels/callbacks for the rest of the client.
 pub struct TcpClient {
     writer: TcpStream,
     next_request_id: u64,
@@ -42,6 +46,8 @@ impl TcpClient {
         })
     }
 
+    /// Sends one request and waits for the matching response while the reader thread continues to
+    /// process push updates in the background.
     pub fn send(&mut self, op: RequestOp) -> io::Result<ServerResponse> {
         let request_id = format!("req-{}", self.next_request_id);
         self.next_request_id = self.next_request_id.saturating_add(1);
@@ -97,6 +103,7 @@ impl TcpClient {
     }
 }
 
+/// Demultiplexes newline-delimited server messages into reply channels and push events.
 fn spawn_reader_thread(
     read_stream: TcpStream,
     pending: PendingMap,
@@ -151,6 +158,8 @@ fn spawn_reader_thread(
                     {
                         let _ = reply_tx.send(response);
                     } else {
+                        // Push responses without a waiting caller are unexpected at the GUI layer
+                        // and usually point to a request/response ordering bug.
                         emit_event(&event_handler, ClientEvent::UnexpectedResponse(response));
                     }
                 }
@@ -175,6 +184,8 @@ fn emit_event(event_handler: &Option<EventHandler>, event: ClientEvent) {
     }
 }
 
+/// Mirrors server-owned authentication state locally so future requests automatically carry the
+/// latest `session_id`.
 fn capture_session(session_id: &SharedSession, response: &ServerResponse) {
     if !response.ok {
         return;

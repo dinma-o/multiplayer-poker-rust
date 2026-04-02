@@ -106,7 +106,10 @@ impl GameEngine {
         let board_text = board.iter().map(|c| c.to_string()).collect::<Vec<_>>();
         let hole_text = hole_text.join(", ");
         let board_text = board_text.join(", ");
-        Some(format!("board=[{board_text}] hole=[{hole_text}] => {:?}", rank.category))
+        Some(format!(
+            "board=[{board_text}] hole=[{hole_text}] => {:?}",
+            rank.category
+        ))
     }
 
     fn stud_seven_cards_for_player(&self, pid: PlayerId) -> Option<[common::card_deck::Card; 7]> {
@@ -125,6 +128,9 @@ impl GameEngine {
         let up_text = up_cards.iter().map(|c| c.to_string()).collect::<Vec<_>>();
         let all_text = all_text.join(", ");
         let up_text = up_text.join(", ");
-        Some(format!("cards=[{all_text}] up=[{up_text}] => {:?}", rank.category))
+        Some(format!(
+            "cards=[{all_text}] up=[{up_text}] => {:?}",
+            rank.category
+        ))
     }
 }

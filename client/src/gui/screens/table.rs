@@ -8,8 +8,8 @@ use super::super::{
     widgets::{
         action_bar::show_action_bar,
         card::{
-            show_card, show_card_back, show_card_back_compact, show_card_compact, show_card_slot,
-            show_card_slot_compact, CARD_SIZE, COMPACT_CARD_SIZE,
+            CARD_SIZE, COMPACT_CARD_SIZE, show_card, show_card_back, show_card_back_compact,
+            show_card_compact, show_card_slot, show_card_slot_compact,
         },
         discard_picker::show_discard_picker,
         event_log::show_event_log,
@@ -608,7 +608,8 @@ fn show_table_surface(
                 });
         });
 
-        if let Some((cue, progress)) = app.current_animation_overlay(ctx.input(|input| input.time)) {
+        if let Some((cue, progress)) = app.current_animation_overlay(ctx.input(|input| input.time))
+        {
             paint_deal_animation_overlay(
                 ctx,
                 &mut app.texture_cache,
@@ -638,7 +639,11 @@ fn paint_deal_animation_overlay(
     compact: bool,
     very_compact: bool,
 ) {
-    let size = if compact { COMPACT_CARD_SIZE } else { CARD_SIZE };
+    let size = if compact {
+        COMPACT_CARD_SIZE
+    } else {
+        CARD_SIZE
+    };
     let start = deck_origin(table_rect, compact, very_compact);
     let end = animation_target_center(cue, table_rect, compact, very_compact);
     let eased = 1.0 - (1.0 - progress).powi(3);
@@ -685,7 +690,10 @@ fn deck_origin(table_rect: egui::Rect, compact: bool, very_compact: bool) -> egu
         28.0
     };
 
-    egui::pos2(table_rect.center().x + x_offset, table_rect.center().y - y_offset)
+    egui::pos2(
+        table_rect.center().x + x_offset,
+        table_rect.center().y - y_offset,
+    )
 }
 
 fn animation_target_center(
@@ -706,7 +714,11 @@ fn board_target_center(
     compact: bool,
     very_compact: bool,
 ) -> egui::Pos2 {
-    let size = if compact { COMPACT_CARD_SIZE } else { CARD_SIZE };
+    let size = if compact {
+        COMPACT_CARD_SIZE
+    } else {
+        CARD_SIZE
+    };
     let gap = if very_compact {
         2.0
     } else if compact {

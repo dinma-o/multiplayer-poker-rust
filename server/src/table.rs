@@ -119,6 +119,10 @@ impl PokerTable {
         }
     }
 
+    /// Drains mid-hand joins/leaves once the state machine returns to the lobby.
+    ///
+    /// This lets the engine queue structural table changes while a hand is active without
+    /// invalidating the betting order for the current hand.
     pub fn apply_pending_requests(&mut self) {
         if *self.game_state_machine.get_current_state() != HandStep::WaitingForPlayers {
             return;
@@ -177,6 +181,7 @@ impl PokerTable {
         &mut self.hand_state
     }
 
+    /// Returns occupied seats in dealer-relative action order.
     pub fn action_order(&self) -> Vec<PlayerId> {
         let mut seat_ids: Vec<Option<PlayerId>> = vec![None; self.variant.max_players];
 

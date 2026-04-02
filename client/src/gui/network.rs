@@ -48,6 +48,8 @@ pub fn spawn_network_threads(
             };
 
             match command {
+                // A single sender thread preserves request ordering and matches the GUI's
+                // coarse-grained "one request in flight" state model.
                 GuiCommand::SendOp(op) => match client.send(op) {
                     Ok(response) => {
                         if resp_tx.send(response).is_err() {

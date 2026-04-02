@@ -13,6 +13,7 @@ pub type TableId = u64;
 pub type RequestId = String;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+/// One request sent from a client to the server over the newline-delimited TCP protocol.
 pub struct ClientRequest {
     pub request_id: RequestId,
     pub session_id: Option<SessionId>,
@@ -20,6 +21,7 @@ pub struct ClientRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+/// Direct response to a single `ClientRequest`.
 pub struct ServerResponse {
     pub request_id: RequestId,
     pub ok: bool,
@@ -49,6 +51,10 @@ impl ServerResponse {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "type", rename_all = "snake_case")]
+/// Top-level TCP message.
+///
+/// `Response` is request-scoped, while `TableUpdate` and `SessionClosed` are unsolicited push
+/// messages tied to a subscribed table or a connection-level session change.
 pub enum ServerMessage {
     Response { response: ServerResponse },
     TableUpdate(TableUpdateMessage),
@@ -244,6 +250,10 @@ pub struct OperationReceipt {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+/// Public snapshot of a table.
+///
+/// This is safe to show to spectators and opponents. Hidden hole cards are represented only as a
+/// count on each seat.
 pub struct PublicTableState {
     pub table_id: TableId,
     pub variant: PokerVariant,
@@ -270,6 +280,7 @@ pub struct PublicSeatState {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+/// Session-scoped private state for the seated player who requested it.
 pub struct PlayerView {
     pub table_id: TableId,
     pub player_id: PlayerId,
@@ -282,6 +293,10 @@ pub struct PlayerView {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+/// One animation instruction derived from an internal `protocol::Event::Deal`.
+///
+/// The server redacts `card` and `target_index` when the receiving session should not see the
+/// underlying private card.
 pub struct AnimationCue {
     pub street: AnimationStreet,
     pub target: AnimationTarget,
@@ -318,6 +333,10 @@ pub struct TableHistory {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+/// Push message for a subscribed table.
+///
+/// Combines the authoritative public table state, an optional private player view, filtered
+/// history entries, and optional animation cues for the just-applied engine events.
 pub struct TableUpdateMessage {
     pub table_id: TableId,
     pub table_state: PublicTableState,

@@ -72,6 +72,10 @@ pub enum GuiCommand {
 }
 
 #[derive(Debug, Clone)]
+/// Holds an incoming server update while the UI animates toward it.
+///
+/// The final table state, player view, and history entries are only committed once every cue has
+/// been played so the on-screen state stays internally consistent.
 struct DealAnimationState {
     target_table_state: PublicTableState,
     target_player_view: Option<PlayerView>,
@@ -91,6 +95,12 @@ impl DealAnimationState {
 // PokerApp
 // ---------------------------------------------------------------------------
 
+/// Top-level GUI state machine for the client crate.
+///
+/// `PokerApp` bridges three timelines:
+/// - immediate user intent from egui
+/// - request/response traffic coming back from the network worker
+/// - push-driven table updates that may need to be animated before they are committed
 pub struct PokerApp {
     // Navigation
     pub screen: Screen,
@@ -244,7 +254,10 @@ impl PokerApp {
         self.enter_lobby();
     }
 
-    /// Send a request op to the network thread and record it as pending.
+    /// Queues one operation onto the network worker.
+    ///
+    /// The current client intentionally serializes requests through a single sender thread, so the
+    /// GUI only needs coarse "something is in flight" tracking here.
     pub fn send_op(&mut self, kind: PendingKind, op: RequestOp) {
         if let Some(tx) = &self.cmd_tx {
             if tx.send(GuiCommand::SendOp(op)).is_ok() {
@@ -308,6 +321,11 @@ impl PokerApp {
         }
     }
 
+    /// Handles solicited request/response traffic.
+    ///
+    /// Push-driven table changes still arrive on `push_rx`; this method is mainly responsible for
+    /// navigation, optimistic follow-up requests, and syncing point-in-time response payloads into
+    /// the local view model.
     fn handle_response(&mut self, response: common::wire::ServerResponse) {
         // TcpClient serializes one request at a time — clear the single pending entry.
         self.pending.clear();
@@ -320,6 +338,7 @@ impl PokerApp {
         }
 
         match response.payload {
+            // Authentication/account responses shape the top-level session state.
             Some(ResponsePayload::Login(result)) => {
                 self.session_id = Some(result.session_id);
                 self.account = Some(result.account);
@@ -344,6 +363,8 @@ impl PokerApp {
                 self.table_view_mode = None;
                 self.screen = Screen::Login;
             }
+            // Lobby navigation lives off direct responses because it does not need per-cue
+            // animation like table updates do.
             Some(ResponsePayload::Tables(list)) => {
                 self.tables = list.tables;
             }
@@ -388,6 +409,7 @@ impl PokerApp {
                     );
                 }
             },
+            // Direct state fetches are authoritative snapshots and can be committed immediately.
             Some(ResponsePayload::TableState(state)) => {
                 self.table_state = Some(state);
             }
@@ -399,6 +421,7 @@ impl PokerApp {
         }
     }
 
+    /// Handles unsolicited transport and subscription events.
     fn handle_push_event(&mut self, event: ClientEvent) {
         match event {
             ClientEvent::TableUpdate(update) => {
@@ -485,14 +508,18 @@ impl PokerApp {
         }
     }
 
+    /// Applies queued table updates one animation cue at a time.
+    ///
+    /// The server sends authoritative end-state snapshots plus optional deal cues. We rewind to a
+    /// safe starting point, animate toward that end state, then commit the history entries only
+    /// once the visual transition is complete.
     fn update_deal_animation(&mut self, now: f64) {
         loop {
             if let Some(animation) = &self.active_deal_animation {
+                // A cue is already in progress: either finish it, advance to the next cue, or
+                // commit the final target state once the sequence is exhausted.
                 let Some(cue) = animation.current_cue().cloned() else {
-                    let finished = self
-                        .active_deal_animation
-                        .take()
-                        .expect("animation exists");
+                    let finished = self.active_deal_animation.take().expect("animation exists");
                     self.commit_table_update(
                         finished.target_table_state,
                         finished.target_player_view,
@@ -521,10 +548,7 @@ impl PokerApp {
                 }
 
                 if finished {
-                    let finished = self
-                        .active_deal_animation
-                        .take()
-                        .expect("animation exists");
+                    let finished = self.active_deal_animation.take().expect("animation exists");
                     self.commit_table_update(
                         finished.target_table_state,
                         finished.target_player_view,
@@ -533,6 +557,8 @@ impl PokerApp {
                     continue;
                 }
             } else {
+                // No animation is active, so pull the next queued server update and either apply
+                // it immediately or convert it into a staged animation sequence.
                 let Some(update) = self.queued_table_updates.pop_front() else {
                     break;
                 };
@@ -561,6 +587,11 @@ impl PokerApp {
         }
     }
 
+    /// Chooses the state we should animate from for an incoming update.
+    ///
+    /// If we already have a matching live snapshot for this table/viewer, we animate from that.
+    /// Otherwise we reconstruct the pre-deal baseline by rewinding the target snapshot with the
+    /// provided animation cues.
     fn animation_base_for_update(
         &self,
         update: &TableUpdateMessage,
@@ -583,16 +614,17 @@ impl PokerApp {
         (table_state, player_view)
     }
 
-    fn rewind_table_state(
-        target: &PublicTableState,
-        cues: &[AnimationCue],
-    ) -> PublicTableState {
+    /// Reconstructs the pre-animation public table state by removing the dealt cards in reverse
+    /// cue order from the authoritative target snapshot.
+    fn rewind_table_state(target: &PublicTableState, cues: &[AnimationCue]) -> PublicTableState {
         let mut state = target.clone();
 
         for cue in cues.iter().rev() {
             match cue.target {
                 AnimationTarget::Board => {
-                    if let Some(index) = cue.target_index && index < state.board_cards.len() {
+                    if let Some(index) = cue.target_index
+                        && index < state.board_cards.len()
+                    {
                         state.board_cards.remove(index);
                     }
                 }
@@ -638,13 +670,16 @@ impl PokerApp {
         state
     }
 
+    /// Reconstructs the seated player's private view before the incoming animation plays.
     fn rewind_player_view(target: &PlayerView, cues: &[AnimationCue]) -> PlayerView {
         let mut view = target.clone();
 
         for cue in cues.iter().rev() {
             match cue.target {
                 AnimationTarget::Board => {
-                    if let Some(index) = cue.target_index && index < view.board_cards.len() {
+                    if let Some(index) = cue.target_index
+                        && index < view.board_cards.len()
+                    {
                         view.board_cards.remove(index);
                     }
                 }
@@ -659,7 +694,8 @@ impl PokerApp {
                         | AnimationStreet::HoldemPreflop
                         | AnimationStreet::StudThirdDown
                         | AnimationStreet::StudSeventh => {
-                            if let Some(index) = cue.target_index && index < view.private_cards.len()
+                            if let Some(index) = cue.target_index
+                                && index < view.private_cards.len()
                             {
                                 view.private_cards.remove(index);
                             }
@@ -668,7 +704,9 @@ impl PokerApp {
                         | AnimationStreet::StudFourth
                         | AnimationStreet::StudFifth
                         | AnimationStreet::StudSixth => {
-                            if let Some(index) = cue.target_index && index < view.up_cards.len() {
+                            if let Some(index) = cue.target_index
+                                && index < view.up_cards.len()
+                            {
                                 view.up_cards.remove(index);
                             }
                             let _ = view.private_cards.pop();
@@ -684,6 +722,7 @@ impl PokerApp {
         view
     }
 
+    /// Applies one cue to the live UI projection without committing the full update yet.
     fn apply_animation_cue(
         &mut self,
         cue: &AnimationCue,
@@ -712,6 +751,7 @@ impl PokerApp {
                 }
             }
             AnimationTarget::Seat => {
+                // First update the public seat projection that everyone sees.
                 if let Some(state) = &mut self.table_state
                     && let Some(seat_index) = cue.seat
                     && let Some(seat) = state.seats.iter_mut().find(|seat| seat.seat == seat_index)
@@ -748,10 +788,13 @@ impl PokerApp {
                         | AnimationStreet::HoldemRiver => {}
                     }
 
-                    seat.is_in_hand =
-                        target_seat.is_in_hand || seat.hidden_card_count > 0 || !seat.up_cards.is_empty();
+                    seat.is_in_hand = target_seat.is_in_hand
+                        || seat.hidden_card_count > 0
+                        || !seat.up_cards.is_empty();
                 }
 
+                // Then, if this cue belongs to the local user, mirror the matching private cards
+                // into the seat owner's personal view.
                 if let Some(card) = cue.card
                     && let Some(view) = &mut self.player_view
                     && cue.seat == view.seat
@@ -858,7 +901,7 @@ impl PokerApp {
 mod tests {
     use super::*;
     use common::card_deck::{Card, Rank, Suit};
-    use common::protocol::{AnimationFace, AllowedAction};
+    use common::protocol::{AllowedAction, AnimationFace};
 
     fn sample_table_state(step: HandStep, hidden_card_count: usize) -> PublicTableState {
         PublicTableState {
@@ -946,7 +989,9 @@ mod tests {
         assert!(app.is_deal_animation_active());
         assert_eq!(app.event_log.len(), 0);
         assert_eq!(
-            app.table_state.as_ref().map(|state| state.hidden_card_count_for_test()),
+            app.table_state
+                .as_ref()
+                .map(|state| state.hidden_card_count_for_test()),
             Some(0)
         );
 

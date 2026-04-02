@@ -11,6 +11,10 @@ use common::{
 use crate::{engine::SharedAccountStore, table::PokerTable, table_runtime::TableRuntime};
 
 #[derive(Debug, Clone)]
+/// Cloneable handle to a dedicated table worker thread.
+///
+/// The worker owns all mutable table/runtime state so the rest of the server can query or mutate
+/// a table without sharing that state across threads.
 pub struct TableHandle {
     tx: Sender<TableRequest>,
 }
@@ -144,6 +148,10 @@ impl TableHandle {
     }
 }
 
+/// Serializes all table access for one table instance.
+///
+/// The server can freely clone `TableHandle`, but every mutation still funnels through this loop
+/// so game state, history, and disconnect bookkeeping stay consistent.
 fn worker_loop(mut runtime: TableRuntime, rx: Receiver<TableRequest>) {
     let mut disconnected_players = HashSet::new();
 
@@ -172,6 +180,8 @@ fn worker_loop(mut runtime: TableRuntime, rx: Receiver<TableRequest>) {
                 player_name,
                 reply_tx,
             } => {
+                // A transport disconnect is treated like a leave attempt. If the engine cannot
+                // remove the seat yet, we keep the player marked as disconnected in snapshots.
                 let is_seated = runtime
                     .engine
                     .table
@@ -247,6 +257,7 @@ fn worker_loop(mut runtime: TableRuntime, rx: Receiver<TableRequest>) {
     }
 }
 
+/// Removes stale disconnect markers once a player fully leaves the table.
 fn prune_disconnected_players(
     runtime: &TableRuntime,
     disconnected_players: &mut HashSet<PlayerId>,
