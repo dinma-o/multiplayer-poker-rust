@@ -551,6 +551,68 @@ impl GameEngine {
         }
     }
 
+    fn available_balance_for_action(&self, pid: PlayerId) -> u32 {
+        self.account_by_id(pid)
+            .ok()
+            .and_then(|account| u32::try_from(account.balance).ok())
+            .unwrap_or(0)
+    }
+
+    fn round_down_to_increment(amount: u32, increment: u32) -> u32 {
+        if increment == 0 {
+            amount
+        } else {
+            amount - (amount % increment)
+        }
+    }
+
+    fn max_bet_amount_for_prompt(&self, pid: PlayerId) -> Option<u32> {
+        let balance = self.available_balance_for_action(pid);
+
+        if self.is_stud_variant() {
+            let opening_bet = self.stud_opening_bet_size()?;
+            return (balance >= opening_bet).then_some(opening_bet);
+        }
+
+        let capped = Self::round_down_to_increment(
+            balance.min(five_card_draw::MAX_BET_PER_ROUND),
+            five_card_draw::BET_INCREMENT,
+        );
+        (capped >= five_card_draw::MIN_BET_PER_ROUND).then_some(capped)
+    }
+
+    fn max_raise_amount_for_prompt(
+        &self,
+        pid: PlayerId,
+        current_bet: u32,
+        call_amount: u32,
+    ) -> Option<u32> {
+        let raises_used = self
+            .table
+            .hand_state()
+            .betting()
+            .map(|br| br.raises_used)
+            .unwrap_or(0);
+        if raises_used >= self.max_raises_for_current_variant() {
+            return None;
+        }
+
+        let balance = self.available_balance_for_action(pid);
+
+        if self.is_stud_variant() {
+            let raise_by = self.stud_raise_by_amount(current_bet)?;
+            let total_cost = call_amount.checked_add(raise_by)?;
+            return (balance >= total_cost).then_some(raise_by);
+        }
+
+        let affordable_raise = balance.checked_sub(call_amount)?;
+        let capped = Self::round_down_to_increment(
+            affordable_raise.min(five_card_draw::MAX_RAISE_TO_AMOUNT.saturating_sub(current_bet)),
+            five_card_draw::RAISE_INCREMENT,
+        );
+        (capped >= five_card_draw::MIN_RAISE_AMOUNT).then_some(capped)
+    }
+
     pub(super) fn action_requested_event_for(&self, pid: PlayerId, pname: &str) -> Event {
         let current_bet = self.table.hand_state().current_bet();
         let contrib = self
@@ -564,50 +626,59 @@ impl GameEngine {
             .unwrap_or(0);
         let call_amount = current_bet.saturating_sub(contrib);
 
-        let raises_capped = self.table.hand_state().betting().unwrap().raises_used
-            >= self.max_raises_for_current_variant();
-
-        let min_raise = if self.is_stud_variant() {
-            if current_bet == 0 {
-                self.stud_opening_bet_size().map(|amount| amount as i64)
-            } else {
-                self.stud_raise_by_amount(current_bet).map(|am| am as i64)
-            }
+        let max_amount = if current_bet == 0 {
+            self.max_bet_amount_for_prompt(pid)
         } else {
-            Some(five_card_draw::MIN_RAISE_AMOUNT as i64)
+            self.max_raise_amount_for_prompt(pid, current_bet, call_amount)
         };
 
-        let allowed_actions: Vec<AllowedAction> = if current_bet == 0 {
-            vec![
-                AllowedAction::Check,
-                AllowedAction::Bet,
-                AllowedAction::Fold,
-            ]
-        } else if call_amount == 0 {
-            if raises_capped {
-                vec![AllowedAction::Check, AllowedAction::Fold]
+        let min_raise = if current_bet == 0 {
+            if max_amount.is_some() {
+                if self.is_stud_variant() {
+                    self.stud_opening_bet_size().map(|amount| amount as i64)
+                } else {
+                    Some(five_card_draw::MIN_BET_PER_ROUND as i64)
+                }
             } else {
-                vec![
-                    AllowedAction::Check,
-                    AllowedAction::Raise,
-                    AllowedAction::Fold,
-                ]
+                None
+            }
+        } else if max_amount.is_some() {
+            if self.is_stud_variant() {
+                self.stud_raise_by_amount(current_bet)
+                    .map(|amount| amount as i64)
+            } else {
+                Some(five_card_draw::MIN_RAISE_AMOUNT as i64)
             }
         } else {
-            if raises_capped {
-                return Event::ActionRequested {
-                    player_name: pname.to_string(),
-                    allowed: vec![AllowedAction::Call, AllowedAction::Fold],
-                    call_amount: Some(call_amount as i64),
-                    min_raise: None,
-                };
-            }
+            None
+        };
 
-            vec![
-                AllowedAction::Call,
-                AllowedAction::Raise,
-                AllowedAction::Fold,
-            ]
+        let can_call = call_amount == 0 || self.available_balance_for_action(pid) >= call_amount;
+
+        let allowed_actions: Vec<AllowedAction> = if current_bet == 0 {
+            let mut actions = vec![AllowedAction::Check];
+            if max_amount.is_some() {
+                actions.push(AllowedAction::Bet);
+            }
+            actions.push(AllowedAction::Fold);
+            actions
+        } else if call_amount == 0 {
+            let mut actions = vec![AllowedAction::Check];
+            if max_amount.is_some() {
+                actions.push(AllowedAction::Raise);
+            }
+            actions.push(AllowedAction::Fold);
+            actions
+        } else {
+            let mut actions = Vec::new();
+            if can_call {
+                actions.push(AllowedAction::Call);
+            }
+            if max_amount.is_some() {
+                actions.push(AllowedAction::Raise);
+            }
+            actions.push(AllowedAction::Fold);
+            actions
         };
 
         Event::ActionRequested {
@@ -615,6 +686,7 @@ impl GameEngine {
             allowed: allowed_actions,
             call_amount: Some(call_amount as i64),
             min_raise,
+            max_amount: max_amount.map(|amount| amount as i64),
         }
     }
 }

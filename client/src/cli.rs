@@ -158,10 +158,13 @@ fn parse_request_op(parts: &[&str]) -> Result<RequestOp, String> {
         "unsubscribe_table" => Ok(RequestOp::UnsubscribeTable {
             table_id: parse_u64(parts.get(1), "table_id")?,
         }),
-        "submit_action" => Ok(RequestOp::SubmitAction {
-            table_id: parse_u64(parts.get(1), "table_id")?,
-            action: parse_action(&parts[2..])?,
-        }),
+        "submit_action" => {
+            let action_parts = parts.get(2..).unwrap_or(&[]);
+            Ok(RequestOp::SubmitAction {
+                table_id: parse_u64(parts.get(1), "table_id")?,
+                action: parse_action(action_parts)?,
+            })
+        }
         other => Err(format!("unknown command '{other}'")),
     }
 }
@@ -468,10 +471,11 @@ fn format_player_view(view: &PlayerView) -> String {
 
 fn format_action_prompt(prompt: &ActionPrompt) -> String {
     format!(
-        "Action: {} | call={} | min_raise={} | max_discards={}",
+        "Action: {} | call={} | min_raise={} | max_amount={} | max_discards={}",
         format_allowed_actions(&prompt.allowed_actions),
         format_optional_chips(prompt.call_amount),
         format_optional_chips(prompt.min_raise),
+        format_optional_chips(prompt.max_amount),
         format_optional_usize(prompt.max_discards)
     )
 }
@@ -709,7 +713,7 @@ fn print_help() {
     println!("  submit_action <table_id> fold");
     println!("  submit_action <table_id> bet <amount>");
     println!("  submit_action <table_id> raise <amount>");
-    println!("  submit_action <table_id> draw [i1 i2 ...]");
+    println!("  submit_action <table_id> draw 0 1 2 ...");
     println!("  quit | exit");
     println!("Startup flags:");
     println!("  --host <host> --port <port>");
@@ -831,10 +835,9 @@ mod tests {
 
         assert!(output.contains("Player view for alice (player #7)"));
         assert!(output.contains("Private cards: Q♣ J♦"));
-        assert!(
-            output
-                .contains("Action: check, call, raise | call=10 | min_raise=20 | max_discards=n/a")
-        );
+        assert!(output.contains(
+            "Action: check, call, raise | call=10 | min_raise=20 | max_amount=25 | max_discards=n/a"
+        ));
     }
 
     #[test]
@@ -874,6 +877,7 @@ mod tests {
                 sample_showdown_history_entry(),
                 sample_payout_history_entry(),
             ],
+            animation_cues: vec![],
         });
 
         assert!(output.contains("[push table 1]"));
@@ -1011,6 +1015,7 @@ mod tests {
                 ],
                 call_amount: Some(10),
                 min_raise: Some(20),
+                max_amount: Some(25),
                 max_discards: None,
             }),
         }

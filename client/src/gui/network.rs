@@ -1,6 +1,6 @@
 use std::io;
-use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::Arc;
+use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
 
 use crate::net::TcpClient;
@@ -18,7 +18,11 @@ use super::app::GuiCommand;
 pub fn spawn_network_threads(
     address: &str,
     ctx: egui::Context,
-) -> io::Result<(Sender<GuiCommand>, Receiver<ServerResponse>, Receiver<ClientEvent>)> {
+) -> io::Result<(
+    Sender<GuiCommand>,
+    Receiver<ServerResponse>,
+    Receiver<ClientEvent>,
+)> {
     let (cmd_tx, cmd_rx) = mpsc::channel::<GuiCommand>();
     let (resp_tx, resp_rx) = mpsc::channel::<ServerResponse>();
     let (push_tx, push_rx) = mpsc::channel::<ClientEvent>();
@@ -44,6 +48,8 @@ pub fn spawn_network_threads(
             };
 
             match command {
+                // A single sender thread preserves request ordering and matches the GUI's
+                // coarse-grained "one request in flight" state model.
                 GuiCommand::SendOp(op) => match client.send(op) {
                     Ok(response) => {
                         if resp_tx.send(response).is_err() {

@@ -1,5 +1,7 @@
 use common::wire::HistoryEntry;
 
+use crate::gui::theme;
+
 /// Render showdown hand descriptions and payout amounts.
 ///
 /// Displayed as a highlighted section above the event log.
@@ -13,74 +15,59 @@ pub fn show_results(
         return;
     }
 
-    egui::Frame::new()
-        .fill(egui::Color32::from_rgb(40, 35, 10))
-        .stroke(egui::Stroke::new(1.5, egui::Color32::from_rgb(180, 150, 30)))
-        .corner_radius(6.0)
-        .inner_margin(egui::Margin::same(8))
-        .show(ui, |ui| {
-            // ── Showdown ──────────────────────────────────────────────────
-            if let Some(entry) = showdown {
-                ui.label(
-                    egui::RichText::new("Showdown")
-                        .strong()
-                        .color(egui::Color32::from_rgb(255, 200, 50)),
-                );
-                ui.add_space(2.0);
+    theme::info_frame().show(ui, |ui| {
+        if let Some(entry) = showdown {
+            ui.label(
+                egui::RichText::new("Showdown")
+                    .strong()
+                    .color(theme::ACCENT),
+            );
+            ui.add_space(2.0);
 
-                if let Some(results) = &entry.showdown_results {
-                    for line in results {
+            if let Some(results) = &entry.showdown_results {
+                for line in results {
+                    theme::soft_panel_frame().show(ui, |ui| {
                         ui.label(
                             egui::RichText::new(format!(
                                 "{}: {}",
                                 line.player_name, line.hand_desc
                             ))
                             .small()
-                            .color(egui::Color32::WHITE),
+                            .color(theme::TEXT),
                         );
-                    }
-                } else {
-                    ui.label(
-                        egui::RichText::new(&entry.message)
-                            .small()
-                            .color(egui::Color32::from_gray(180)),
-                    );
+                    });
                 }
-
-                if payout.is_some() {
-                    ui.add_space(6.0);
-                }
+            } else {
+                ui.label(theme::small_muted(&entry.message));
             }
 
-            // ── Payout ────────────────────────────────────────────────────
-            if let Some(entry) = payout {
-                ui.label(
-                    egui::RichText::new("Payout")
-                        .strong()
-                        .color(egui::Color32::from_rgb(255, 200, 50)),
-                );
-                ui.add_space(2.0);
+            if payout.is_some() {
+                ui.add_space(6.0);
+            }
+        }
 
-                if let Some(results) = &entry.payout_results {
-                    for line in results {
+        if let Some(entry) = payout {
+            ui.label(egui::RichText::new("Payout").strong().color(theme::GOLD));
+            ui.add_space(2.0);
+
+            if let Some(results) = &entry.payout_results {
+                for line in results {
+                    theme::soft_panel_frame().show(ui, |ui| {
                         ui.label(
                             egui::RichText::new(format!(
-                                "{} wins ${}",
+                                "{} wins {}",
                                 line.player_name, line.amount
                             ))
                             .small()
-                            .color(egui::Color32::from_rgb(100, 220, 100)),
+                            .color(theme::ACCENT),
                         );
-                    }
-                } else {
-                    ui.label(
-                        egui::RichText::new(&entry.message)
-                            .small()
-                            .color(egui::Color32::from_gray(180)),
-                    );
+                    });
                 }
+            } else {
+                ui.label(theme::small_muted(&entry.message));
             }
-        });
+        }
+    });
 
     ui.add_space(6.0);
 }

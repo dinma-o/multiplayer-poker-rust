@@ -3,13 +3,16 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 
 use common::{
-    protocol::{AccountCmd, ActionCmd, Command, Event, HandStep, LobbyCmd, PlayerId, PokerVariant},
+    protocol::{
+        AccountCmd, ActionCmd, AnimationFace, AnimationTarget, Command, DealEvent, Event, HandStep,
+        LobbyCmd, PlayerId, PokerVariant,
+    },
     wire::{
-        AccountProfile, ClientRequest, ErrorCode, ErrorPayload, HistoryEntry, HistoryKind,
-        JoinTableResult, LeaveTableResult, LeaveTableStatus, LoginResult, LogoutResult,
-        OperationReceipt, PlayerAction, PlayerView, PublicSeatState, PublicTableState, RequestOp,
-        ResponsePayload, SeatAssignmentStatus, ServerResponse, SessionId, TableHistory, TableId,
-        TableList, TableSummary, TableUpdateMessage,
+        AccountProfile, AnimationCue, ClientRequest, ErrorCode, ErrorPayload, HistoryEntry,
+        HistoryKind, JoinTableResult, LeaveTableResult, LeaveTableStatus, LoginResult,
+        LogoutResult, OperationReceipt, PlayerAction, PlayerView, PublicSeatState,
+        PublicTableState, RequestOp, ResponsePayload, SeatAssignmentStatus, ServerResponse,
+        SessionId, TableHistory, TableId, TableList, TableSummary, TableUpdateMessage,
     },
 };
 
@@ -41,6 +44,10 @@ pub struct RequestOutcome {
     pub invalidated_sessions: Vec<SessionId>,
 }
 
+/// Top-level request facade for the server crate.
+///
+/// `ServerApp` owns account/session coordination and delegates all mutable table work to
+/// per-table worker threads through `TableHandle`.
 pub struct ServerApp {
     pub accounts: SharedAccountStore,
     sessions: Mutex<SessionStore>,
@@ -291,6 +298,8 @@ impl ServerApp {
             .map(|(result, _events)| result)
     }
 
+    /// Authenticates the caller against the current session and forwards the join through the
+    /// target table worker so seating stays serialized with the rest of that table's state.
     fn join_table_detail(
         &self,
         session_id: &str,
@@ -333,6 +342,8 @@ impl ServerApp {
             .map(|(result, _events)| result)
     }
 
+    /// Distinguishes between an immediate lobby leave and a deferred mid-hand leave so callers
+    /// can show the right UX without re-reading table state.
     fn leave_table_detail(
         &self,
         session_id: &str,
@@ -366,6 +377,8 @@ impl ServerApp {
             .map(|(result, _events)| result)
     }
 
+    /// Verifies that the session actually belongs to a seated player before asking the table
+    /// worker to advance from lobby state into a new hand.
     fn start_hand_detail(
         &self,
         session_id: &str,
@@ -492,6 +505,10 @@ impl ServerApp {
         self.handle_request_outcome(request).response
     }
 
+    /// Returns the direct response plus transport-facing side effects.
+    ///
+    /// The TCP layer uses the extra metadata to invalidate replaced sessions and to push fresh
+    /// table snapshots to every subscriber after the initiating response has been sent.
     pub fn handle_request_outcome(&self, request: ClientRequest) -> RequestOutcome {
         let request_id = request.request_id.clone();
         match self.dispatch_request_outcome(request) {
@@ -567,6 +584,7 @@ impl ServerApp {
         let session_id = request.session_id.as_deref();
 
         match request.op {
+            // Sessionless account lifecycle.
             RequestOp::CreateAccount { name, pin, amount } => self
                 .create_account(name, pin, amount)
                 .map(|payload| (ResponsePayload::Account(payload), Vec::new(), Vec::new())),
@@ -583,6 +601,8 @@ impl ServerApp {
                 let (result, table_changes) = self.logout_detail(session_id)?;
                 Ok((ResponsePayload::Logout(result), table_changes, Vec::new()))
             }
+            // Account balance changes may affect visible stack sizes on any table where the
+            // player is seated, even though they do not generate engine events.
             RequestOp::Deposit { amount } => {
                 let session_id = Self::require_session_id(session_id)?;
                 let session = self.require_session(session_id)?;
@@ -608,6 +628,8 @@ impl ServerApp {
                 Vec::new(),
                 Vec::new(),
             )),
+            // Table mutations return both the immediate response payload and the event stream
+            // needed to build subscriber updates for that table.
             RequestOp::CreateTable { variant } => self
                 .create_table(Self::require_session_id(session_id)?, variant)
                 .map(|payload| (ResponsePayload::Table(payload), Vec::new(), Vec::new())),
@@ -760,6 +782,11 @@ impl ServerApp {
         }
     }
 
+    /// Builds the subscriber update exactly as a given session is allowed to see it.
+    ///
+    /// The public table snapshot is shared by everyone, while `player_view` and the animation
+    /// cue payload are scoped to the subscribing session so private cards stay redacted for
+    /// opponents and spectators.
     pub fn build_table_update_for_session(
         &self,
         table_id: TableId,
@@ -767,16 +794,25 @@ impl ServerApp {
         events: &[Event],
     ) -> AppResult<TableUpdateMessage> {
         let table_state = self.get_table_state(table_id)?;
+        // Resolve the viewer up front so we can redact deal cues for everyone except the seat
+        // owner that is meant to see a given private card.
+        let viewer_id = session_id.and_then(|session_id| {
+            self.require_session(session_id)
+                .ok()
+                .map(|session| session.account_id)
+        });
         let player_view = match session_id {
             Some(session_id) => self.get_player_view(session_id, table_id).ok(),
             None => None,
         };
+        let animation_cues = Self::build_animation_cues(events, viewer_id, &table_state);
 
         Ok(TableUpdateMessage {
             table_id,
             table_state,
             player_view,
             events: Self::history_entries(events),
+            animation_cues,
         })
     }
 
@@ -789,6 +825,8 @@ impl ServerApp {
         let accounts = self.account_map();
         let hand_state = table.hand_state();
 
+        // Public seat state keeps private information at arm's length: callers get visible
+        // up-cards plus a count of hidden cards, never another player's hole cards.
         let seats = table
             .seated_players()
             .into_iter()
@@ -848,6 +886,62 @@ impl ServerApp {
         }
     }
 
+    fn build_animation_cues(
+        events: &[Event],
+        viewer_id: Option<PlayerId>,
+        table_state: &PublicTableState,
+    ) -> Vec<AnimationCue> {
+        events
+            .iter()
+            .filter_map(|event| match event {
+                Event::Deal { deal } => Self::animation_cue_for_deal(deal, viewer_id, table_state),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn animation_cue_for_deal(
+        deal: &DealEvent,
+        viewer_id: Option<PlayerId>,
+        table_state: &PublicTableState,
+    ) -> Option<AnimationCue> {
+        let seat = match deal.player_id {
+            Some(player_id) => table_state
+                .seats
+                .iter()
+                .find(|seat| seat.player_id == player_id)
+                .map(|seat| seat.seat),
+            None => None,
+        };
+
+        if deal.target == AnimationTarget::Seat && seat.is_none() {
+            return None;
+        }
+
+        let owns_private_card = deal.player_id == viewer_id;
+        let is_public_card = !matches!(deal.face, AnimationFace::Down);
+
+        Some(AnimationCue {
+            street: deal.street,
+            target: deal.target,
+            seat,
+            face: deal.face,
+            card: if is_public_card || owns_private_card {
+                Some(deal.card)
+            } else {
+                None
+            },
+            target_index: if deal.target == AnimationTarget::Board
+                || is_public_card
+                || owns_private_card
+            {
+                Some(deal.target_index)
+            } else {
+                None
+            },
+        })
+    }
+
     fn acting_player_id(table: &PokerTable) -> Option<PlayerId> {
         match table.current_step() {
             HandStep::BettingRound1
@@ -892,7 +986,21 @@ impl ServerApp {
             Event::Error { message } => (HistoryKind::Error, message.clone(), None, None),
             Event::StepChanged { step } => (
                 HistoryKind::StepChanged,
-                format!("step changed to {:?}", step),
+                match step {
+                    HandStep::WaitingForPlayers => "Phase: Waiting for Players".to_string(),
+                    HandStep::CollectForcedBets => "Phase: Collecting Antes".to_string(),
+                    HandStep::DealCommunity => "Phase: Dealing Community Cards".to_string(),
+                    HandStep::DealPrivate => "Phase: Dealing Private Cards".to_string(),
+                    HandStep::DealFaceUp => "Phase: Dealing Face-Up Cards".to_string(),
+                    HandStep::BettingRound1 => "Phase: Betting Round 1".to_string(),
+                    HandStep::DrawPhase => "Phase: Draw Phase".to_string(),
+                    HandStep::BettingRound2 => "Phase: Betting Round 2".to_string(),
+                    HandStep::BettingRound3 => "Phase: Betting Round 3".to_string(),
+                    HandStep::BettingRound4 => "Phase: Betting Round 4".to_string(),
+                    HandStep::BettingRound5 => "Phase: Betting Round 5".to_string(),
+                    HandStep::Showdown => "Phase: Showdown".to_string(),
+                    HandStep::Payout => "Phase: Payout".to_string(),
+                },
                 None,
                 None,
             ),
@@ -912,23 +1020,23 @@ impl ServerApp {
             ),
             Event::PotUpdated { pot } => (
                 HistoryKind::PotUpdated,
-                format!("pot updated to {pot}"),
+                format!("Pot is now {pot}"),
                 None,
                 None,
             ),
             Event::ActionRequested { player_name, .. } => (
                 HistoryKind::ActionPrompt,
-                format!("action requested for {player_name}"),
+                format!("{player_name} to act"),
                 None,
                 None,
             ),
             Event::DrawRequested { player_name, .. } => (
                 HistoryKind::DrawPrompt,
-                format!("draw requested for {player_name}"),
+                format!("{player_name} to draw/discard"),
                 None,
                 None,
             ),
-            Event::PrivateHand { .. } => return None,
+            Event::PrivateHand { .. } | Event::Deal { .. } => return None,
             Event::Showdown { results } => (
                 HistoryKind::Showdown,
                 format!("showdown: {} result(s)", results.len()),
@@ -943,7 +1051,7 @@ impl ServerApp {
             ),
             Event::LobbyState { seated } => (
                 HistoryKind::Info,
-                format!("lobby state updated: {} seated", seated.len()),
+                format!("Lobby State Updated: {} seated", seated.len()),
                 None,
                 None,
             ),
@@ -970,6 +1078,8 @@ impl ServerApp {
         TableChangeNotice { table_id, events }
     }
 
+    /// Synthesizes "empty" table changes for balance-only updates so seated clients still get a
+    /// fresh table snapshot with the new chip counts.
     fn visible_table_changes_for_player(&self, player_id: PlayerId) -> Vec<TableChangeNotice> {
         self.table_handles()
             .into_iter()
@@ -1305,5 +1415,111 @@ mod tests {
             .expect("update payout results");
         assert_eq!(update_results.len(), 2);
         assert_eq!(update_results[1].player_id, 2);
+    }
+
+    #[test]
+    fn deal_animation_cues_redact_private_cards_for_other_sessions() {
+        let fx = test_app();
+        fx.app
+            .create_account("alice".into(), "1234".into(), 500)
+            .expect("create alice");
+        fx.app
+            .create_account("bob".into(), "1234".into(), 500)
+            .expect("create bob");
+
+        let alice = fx
+            .app
+            .login("alice".into(), "1234".into())
+            .expect("login alice");
+        let bob = fx
+            .app
+            .login("bob".into(), "1234".into())
+            .expect("login bob");
+        let table = fx.app.list_tables().tables[0].clone();
+        fx.app
+            .join_table(&alice.session_id, table.table_id)
+            .expect("join alice");
+        fx.app
+            .join_table(&bob.session_id, table.table_id)
+            .expect("join bob");
+
+        let private_deal = Event::Deal {
+            deal: DealEvent {
+                street: common::protocol::AnimationStreet::HoldemPreflop,
+                target: common::protocol::AnimationTarget::Seat,
+                player_id: Some(alice.account.player_id),
+                face: common::protocol::AnimationFace::Down,
+                card: common::card_deck::Card::new(
+                    common::card_deck::Rank::Ace,
+                    common::card_deck::Suit::Spades,
+                ),
+                target_index: 1,
+            },
+        };
+
+        let owner_update = fx
+            .app
+            .build_table_update_for_session(
+                table.table_id,
+                Some(&alice.session_id),
+                &[private_deal.clone()],
+            )
+            .expect("owner update");
+        assert_eq!(owner_update.animation_cues.len(), 1);
+        assert_eq!(
+            owner_update.animation_cues[0].card,
+            Some(common::card_deck::Card::new(
+                common::card_deck::Rank::Ace,
+                common::card_deck::Suit::Spades,
+            ))
+        );
+        assert_eq!(owner_update.animation_cues[0].target_index, Some(1));
+
+        let other_update = fx
+            .app
+            .build_table_update_for_session(
+                table.table_id,
+                Some(&bob.session_id),
+                &[private_deal.clone()],
+            )
+            .expect("other update");
+        assert_eq!(other_update.animation_cues.len(), 1);
+        assert_eq!(other_update.animation_cues[0].card, None);
+        assert_eq!(other_update.animation_cues[0].target_index, None);
+
+        let spectator_update = fx
+            .app
+            .build_table_update_for_session(table.table_id, None, &[private_deal])
+            .expect("spectator update");
+        assert_eq!(spectator_update.animation_cues.len(), 1);
+        assert_eq!(spectator_update.animation_cues[0].card, None);
+        assert_eq!(spectator_update.animation_cues[0].target_index, None);
+    }
+
+    #[test]
+    fn build_table_update_has_empty_animation_cues_for_non_deal_events() {
+        let fx = test_app();
+        fx.app
+            .create_account("alice".into(), "1234".into(), 500)
+            .expect("create alice");
+        let login = fx.app.login("alice".into(), "1234".into()).expect("login");
+        let table = fx.app.list_tables().tables[0].clone();
+        fx.app
+            .join_table(&login.session_id, table.table_id)
+            .expect("join table");
+
+        let update = fx
+            .app
+            .build_table_update_for_session(
+                table.table_id,
+                Some(&login.session_id),
+                &[Event::Info {
+                    message: "alice bet 10".into(),
+                }],
+            )
+            .expect("table update");
+
+        assert!(update.animation_cues.is_empty());
+        assert_eq!(update.events.len(), 1);
     }
 }

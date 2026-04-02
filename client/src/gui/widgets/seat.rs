@@ -2,7 +2,11 @@ use std::collections::HashMap;
 
 use common::wire::PublicSeatState;
 
-use super::card::{show_card, show_card_back};
+use crate::gui::theme;
+
+use super::card::{show_card_back_compact, show_card_compact};
+
+const SEAT_WIDTH: f32 = 108.0;
 
 /// Render one seat box including cards.
 ///
@@ -19,84 +23,114 @@ pub fn show_seat(
     is_me: bool,
 ) {
     let frame_color = if is_active {
-        egui::Color32::from_rgb(200, 160, 0)
+        theme::ACCENT
     } else if is_me {
-        egui::Color32::from_rgb(50, 100, 200)
+        theme::INFO
+    } else if !seat.is_connected {
+        theme::DANGER
     } else {
-        egui::Color32::from_gray(80)
+        theme::BORDER
     };
 
-    let text_color = if seat.has_folded {
-        egui::Color32::from_gray(120)
+    let text_color = if seat.has_folded || !seat.is_connected {
+        theme::TEXT_MUTED
     } else {
-        egui::Color32::WHITE
+        theme::TEXT
     };
+    let fill = if is_active {
+        egui::Color32::from_rgb(19, 31, 27)
+    } else {
+        theme::PANEL
+    };
+    let status = seat_status(seat, is_active);
 
     egui::Frame::new()
-        .fill(egui::Color32::from_gray(40))
+        .fill(fill)
         .stroke(egui::Stroke::new(2.0, frame_color))
-        .corner_radius(6.0)
-        .inner_margin(egui::Margin::same(8))
+        .corner_radius(14.0)
+        .inner_margin(egui::Margin::same(6))
         .show(ui, |ui| {
-            ui.set_min_width(110.0);
+            ui.set_width(SEAT_WIDTH);
+            ui.set_max_width(SEAT_WIDTH);
+            ui.set_max_height(68.0);
+            ui.spacing_mut().item_spacing = egui::vec2(6.0, 2.0);
 
-            // Name row
-            ui.horizontal(|ui| {
-                if is_dealer {
+            ui.vertical(|ui| {
+                ui.horizontal_wrapped(|ui| {
                     ui.label(
-                        egui::RichText::new("[D]")
-                            .color(egui::Color32::YELLOW)
-                            .small(),
+                        egui::RichText::new(&seat.player_name)
+                            .color(text_color)
+                            .strong(),
                     );
-                }
-                ui.label(egui::RichText::new(&seat.player_name).color(text_color).strong());
-            });
-
-            // Balance
-            ui.label(
-                egui::RichText::new(format!("${}", seat.balance))
-                    .color(text_color)
-                    .small(),
-            );
-
-            // Fold label
-            if seat.has_folded {
-                ui.label(
-                    egui::RichText::new("Folded")
-                        .color(egui::Color32::from_gray(140))
-                        .small(),
-                );
-                return;
-            }
-
-            // Cards row: N hidden backs then any face-up cards (Stud)
-            if seat.hidden_card_count > 0 || !seat.up_cards.is_empty() {
-                ui.add_space(4.0);
-                ui.horizontal(|ui| {
-                    for _ in 0..seat.hidden_card_count {
-                        show_card_back(ui);
-                        ui.add_space(2.0);
+                    if is_me {
+                        theme::show_badge(ui, "You", theme::PANEL_SOFT, theme::INFO, theme::INFO);
                     }
-                    for card in &seat.up_cards {
-                        show_card(ui, ctx, cache, *card);
-                        ui.add_space(2.0);
+                    if is_dealer {
+                        theme::show_badge(ui, "D", theme::GOLD, theme::GOLD, theme::BACKGROUND);
                     }
                 });
-            }
+                ui.label(theme::small_muted(format!("{} chips", seat.balance)));
+                ui.label(theme::small_muted(status));
+
+                if seat.has_folded {
+                    return;
+                }
+
+                if seat.hidden_card_count > 0 || !seat.up_cards.is_empty() {
+                    ui.add_space(4.0);
+                    let up_to_show = seat.up_cards.len().min(2);
+                    let hidden_limit = if up_to_show > 0 { 1 } else { 2 };
+                    let hidden_to_show = seat.hidden_card_count.min(hidden_limit);
+                    let remaining_up = seat.up_cards.len().saturating_sub(up_to_show);
+                    let remaining_hidden = seat.hidden_card_count.saturating_sub(hidden_to_show);
+                    let remaining_cards = remaining_hidden + remaining_up;
+
+                    ui.horizontal(|ui| {
+                        for card in seat.up_cards.iter().take(up_to_show) {
+                            show_card_compact(ui, ctx, cache, *card);
+                        }
+                        for _ in 0..hidden_to_show {
+                            show_card_back_compact(ui, ctx, cache);
+                        }
+                        if remaining_cards > 0 {
+                            theme::show_badge(
+                                ui,
+                                &format!("+{}", remaining_cards),
+                                theme::PANEL_ALT,
+                                theme::BORDER,
+                                theme::TEXT_MUTED,
+                            );
+                        }
+                    });
+                }
+            });
         });
 }
 
 /// Render an empty seat placeholder.
 pub fn show_empty_seat(ui: &mut egui::Ui) {
     egui::Frame::new()
-        .fill(egui::Color32::from_gray(30))
-        .stroke(egui::Stroke::new(1.0, egui::Color32::from_gray(60)))
-        .corner_radius(6.0)
+        .fill(theme::PANEL_SOFT)
+        .stroke(egui::Stroke::new(1.0, theme::BORDER_SOFT))
+        .corner_radius(14.0)
         .inner_margin(egui::Margin::same(8))
         .show(ui, |ui| {
-            ui.set_min_width(110.0);
-            ui.label(
-                egui::RichText::new("Empty").color(egui::Color32::from_gray(90)).small(),
-            );
+            ui.set_width(SEAT_WIDTH);
+            ui.set_max_width(SEAT_WIDTH);
+            ui.label(theme::small_muted("Empty seat"));
         });
+}
+
+fn seat_status(seat: &PublicSeatState, is_active: bool) -> &'static str {
+    if !seat.is_connected {
+        "Disconnected"
+    } else if seat.has_folded {
+        "Folded"
+    } else if is_active {
+        "Acting now"
+    } else if seat.is_in_hand {
+        "In hand"
+    } else {
+        "Waiting"
+    }
 }
