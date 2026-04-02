@@ -35,7 +35,9 @@ impl GameEngine {
                     .unwrap_or_else(|| format!("best={:?}", r.category))
             } else {
                 match self.table.hand_state().player_hand(pid) {
-                    Some(hand) => format!("{} -> cards: {:?}", self.format_cards(&hand), r.category),
+                    Some(hand) => {
+                        format!("{} -> cards: {:?}", self.format_cards(&hand), r.category)
+                    }
                     None => format!("{:?}", r.category),
                 }
             };

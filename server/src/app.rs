@@ -892,7 +892,7 @@ impl ServerApp {
             Event::Error { message } => (HistoryKind::Error, message.clone(), None, None),
             Event::StepChanged { step } => (
                 HistoryKind::StepChanged,
-                match step{
+                match step {
                     HandStep::WaitingForPlayers => "Phase: Waiting for Players".to_string(),
                     HandStep::CollectForcedBets => "Phase: Collecting Antes".to_string(),
                     HandStep::DealCommunity => "Phase: Dealing Community Cards".to_string(),

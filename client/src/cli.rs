@@ -1,4 +1,4 @@
-use std::fmt::{Write as _, format};
+use std::fmt::Write as _;
 use std::io::{self, Write};
 use std::sync::Arc;
 
@@ -295,7 +295,7 @@ fn format_response_friendly(response: &ServerResponse) -> Option<String> {
             }
             ResponsePayload::PlayerView(view) => {
                 output.push('\n');
-                output.push_str(&format_player_view_compact(view));
+                output.push_str(&format_player_view(view));
             }
             ResponsePayload::History(history) => {
                 output.push('\n');
@@ -330,23 +330,21 @@ fn format_table_update(update: &TableUpdateMessage) -> String {
 
 fn format_table_update_friendly(update: &TableUpdateMessage) -> Option<String> {
     let mut output = String::new();
-    let _ = write!(output, "=== Table {} Update ===", update.table_id);
-
-    output.push('\n');
-    output.push_str(&format_public_table_state(&update.table_state));
-
-    output.push_str("\n");
+    let _ = write!(output, "[push table {}]", update.table_id);
 
     if !update.events.is_empty() {
-        output.push_str("\nLast Events:");
+        output.push_str("\nEvents:");
         for event in &update.events {
             append_history_entry(&mut output, event, "  ");
         }
     }
 
+    output.push('\n');
+    output.push_str(&format_public_table_state(&update.table_state));
+
     if let Some(player_view) = &update.player_view {
         output.push_str("\n\n");
-        output.push_str(&format_player_view_compact(player_view));
+        output.push_str(&format_player_view(player_view));
     }
 
     Some(output)
@@ -362,7 +360,7 @@ fn format_session_closed(message: &SessionClosedMessage) -> String {
 
 fn format_account_profile(account: &AccountProfile) -> String {
     format!(
-        "Account: {} (player #{})\nBalance: {}\nStats: Games: {} Pots Won: {} Folds: {}",
+        "Account: {} (player #{})\nBalance: {}\nStats: games={} pots_won={} folds={}",
         account.player_name,
         account.player_id,
         account.balance,
@@ -416,36 +414,36 @@ fn format_receipt(receipt: &OperationReceipt) -> String {
 
 fn format_public_table_state(state: &PublicTableState) -> String {
     let mut output = String::new();
-    let mut acter = None;
-    for seat in &state.seats {
-        if state.acting_player_id == Some(seat.player_id) {
-            acter.replace(format!("{}", seat.player_name));
-            break;
-        }
-    }
     let _ = write!(
         output,
-        "{} | Pot: {} | Bet: {} | To act: {}\n",
-        format_step(state.step),
-        state.pot,
-        state.current_bet,
-        acter.as_ref().map(|s| s.as_str()).unwrap_or("none"),
+        "Table {} | {} | {}",
+        state.table_id,
+        format_variant(state.variant),
+        format_step(state.step)
     );
-    if !state.board_cards.is_empty() {
-        let _ = write!(output, "\nBoard: {}", format_cards(&state.board_cards));
-    } 
+    let _ = write!(
+        output,
+        "\nDealer seat: {} | Pot: {} | Current bet: {}",
+        state.dealer_seat, state.pot, state.current_bet
+    );
+    let _ = write!(
+        output,
+        "\nActing player: {}",
+        format_optional_player_id(state.acting_player_id)
+    );
+    let _ = write!(output, "\nBoard: {}", format_cards(&state.board_cards));
     output.push_str("\nSeats:");
     if state.seats.is_empty() {
-        // output.push_str("\n  none");
+        output.push_str("\n  none");
     } else {
         for seat in &state.seats {
-            let _ = write!(output, "\n  {}", format_seat_line_compact(seat, state));
+            let _ = write!(output, "\n  {}", format_seat_line(seat, state));
         }
     }
     output
 }
 
-fn format_player_view_full(view: &PlayerView) -> String {
+fn format_player_view(view: &PlayerView) -> String {
     let mut output = String::new();
     let _ = write!(
         output,
@@ -471,49 +469,15 @@ fn format_player_view_full(view: &PlayerView) -> String {
     output
 }
 
-fn format_player_view_compact(view: &PlayerView) -> String {
-    let mut output = String::new();
-    let _ = write!(
-        output,
-        "You: {}",
-        view.player_name
-    );
-    let _ = write!(
-        output,
-        "\nHand: {}",
-        format_cards(&view.private_cards)
-    );
-    match &view.action_prompt {
-        Some(prompt) => {
-            output.push('\n');
-            output.push_str(&format_action_prompt(prompt));
-        }
-        None => output.push_str("\nWaiting for turn...\n"),
-    }
-    output
-}
-
 fn format_action_prompt(prompt: &ActionPrompt) -> String {
-    let mut output = String::new();
-    
-    if format_allowed_actions(&prompt.allowed_actions) == "n/a"{
-        output.push_str("Options: None\n");
-    } else{
-        output.push_str(&format!("Options: {} \n", format_allowed_actions(&prompt.allowed_actions)));
-    }
-
-    if format_optional_chips(prompt.call_amount) != "n/a"{
-        output.push_str(&format!("Call: {} \n", format_optional_chips(prompt.call_amount)));
-    }
-
-    if format_optional_chips(prompt.min_raise) != "n/a"{
-        output.push_str(&format!("Min Bet/Raise: {} \n", format_optional_chips(prompt.min_raise)));
-    }
-    if format_optional_usize(prompt.max_discards) != "n/a"{
-        output.push_str(&format!("Max Number of Discards: {} \n", format_optional_usize(prompt.max_discards)));
-    }
-
-    output
+    format!(
+        "Action: {} | call={} | min_raise={} | max_amount={} | max_discards={}",
+        format_allowed_actions(&prompt.allowed_actions),
+        format_optional_chips(prompt.call_amount),
+        format_optional_chips(prompt.min_raise),
+        format_optional_chips(prompt.max_amount),
+        format_optional_usize(prompt.max_discards)
+    )
 }
 
 fn format_history(history: &TableHistory) -> String {
@@ -538,7 +502,7 @@ fn format_subscription(subscription: &SubscriptionResult) -> String {
 }
 
 fn format_history_entry(entry: &HistoryEntry) -> String {
-    let mut output = format!("- {}", entry.message);
+    let mut output = format!("{}. {}", entry.index, entry.message);
     if entry.kind == HistoryKind::Showdown
         && let Some(results) = &entry.showdown_results
         && !results.is_empty()
@@ -575,76 +539,45 @@ fn append_history_entry(output: &mut String, entry: &HistoryEntry, indent: &str)
 
 fn format_payout_line(result: &PayoutLine) -> String {
     format!(
-        "{} +{}",
-        result.player_name, result.amount
+        "{} (player #{}) +{}",
+        result.player_name, result.player_id, result.amount
     )
 }
 
-fn format_seat_line_full(seat: &PublicSeatState, state: &PublicTableState) -> String {
+fn format_seat_line(seat: &PublicSeatState, state: &PublicTableState) -> String {
     let mut markers = Vec::new();
     if seat.seat == state.dealer_seat {
-        markers.push("Dealer");
+        markers.push("dealer");
     }
     if state.acting_player_id == Some(seat.player_id) {
-        markers.push("Acting");
+        markers.push("acting");
     }
     if !seat.is_connected {
-        markers.push("Disconnected");
+        markers.push("disconnected");
     }
     if seat.has_folded {
-        markers.push("Folded");
+        markers.push("folded");
     } else if seat.is_in_hand {
-        markers.push("In Hand");
+        markers.push("in hand");
     } else {
-        markers.push("Waiting");
+        markers.push("waiting");
     }
 
     let tags = if markers.is_empty() {
         String::new()
     } else {
-        format!(" {}", markers.join(", "))
+        format!(" [{}]", markers.join(", "))
     };
 
     format!(
-        "Seat {}: {} {}, balance {}",
+        "Seat {}: {} (player #{}){} | balance {} | hidden {} | up {}",
         seat.seat,
         seat.player_name,
+        seat.player_id,
         tags,
         seat.balance,
-    )
-}
-
-fn format_seat_line_compact(seat: &PublicSeatState, state: &PublicTableState) -> String {
-    let mut markers = Vec::new();
-    if seat.seat == state.dealer_seat {
-        markers.push("Dealer");
-    }
-    if state.acting_player_id == Some(seat.player_id) {
-        markers.push("Acting");
-    }
-    if !seat.is_connected {
-        markers.push("Disconnected");
-    }
-    if seat.has_folded {
-        markers.push("Folded");
-    } else if seat.is_in_hand {
-        markers.push("In Hand");
-    } else {
-        markers.push("Waiting");
-    }
-
-    let tags = if markers.is_empty() {
-        String::new()
-    } else {
-        format!(" {}", markers.join(", "))
-    };
-
-    format!(
-        "Seat {}: {},{}, Balance {}",
-        seat.seat,
-        seat.player_name,
-        tags,
-        seat.balance,
+        seat.hidden_card_count,
+        format_cards(&seat.up_cards)
     )
 }
 
@@ -674,12 +607,12 @@ fn format_allowed_actions(actions: &[AllowedAction]) -> String {
 
 fn format_allowed_action(action: AllowedAction) -> &'static str {
     match action {
-        AllowedAction::Check => "Check",
-        AllowedAction::Bet => "Bet",
-        AllowedAction::Call => "Call",
-        AllowedAction::Raise => "Raise",
-        AllowedAction::Fold => "Fold",
-        AllowedAction::Draw => "Draw",
+        AllowedAction::Check => "check",
+        AllowedAction::Bet => "bet",
+        AllowedAction::Call => "call",
+        AllowedAction::Raise => "raise",
+        AllowedAction::Fold => "fold",
+        AllowedAction::Draw => "draw",
     }
 }
 
