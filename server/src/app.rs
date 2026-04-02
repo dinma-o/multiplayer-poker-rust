@@ -405,6 +405,70 @@ impl ServerApp {
         ))
     }
 
+    fn change_variant_detail(
+        &self,
+        session_id: &str,
+        table_id: TableId,
+        variant: PokerVariant,
+    ) -> AppResult<(OperationReceipt, Vec<Event>)> {
+        let session = self.require_session(session_id)?;
+        let handle = self.table_handle(table_id)?;
+        let snapshot = handle
+            .snapshot()
+            .map_err(|e| Self::table_worker_error(table_id, e))?;
+
+        Self::require_player_seated(&snapshot.table, session.account_id, &session.player_name)?;
+
+        let events = handle
+            .apply(Command::Lobby(LobbyCmd::SetVariant { variant }))
+            .map_err(|e| Self::table_worker_error(table_id, e))?;
+        Self::ensure_no_error(&events)?;
+        Ok((
+            OperationReceipt {
+                table_id,
+                event_count: events.len(),
+            },
+            events,
+        ))
+    }
+
+    fn sit_out_detail(
+        &self,
+        session_id: &str,
+        table_id: TableId,
+        sit_out: bool,
+    ) -> AppResult<(OperationReceipt, Vec<Event>)> {
+        let session = self.require_session(session_id)?;
+        let handle = self.table_handle(table_id)?;
+        let snapshot = handle
+            .snapshot()
+            .map_err(|e| Self::table_worker_error(table_id, e))?;
+
+        Self::require_player_seated(&snapshot.table, session.account_id, &session.player_name)?;
+
+        let cmd = if sit_out {
+            LobbyCmd::SitOutNext {
+                player_name: session.player_name.clone(),
+            }
+        } else {
+            LobbyCmd::SitIn {
+                player_name: session.player_name.clone(),
+            }
+        };
+
+        let events = handle
+            .apply(Command::Lobby(cmd))
+            .map_err(|e| Self::table_worker_error(table_id, e))?;
+        Self::ensure_no_error(&events)?;
+        Ok((
+            OperationReceipt {
+                table_id,
+                event_count: events.len(),
+            },
+            events,
+        ))
+    }
+
     pub fn get_table_state(&self, table_id: TableId) -> AppResult<PublicTableState> {
         let handle = self.table_handle(table_id)?;
         let snapshot = handle
@@ -681,6 +745,33 @@ impl ServerApp {
             RequestOp::GetHistory { table_id } => self
                 .get_history(table_id)
                 .map(|payload| (ResponsePayload::History(payload), Vec::new(), Vec::new())),
+            RequestOp::ChangeVariant { table_id, variant } => {
+                let (result, events) =
+                    self.change_variant_detail(Self::require_session_id(session_id)?, table_id, variant)?;
+                Ok((
+                    ResponsePayload::Receipt(result),
+                    vec![Self::table_change(table_id, events)],
+                    Vec::new(),
+                ))
+            }
+            RequestOp::SitOut { table_id } => {
+                let (result, events) =
+                    self.sit_out_detail(Self::require_session_id(session_id)?, table_id, true)?;
+                Ok((
+                    ResponsePayload::Receipt(result),
+                    vec![Self::table_change(table_id, events)],
+                    Vec::new(),
+                ))
+            }
+            RequestOp::SitIn { table_id } => {
+                let (result, events) =
+                    self.sit_out_detail(Self::require_session_id(session_id)?, table_id, false)?;
+                Ok((
+                    ResponsePayload::Receipt(result),
+                    vec![Self::table_change(table_id, events)],
+                    Vec::new(),
+                ))
+            }
             RequestOp::SubscribeTable { .. } | RequestOp::UnsubscribeTable { .. } => {
                 Err(ErrorPayload::new(
                     ErrorCode::InvalidRequest,

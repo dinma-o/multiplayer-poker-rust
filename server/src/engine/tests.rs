@@ -1276,3 +1276,86 @@ fn stud_showdown_and_payout_complete() {
         );
     }
 }
+
+#[test]
+fn set_variant_changes_engine_variant_between_hands() {
+    let mut fx = EngineFixture::new_two_players_with_seed(42);
+
+    // Default variant is Five Card Draw.
+    assert_eq!(fx.engine.table.variant_spec().name, "Five Card Draw");
+
+    let events = set_holdem_variant(&mut fx.engine);
+    assert_nonempty_no_error(&events);
+    assert_eq!(fx.engine.table.variant_spec().name, "Texas Hold'em");
+
+    let events = set_stud_variant(&mut fx.engine);
+    assert_nonempty_no_error(&events);
+    assert_eq!(fx.engine.table.variant_spec().name, "Seven Card Stud");
+}
+
+#[test]
+fn set_variant_rejected_during_active_hand() {
+    let mut fx = EngineFixture::new_two_players_with_seed(42);
+
+    let start_events = start_to_betting_round1(&mut fx.engine);
+    assert_nonempty_no_error(&start_events);
+
+    let events = set_holdem_variant(&mut fx.engine);
+    assert!(
+        events.iter().any(|e| matches!(e, Event::Error { .. })),
+        "expected error when changing variant during a hand"
+    );
+    // Variant unchanged.
+    assert_eq!(fx.engine.table.variant_spec().name, "Five Card Draw");
+}
+
+#[test]
+fn sit_out_excludes_player_from_next_hand() {
+    let mut fx = EngineFixture::new_three_players_with_seed(42);
+
+    let sit_out_events = fx.engine.apply(Command::Lobby(LobbyCmd::SitOutNext {
+        player_name: "carol".to_string(),
+    }));
+    assert_nonempty_no_error(&sit_out_events);
+
+    let start_events = start_to_betting_round1(&mut fx.engine);
+    assert_nonempty_no_error(&start_events);
+
+    // Only alice and bob should be in the hand — carol was sat out.
+    let players_with_hands = fx.engine.table.hand_state().players_with_hands();
+    assert_eq!(players_with_hands.len(), 2, "carol should be excluded from the hand");
+
+    let carol_id = fx
+        .engine
+        .account_by_name("carol")
+        .expect("carol account should exist")
+        .id;
+
+    assert!(
+        !players_with_hands.contains(&carol_id),
+        "carol should not have been dealt into the hand"
+    );
+}
+
+#[test]
+fn sit_in_re_includes_player_after_sit_out() {
+    let mut fx = EngineFixture::new_three_players_with_seed(42);
+
+    // Sit carol out then back in before the hand starts.
+    let sit_out_events = fx.engine.apply(Command::Lobby(LobbyCmd::SitOutNext {
+        player_name: "carol".to_string(),
+    }));
+    assert_nonempty_no_error(&sit_out_events);
+
+    let sit_in_events = fx.engine.apply(Command::Lobby(LobbyCmd::SitIn {
+        player_name: "carol".to_string(),
+    }));
+    assert_nonempty_no_error(&sit_in_events);
+
+    let start_events = start_to_betting_round1(&mut fx.engine);
+    assert_nonempty_no_error(&start_events);
+
+    // All three players should be in the hand.
+    let players_with_hands = fx.engine.table.hand_state().players_with_hands();
+    assert_eq!(players_with_hands.len(), 3, "all three players should be in the hand after sit-in");
+}
