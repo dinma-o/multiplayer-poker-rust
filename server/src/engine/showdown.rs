@@ -16,6 +16,12 @@ impl GameEngine {
             return vec![self.emit_error("Showdown: no active players")];
         }
 
+        // Uncontested win — single active player, everyone else folded.
+        // Winner is not required to show cards; payout handles the award.
+        if active.len() == 1 {
+            return vec![];
+        }
+
         // Rank all active hands + build showdown lines
         let mut ranked: Vec<(PlayerId, common::hand_rank::HandRank)> = Vec::new();
         let mut lines: Vec<common::protocol::ShowdownLine> = Vec::new();

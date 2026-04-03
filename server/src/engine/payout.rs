@@ -24,6 +24,12 @@ impl GameEngine {
             return vec![self.emit_error("Payout: no active players")];
         }
 
+        // Uncontested win — single active player, everyone else folded.
+        // Skip hand ranking and award the pot directly.
+        if active.len() == 1 {
+            return self.payout_uncontested(active[0], &participants);
+        }
+
         // Rank active hands and find max (TA clarification on limited tie-breaking)
         let mut best_rank = None;
         let mut winners: Vec<PlayerId> = Vec::new();
@@ -140,6 +146,50 @@ impl GameEngine {
         self.table.advance_dealer();
 
         // Also: pot is now effectively 0; you can emit pot updated if you want
+        events.push(self.emit_pot_updated(0));
+
+        events
+    }
+
+    fn payout_uncontested(&mut self, winner: PlayerId, participants: &[PlayerId]) -> Vec<Event> {
+        let mut events = Vec::new();
+        let pot = self.table.hand_state().pot_size() as i64;
+        let winner_name = self.account_name(winner);
+
+        for pid in participants {
+            let pname = self.account_name(*pid);
+            if let Some(name) = pname.into() {
+                let _ = self.with_accounts_mut(|accounts| accounts.record_game_played(&name));
+            }
+        }
+
+        for pid in participants {
+            if self.table.hand_state().has_player_folded(pid) {
+                let pname = self.account_name(*pid);
+                if let Some(name) = pname.into() {
+                    let _ = self.with_accounts_mut(|accounts| accounts.record_fold(&name));
+                }
+            }
+        }
+
+        if let Some(name) = winner_name.clone().into() {
+            if pot > 0 {
+                let _ = self.with_accounts_mut(|accounts| accounts.deposit(&name, pot));
+            }
+            let _ = self.with_accounts_mut(|accounts| accounts.record_pot_won(&name));
+        }
+
+        events.push(Event::Payout {
+            winners: vec![common::protocol::PayoutLine {
+                player_name: winner_name,
+                player_id: winner,
+                amount: pot,
+            }],
+        });
+
+        self.table.hand_state_mut().reset_after_hand();
+        self.table.hand_state_mut().end_betting_round();
+        self.table.advance_dealer();
         events.push(self.emit_pot_updated(0));
 
         events
