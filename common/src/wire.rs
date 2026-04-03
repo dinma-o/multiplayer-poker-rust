@@ -134,6 +134,16 @@ pub enum RequestOp {
     UnsubscribeTable {
         table_id: TableId,
     },
+    ChangeVariant {
+        table_id: TableId,
+        variant: PokerVariant,
+    },
+    SitOut {
+        table_id: TableId,
+    },
+    SitIn {
+        table_id: TableId,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

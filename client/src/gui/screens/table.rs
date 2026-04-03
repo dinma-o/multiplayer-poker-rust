@@ -279,11 +279,54 @@ fn show_right_sidebar(
             ui.label(theme::muted(
                 "The room is idle. Start the next hand when enough players are seated.",
             ));
+
+            let is_dealer = player_view
+                .map(|view| view.player_id)
+                .and_then(|pid| state.seats.iter().find(|s| s.player_id == pid))
+                .map(|seat| seat.seat == state.dealer_seat)
+                .unwrap_or(false);
+
+            ui.add_space(6.0);
+            ui.label(theme::eyebrow("Variant"));
+            ui.add_enabled_ui(is_dealer && !action_locked, |ui| {
+                for (variant, label) in [
+                    (PokerVariant::FiveCardDraw, "Five Card Draw"),
+                    (PokerVariant::TexasHoldEm, "Texas Hold'em"),
+                    (PokerVariant::SevenCardStud, "Seven Card Stud"),
+                ] {
+                    if ui.radio(state.variant == variant, label).clicked()
+                        && state.variant != variant
+                    {
+                        app.send_op(
+                            PendingKind::ChangeVariant,
+                            RequestOp::ChangeVariant { table_id, variant },
+                        );
+                    }
+                }
+            });
+
+            ui.add_space(6.0);
             if ui
                 .add_enabled(!action_locked, primary_button("Start hand"))
                 .clicked()
             {
                 app.send_op(PendingKind::StartHand, RequestOp::StartHand { table_id });
+            }
+
+            ui.add_space(4.0);
+            let sit_out = app.sit_out_pending;
+            let sit_out_label = if sit_out { "Sit Back In" } else { "Sit Out Next Hand" };
+            if ui
+                .add_enabled(!action_locked, secondary_button(sit_out_label))
+                .clicked()
+            {
+                if sit_out {
+                    app.sit_out_pending = false;
+                    app.send_op(PendingKind::SitIn, RequestOp::SitIn { table_id });
+                } else {
+                    app.sit_out_pending = true;
+                    app.send_op(PendingKind::SitOut, RequestOp::SitOut { table_id });
+                }
             }
         } else if let Some(prompt) = player_view
             .and_then(|view| view.action_prompt.as_ref())

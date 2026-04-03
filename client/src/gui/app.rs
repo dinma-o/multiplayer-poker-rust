@@ -60,6 +60,9 @@ pub enum PendingKind {
     GetPlayerView,
     Deposit,
     Withdraw,
+    ChangeVariant,
+    SitOut,
+    SitIn,
 }
 
 // ---------------------------------------------------------------------------
@@ -165,6 +168,8 @@ pub struct PokerApp {
 
     // Small-screen guidance can be dismissed while the viewport remains cramped.
     pub small_screen_notice_dismissed: bool,
+    // Tracks whether the local player has requested to sit out the next hand.
+    pub sit_out_pending: bool,
 }
 
 impl Default for PokerApp {
@@ -200,6 +205,7 @@ impl Default for PokerApp {
             last_showdown: None,
             last_payout: None,
             small_screen_notice_dismissed: false,
+            sit_out_pending: false,
         }
     }
 }
@@ -894,6 +900,7 @@ impl PokerApp {
         self.active_deal_animation = None;
         self.selected_discards.clear();
         self.input_bet.clear();
+        self.sit_out_pending = false;
     }
 }
 
