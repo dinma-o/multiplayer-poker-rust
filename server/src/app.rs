@@ -391,6 +391,7 @@ impl ServerApp {
             .map_err(|e| Self::table_worker_error(table_id, e))?;
 
         Self::require_player_seated(&snapshot.table, session.account_id, &session.player_name)?;
+        Self::require_player_is_dealer(&snapshot.table, session.account_id, &session.player_name)?;
 
         let events = handle
             .apply(Command::Lobby(LobbyCmd::StartHand))
@@ -838,6 +839,30 @@ impl ServerApp {
                 ErrorCode::PermissionDenied,
                 format!("{player_name} is not seated at the table"),
             ))
+        }
+    }
+
+    fn require_player_is_dealer(
+        table: &PokerTable,
+        player_id: PlayerId,
+        player_name: &str,
+    ) -> AppResult<()> {
+        let dealer_seat = table.dealer_position();
+        let seated = table.seated_players();
+
+        let effective_dealer_id = seated
+            .iter()
+            .find(|(seat, _)| *seat == dealer_seat)
+            .or_else(|| seated.iter().find(|(seat, _)| *seat > dealer_seat))
+            .or_else(|| seated.first())
+            .map(|(_, pid)| *pid);
+
+        match effective_dealer_id {
+            Some(id) if id == player_id => Ok(()),
+            _ => Err(ErrorPayload::new(
+                ErrorCode::PermissionDenied,
+                format!("{player_name} is not the dealer"),
+            )),
         }
     }
 
