@@ -307,7 +307,7 @@ fn show_right_sidebar(
 
             ui.add_space(6.0);
             if ui
-                .add_enabled(!action_locked, primary_button("Start hand"))
+                .add_enabled(is_dealer && !action_locked, primary_button("Start hand"))
                 .clicked()
             {
                 app.send_op(PendingKind::StartHand, RequestOp::StartHand { table_id });
