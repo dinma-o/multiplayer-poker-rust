@@ -1276,102 +1276,123 @@ fn stud_showdown_and_payout_complete() {
         );
     }
 
-#[test]
-fn holdem_fold_during_betting_round1_pays_winner_without_showdown() {
-    let mut fx = EngineFixture::new_two_players_with_seed(42);
-    set_holdem_variant(&mut fx.engine);
+    #[test]
+    fn holdem_fold_during_betting_round1_pays_winner_without_showdown() {
+        let mut fx = EngineFixture::new_two_players_with_seed(42);
+        set_holdem_variant(&mut fx.engine);
 
-    let start_events = start_to_betting_round1(&mut fx.engine);
-    assert_nonempty_no_error(&start_events);
-    assert_eq!(fx.engine.table.current_step(), HandStep::BettingRound1);
+        let start_events = start_to_betting_round1(&mut fx.engine);
+        assert_nonempty_no_error(&start_events);
+        assert_eq!(fx.engine.table.current_step(), HandStep::BettingRound1);
 
-    // Determine who acts first and fold them — uncontested win for the other player.
-    let actor = match start_events.iter().rev().find_map(|e| match e {
-        Event::ActionRequested { player_name, .. } => Some(player_name.clone()),
-        _ => None,
-    }) {
-        Some(name) => name,
-        None => panic!("no ActionRequested in start events"),
-    };
+        // Determine who acts first and fold them — uncontested win for the other player.
+        let actor = match start_events.iter().rev().find_map(|e| match e {
+            Event::ActionRequested { player_name, .. } => Some(player_name.clone()),
+            _ => None,
+        }) {
+            Some(name) => name,
+            None => panic!("no ActionRequested in start events"),
+        };
 
-    let fold_events = fx.engine.apply(Command::Action(ActionCmd::Fold {
-        player_name: actor.clone(),
-    }));
+        let fold_events = fx.engine.apply(Command::Action(ActionCmd::Fold {
+            player_name: actor.clone(),
+        }));
 
-    // No error events.
-    for e in &fold_events {
-        if let Event::Error { message } = e {
-            panic!("unexpected error after fold: {message}");
+        // No error events.
+        for e in &fold_events {
+            if let Event::Error { message } = e {
+                panic!("unexpected error after fold: {message}");
+            }
         }
+
+        // No Showdown event — winner's hand stays secret.
+        assert!(
+            !fold_events
+                .iter()
+                .any(|e| matches!(e, Event::Showdown { .. })),
+            "Showdown should not be emitted for an uncontested win"
+        );
+
+        // Payout event present with a winner.
+        let payout = fold_events.iter().find_map(|e| match e {
+            Event::Payout { winners } => Some(winners.clone()),
+            _ => None,
+        });
+        assert!(
+            payout.is_some(),
+            "expected Payout event after uncontested fold"
+        );
+        let winners = payout.unwrap();
+        assert_eq!(winners.len(), 1, "expected exactly one winner");
+        assert_ne!(
+            winners[0].player_name, actor,
+            "folder should not be the winner"
+        );
+        assert!(winners[0].amount > 0, "winner should receive the pot");
+
+        // Hand resets to WaitingForPlayers.
+        assert_eq!(fx.engine.table.current_step(), HandStep::WaitingForPlayers);
+        assert_eq!(
+            fx.engine.table.hand_state().pot_size(),
+            0,
+            "pot should be zero after payout"
+        );
     }
 
-    // No Showdown event — winner's hand stays secret.
-    assert!(
-        !fold_events.iter().any(|e| matches!(e, Event::Showdown { .. })),
-        "Showdown should not be emitted for an uncontested win"
-    );
+    #[test]
+    fn stud_fold_before_seventh_street_pays_winner_without_showdown() {
+        let mut fx = EngineFixture::new_two_players_with_seed(42);
+        set_stud_variant(&mut fx.engine);
 
-    // Payout event present with a winner.
-    let payout = fold_events.iter().find_map(|e| match e {
-        Event::Payout { winners } => Some(winners.clone()),
-        _ => None,
-    });
-    assert!(payout.is_some(), "expected Payout event after uncontested fold");
-    let winners = payout.unwrap();
-    assert_eq!(winners.len(), 1, "expected exactly one winner");
-    assert_ne!(winners[0].player_name, actor, "folder should not be the winner");
-    assert!(winners[0].amount > 0, "winner should receive the pot");
+        let start_events = start_to_betting_round1(&mut fx.engine);
+        assert_nonempty_no_error(&start_events);
+        assert_eq!(fx.engine.table.current_step(), HandStep::BettingRound1);
 
-    // Hand resets to WaitingForPlayers.
-    assert_eq!(fx.engine.table.current_step(), HandStep::WaitingForPlayers);
-    assert_eq!(fx.engine.table.hand_state().pot_size(), 0, "pot should be zero after payout");
-}
+        let actor = match start_events.iter().rev().find_map(|e| match e {
+            Event::ActionRequested { player_name, .. } => Some(player_name.clone()),
+            _ => None,
+        }) {
+            Some(name) => name,
+            None => panic!("no ActionRequested in start events"),
+        };
 
-#[test]
-fn stud_fold_before_seventh_street_pays_winner_without_showdown() {
-    let mut fx = EngineFixture::new_two_players_with_seed(42);
-    set_stud_variant(&mut fx.engine);
+        let fold_events = fx.engine.apply(Command::Action(ActionCmd::Fold {
+            player_name: actor.clone(),
+        }));
 
-    let start_events = start_to_betting_round1(&mut fx.engine);
-    assert_nonempty_no_error(&start_events);
-    assert_eq!(fx.engine.table.current_step(), HandStep::BettingRound1);
-
-    let actor = match start_events.iter().rev().find_map(|e| match e {
-        Event::ActionRequested { player_name, .. } => Some(player_name.clone()),
-        _ => None,
-    }) {
-        Some(name) => name,
-        None => panic!("no ActionRequested in start events"),
-    };
-
-    let fold_events = fx.engine.apply(Command::Action(ActionCmd::Fold {
-        player_name: actor.clone(),
-    }));
-
-    for e in &fold_events {
-        if let Event::Error { message } = e {
-            panic!("unexpected error after fold: {message}");
+        for e in &fold_events {
+            if let Event::Error { message } = e {
+                panic!("unexpected error after fold: {message}");
+            }
         }
+
+        assert!(
+            !fold_events
+                .iter()
+                .any(|e| matches!(e, Event::Showdown { .. })),
+            "Showdown should not be emitted for an uncontested win"
+        );
+
+        let payout = fold_events.iter().find_map(|e| match e {
+            Event::Payout { winners } => Some(winners.clone()),
+            _ => None,
+        });
+        assert!(
+            payout.is_some(),
+            "expected Payout event after uncontested fold"
+        );
+        let winners = payout.unwrap();
+        assert_eq!(winners.len(), 1);
+        assert_ne!(winners[0].player_name, actor);
+        assert!(winners[0].amount > 0);
+
+        assert_eq!(fx.engine.table.current_step(), HandStep::WaitingForPlayers);
+        assert_eq!(
+            fx.engine.table.hand_state().pot_size(),
+            0,
+            "pot should be zero after payout"
+        );
     }
-
-    assert!(
-        !fold_events.iter().any(|e| matches!(e, Event::Showdown { .. })),
-        "Showdown should not be emitted for an uncontested win"
-    );
-
-    let payout = fold_events.iter().find_map(|e| match e {
-        Event::Payout { winners } => Some(winners.clone()),
-        _ => None,
-    });
-    assert!(payout.is_some(), "expected Payout event after uncontested fold");
-    let winners = payout.unwrap();
-    assert_eq!(winners.len(), 1);
-    assert_ne!(winners[0].player_name, actor);
-    assert!(winners[0].amount > 0);
-
-    assert_eq!(fx.engine.table.current_step(), HandStep::WaitingForPlayers);
-    assert_eq!(fx.engine.table.hand_state().pot_size(), 0, "pot should be zero after payout");
-}
 }
 
 #[test]
@@ -1420,7 +1441,11 @@ fn sit_out_excludes_player_from_next_hand() {
 
     // Only alice and bob should be in the hand — carol was sat out.
     let players_with_hands = fx.engine.table.hand_state().players_with_hands();
-    assert_eq!(players_with_hands.len(), 2, "carol should be excluded from the hand");
+    assert_eq!(
+        players_with_hands.len(),
+        2,
+        "carol should be excluded from the hand"
+    );
 
     let carol_id = fx
         .engine
@@ -1454,5 +1479,9 @@ fn sit_in_re_includes_player_after_sit_out() {
 
     // All three players should be in the hand.
     let players_with_hands = fx.engine.table.hand_state().players_with_hands();
-    assert_eq!(players_with_hands.len(), 3, "all three players should be in the hand after sit-in");
+    assert_eq!(
+        players_with_hands.len(),
+        3,
+        "all three players should be in the hand after sit-in"
+    );
 }

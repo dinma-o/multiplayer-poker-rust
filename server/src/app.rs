@@ -747,8 +747,11 @@ impl ServerApp {
                 .get_history(table_id)
                 .map(|payload| (ResponsePayload::History(payload), Vec::new(), Vec::new())),
             RequestOp::ChangeVariant { table_id, variant } => {
-                let (result, events) =
-                    self.change_variant_detail(Self::require_session_id(session_id)?, table_id, variant)?;
+                let (result, events) = self.change_variant_detail(
+                    Self::require_session_id(session_id)?,
+                    table_id,
+                    variant,
+                )?;
                 Ok((
                     ResponsePayload::Receipt(result),
                     vec![Self::table_change(table_id, events)],
@@ -847,18 +850,13 @@ impl ServerApp {
         player_id: PlayerId,
         player_name: &str,
     ) -> AppResult<()> {
-        let dealer_seat = table.dealer_position();
-        let seated = table.seated_players();
+        let player_seat = table
+            .seated_players()
+            .into_iter()
+            .find_map(|(seat, seated_id)| (seated_id == player_id).then_some(seat));
 
-        let effective_dealer_id = seated
-            .iter()
-            .find(|(seat, _)| *seat == dealer_seat)
-            .or_else(|| seated.iter().find(|(seat, _)| *seat > dealer_seat))
-            .or_else(|| seated.first())
-            .map(|(_, pid)| *pid);
-
-        match effective_dealer_id {
-            Some(id) if id == player_id => Ok(()),
+        match (table.effective_dealer_seat(), player_seat) {
+            (Some(dealer_seat), Some(seat)) if dealer_seat == seat => Ok(()),
             _ => Err(ErrorPayload::new(
                 ErrorCode::PermissionDenied,
                 format!("{player_name} is not the dealer"),
@@ -975,7 +973,9 @@ impl ServerApp {
             table_id,
             variant: Self::variant_for_table(table),
             step: table.current_step(),
-            dealer_seat: table.dealer_position(),
+            dealer_seat: table
+                .effective_dealer_seat()
+                .unwrap_or_else(|| table.dealer_position()),
             acting_player_id: Self::acting_player_id(table),
             pot: hand_state.pot_size() as i64,
             current_bet: hand_state.current_bet() as i64,
@@ -1383,6 +1383,59 @@ mod tests {
 
         let state = fx.app.get_table_state(table.table_id).expect("table state");
         assert!(state.seats.is_empty());
+    }
+
+    #[test]
+    fn shared_api_start_hand_falls_forward_when_dealer_leaves_lobby() {
+        let fx = test_app();
+        for name in ["alice", "bob", "carol"] {
+            fx.app
+                .create_account(name.into(), "1234".into(), 500)
+                .expect("create account");
+        }
+
+        let alice = fx
+            .app
+            .login("alice".into(), "1234".into())
+            .expect("login alice");
+        let bob = fx
+            .app
+            .login("bob".into(), "1234".into())
+            .expect("login bob");
+        let carol = fx
+            .app
+            .login("carol".into(), "1234".into())
+            .expect("login carol");
+
+        let table = fx.app.list_tables().tables[0].clone();
+        fx.app
+            .join_table(&alice.session_id, table.table_id)
+            .expect("join alice");
+        fx.app
+            .join_table(&bob.session_id, table.table_id)
+            .expect("join bob");
+        fx.app
+            .join_table(&carol.session_id, table.table_id)
+            .expect("join carol");
+
+        fx.app
+            .leave_table(&alice.session_id, table.table_id)
+            .expect("dealer leaves");
+
+        let state = fx.app.get_table_state(table.table_id).expect("table state");
+        assert_eq!(state.dealer_seat, 1);
+
+        let denied = fx
+            .app
+            .start_hand(&carol.session_id, table.table_id)
+            .expect_err("non-dealer should not be able to start");
+        assert_eq!(denied.code, ErrorCode::PermissionDenied);
+
+        let receipt = fx
+            .app
+            .start_hand(&bob.session_id, table.table_id)
+            .expect("fallback dealer should start hand");
+        assert_eq!(receipt.table_id, table.table_id);
     }
 
     #[test]

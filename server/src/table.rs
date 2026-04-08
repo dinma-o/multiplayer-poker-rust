@@ -217,6 +217,18 @@ impl PokerTable {
         self.dealer_manager.get_dealer_position()
     }
 
+    pub fn effective_dealer_seat(&self) -> Option<usize> {
+        let dealer_seat = self.dealer_position();
+        let seated = self.seated_players();
+
+        seated
+            .iter()
+            .find(|(seat, _)| *seat == dealer_seat)
+            .or_else(|| seated.iter().find(|(seat, _)| *seat > dealer_seat))
+            .or_else(|| seated.first())
+            .map(|(seat, _)| *seat)
+    }
+
     pub fn is_active_player(&self, player_id: PlayerId) -> bool {
         self.seated_players()
             .iter()
@@ -293,5 +305,20 @@ mod tests {
         table.apply_pending_requests();
         assert!(table.player_lookup.contains_key(&6));
         assert!(!table.player_lookup.contains_key(&1));
+    }
+
+    #[test]
+    fn test_effective_dealer_seat_falls_forward_to_next_occupied_seat() {
+        let mut table = PokerTable::new();
+        assert_eq!(table.join_table(1), Ok(0));
+        assert_eq!(table.join_table(2), Ok(1));
+        assert_eq!(table.join_table(3), Ok(2));
+
+        assert_eq!(table.effective_dealer_seat(), Some(0));
+
+        table.leave_table(1).expect("dealer leaves");
+
+        assert_eq!(table.dealer_position(), 0);
+        assert_eq!(table.effective_dealer_seat(), Some(1));
     }
 }
