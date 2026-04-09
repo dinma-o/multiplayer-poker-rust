@@ -1136,6 +1136,7 @@ mod tests {
 
         let update = bob.wait_for_table_update(1);
         assert_eq!(update.table_state.seats.len(), 1);
+        assert_eq!(update.table_state.dealer_seat, 1);
         assert!(
             update
                 .table_state
