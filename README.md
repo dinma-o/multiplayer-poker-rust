@@ -57,6 +57,8 @@ cargo run -p poker -- serve
 ```
 
 Account data is persisted to `server/data/accounts.json`.
+If you run a packaged `poker.exe` outside the repo, it falls back to `data/accounts.json`
+next to the executable. You can also override the location with `POKER_ACCOUNTS_PATH`.
 
 ### 3. TCP CLI client
 
@@ -83,6 +85,31 @@ cargo run -p poker-gui -- --gui
 ```
 
 The GUI defaults to `127.0.0.1:8080` and includes connect, login, lobby, and table screens.
+
+## Sharing Windows Builds
+
+Your friends do not need Cargo or Rust installed. Build the release binaries on your machine:
+
+```bash
+cargo build --release -p poker -p poker-gui
+```
+
+Then share these files from `target/release`:
+
+- `poker.exe` for the server
+- `poker-gui.exe` for the client
+
+Typical setup for a friend:
+
+1. Put both executables in the same folder.
+2. Start `poker.exe serve`.
+3. Start `poker-gui.exe --gui`.
+
+If the client should connect to a server on another machine, launch it with that address:
+
+```bash
+poker-gui.exe --gui --host <server-ip> --port 8080
+```
 
 ### 5. GUI preview screens
 
