@@ -146,7 +146,7 @@ impl AccountStore {
 
     /// Creates a new account with a unique name and generated ID.
     ///
-    /// Fails if the name already exists or the PIN format is invalid.
+    /// Fails if the name already exists or the PIN format is invalid or the initial balance is invalid.
     pub fn create_account(
         &mut self,
         name: impl Into<String>,
@@ -161,6 +161,10 @@ impl AccountStore {
 
         if !is_valid_pin(pin) {
             return Err(AccountError::InvalidPinFormat);
+        }
+
+        if initial_balance <= 0 {
+            return Err(AccountError::InvalidAmount);
         }
 
         let account = Account::new(self.next_id, name, pin.to_string(), initial_balance);
@@ -555,5 +559,15 @@ mod tests {
         assert_eq!(alice.stats.games_played, 1);
         assert_eq!(alice.stats.pots_won, 1);
         assert_eq!(alice.stats.folds, 1);
+    }
+
+    #[test]
+    fn invalid_balance_on_create() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("accounts.json");
+
+        let mut store = AccountStore::load(&path).unwrap();
+        let err = store.create_account("alice", "1234", -100).unwrap_err();
+        assert!(matches!(err, AccountError::InvalidAmount));
     }
 }
