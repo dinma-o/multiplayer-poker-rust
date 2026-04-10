@@ -13,6 +13,7 @@ use super::super::{
         },
         discard_picker::show_discard_picker,
         event_log::show_event_log,
+        hand_rankings_window::show_hand_rankings_window,
         results_panel::show_results,
         seat::{show_empty_seat, show_seat},
     },
@@ -49,6 +50,13 @@ pub fn show(app: &mut PokerApp, ctx: &egui::Context, table_id: TableId) {
                 .clicked()
             {
                 leave_clicked = true;
+            }
+
+            if ui
+                .add_enabled(!is_pending, secondary_button("Hand Rankings"))
+                .clicked()
+            {
+                app.show_hand_rankings = true;
             }
 
             if let Some(state) = &state {
@@ -193,6 +201,10 @@ pub fn show(app: &mut PokerApp, ctx: &egui::Context, table_id: TableId) {
                 }
             });
     });
+
+    if app.show_hand_rankings {
+        show_hand_rankings_window(ctx, &mut app.show_hand_rankings);
+    }
 }
 
 fn show_left_sidebar(ui: &mut egui::Ui, app: &PokerApp, state: &PublicTableState) {

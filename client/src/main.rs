@@ -79,6 +79,18 @@ fn parse_preview_args(args: &[String]) -> Result<Option<PreviewRequest>, String>
     };
 
     match screen.trim().to_ascii_lowercase().as_str() {
+        "rankings" => {
+            if preview_args.len() > 1 {
+                Err(preview_help(
+                    "Preview 'rankings' does not take an extra argument.",
+                ))
+            } else {
+                Ok(Some(PreviewRequest {
+                    screen: "table".to_string(),
+                    variant: Some("rankings".to_string()),
+                }))
+            }
+        }
         "connect" | "login" | "lobby" => {
             if preview_args.len() > 1 {
                 Err(preview_help(&format!(
@@ -118,7 +130,9 @@ fn parse_preview_args(args: &[String]) -> Result<Option<PreviewRequest>, String>
 }
 
 fn preview_help(prefix: &str) -> String {
-    format!("{prefix} Available previews: connect, login, lobby, table <holdem|draw|stud>.")
+    format!(
+        "{prefix} Available previews: connect, login, lobby, table <holdem|draw|stud|rankings>."
+    )
 }
 
 #[cfg(test)]
@@ -161,5 +175,17 @@ mod tests {
         let err = parse_preview_args(&args).expect_err("extra preview arg should fail");
 
         assert!(err.contains("does not take an extra argument"));
+    }
+
+    #[test]
+    fn parses_rankings_shortcut_preview() {
+        let args = vec!["--gui-preview".to_string(), "rankings".to_string()];
+
+        let preview = parse_preview_args(&args)
+            .expect("parse preview args")
+            .expect("preview request");
+
+        assert_eq!(preview.screen, "table");
+        assert_eq!(preview.variant.as_deref(), Some("rankings"));
     }
 }

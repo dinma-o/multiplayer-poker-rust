@@ -19,6 +19,105 @@ pub enum HandCategory {
     StraightFlush, // RoyalFlush can be considered a special case of StraightFlush
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct HandRankingGuideEntry {
+    pub label: &'static str,
+    pub description: &'static str,
+    pub example: &'static str,
+    pub category: Option<HandCategory>,
+}
+
+impl HandCategory {
+    pub const STRONGEST_TO_WEAKEST: [HandCategory; 9] = [
+        HandCategory::StraightFlush,
+        HandCategory::FourOfAKind,
+        HandCategory::FullHouse,
+        HandCategory::Flush,
+        HandCategory::Straight,
+        HandCategory::ThreeOfAKind,
+        HandCategory::TwoPair,
+        HandCategory::OnePair,
+        HandCategory::HighCard,
+    ];
+
+    pub const fn display_name(self) -> &'static str {
+        match self {
+            HandCategory::HighCard => "High Card",
+            HandCategory::OnePair => "One Pair",
+            HandCategory::TwoPair => "Two Pair",
+            HandCategory::ThreeOfAKind => "Three of a Kind",
+            HandCategory::Straight => "Straight",
+            HandCategory::Flush => "Flush",
+            HandCategory::FullHouse => "Full House",
+            HandCategory::FourOfAKind => "Four of a Kind",
+            HandCategory::StraightFlush => "Straight Flush",
+        }
+    }
+}
+
+pub const HAND_RANKING_GUIDE: [HandRankingGuideEntry; 10] = [
+    HandRankingGuideEntry {
+        label: "Royal Flush",
+        description: "A-K-Q-J-10 all in the same suit.",
+        example: "A ♥, K ♥, Q ♥, J ♥, 10 ♥",
+        category: Some(HandCategory::StraightFlush),
+    },
+    HandRankingGuideEntry {
+        label: "Straight Flush",
+        description: "Five consecutive cards in the same suit.",
+        example: "9 ♣, 8 ♣, 7 ♣, 6 ♣, 5 ♣",
+        category: Some(HandCategory::StraightFlush),
+    },
+    HandRankingGuideEntry {
+        label: "Four of a Kind",
+        description: "Four cards of the same rank.",
+        example: "K ♠, K ♥, K ♣, K ♦, 5 ♣",
+        category: Some(HandCategory::FourOfAKind),
+    },
+    HandRankingGuideEntry {
+        label: "Full House",
+        description: "Three of a kind plus a pair.",
+        example: "8 ♠, 8 ♥, 8 ♣, 2 ♦, 2 ♣",
+        category: Some(HandCategory::FullHouse),
+    },
+    HandRankingGuideEntry {
+        label: "Flush",
+        description: "Five cards of the same suit, not consecutive.",
+        example: "A ♠, J ♠, 9 ♠, 6 ♠, 3 ♠",
+        category: Some(HandCategory::Flush),
+    },
+    HandRankingGuideEntry {
+        label: "Straight",
+        description: "Five consecutive cards in mixed suits.",
+        example: "9 ♠, 10 ♥, J ♣, Q ♦, K ♠",
+        category: Some(HandCategory::Straight),
+    },
+    HandRankingGuideEntry {
+        label: "Three of a Kind",
+        description: "Three cards of the same rank.",
+        example: "7 ♠, 7 ♥, 7 ♣, A ♦, 2 ♣",
+        category: Some(HandCategory::ThreeOfAKind),
+    },
+    HandRankingGuideEntry {
+        label: "Two Pair",
+        description: "Two different pairs plus one kicker.",
+        example: "A ♠, A ♥, J ♣, J ♦, 9 ♣",
+        category: Some(HandCategory::TwoPair),
+    },
+    HandRankingGuideEntry {
+        label: "One Pair",
+        description: "Two cards of the same rank plus three kickers.",
+        example: "10 ♠, 10 ♥, A ♣, 7 ♦, 3 ♣",
+        category: Some(HandCategory::OnePair),
+    },
+    HandRankingGuideEntry {
+        label: "High Card",
+        description: "No made hand; highest card wins.",
+        example: "A ♠, K ♥, 9 ♣, 7 ♦, 3 ♣",
+        category: Some(HandCategory::HighCard),
+    },
+];
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct HandRank {
     pub category: HandCategory,
@@ -625,6 +724,44 @@ mod tests {
             let result = determine_showdown_winner(&hands);
             assert_eq!(result.winner_indices, vec![0, 1]);
             assert_eq!(result.winning_rank.category, HandCategory::TwoPair);
+        }
+    }
+
+    mod ranking_guide_tests {
+        use super::*;
+
+        #[test]
+        fn strongest_to_weakest_categories_match_expected_order() {
+            assert_eq!(
+                HandCategory::STRONGEST_TO_WEAKEST,
+                [
+                    HandCategory::StraightFlush,
+                    HandCategory::FourOfAKind,
+                    HandCategory::FullHouse,
+                    HandCategory::Flush,
+                    HandCategory::Straight,
+                    HandCategory::ThreeOfAKind,
+                    HandCategory::TwoPair,
+                    HandCategory::OnePair,
+                    HandCategory::HighCard,
+                ]
+            );
+        }
+
+        #[test]
+        fn guide_starts_with_royal_and_ends_with_high_card() {
+            assert_eq!(HAND_RANKING_GUIDE[0].label, "Royal Flush");
+            assert_eq!(
+                HAND_RANKING_GUIDE.last().map(|entry| entry.label),
+                Some("High Card")
+            );
+        }
+
+        #[test]
+        fn display_name_matches_expected_table_terms() {
+            assert_eq!(HandCategory::StraightFlush.display_name(), "Straight Flush");
+            assert_eq!(HandCategory::FourOfAKind.display_name(), "Four of a Kind");
+            assert_eq!(HandCategory::HighCard.display_name(), "High Card");
         }
     }
 }

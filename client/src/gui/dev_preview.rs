@@ -20,6 +20,7 @@ pub enum TablePreviewVariant {
     Holdem,
     Draw,
     Stud,
+    Rankings,
 }
 
 impl TablePreviewVariant {
@@ -28,6 +29,7 @@ impl TablePreviewVariant {
             "holdem" | "hold'em" | "texas_holdem" | "texasholdem" => Ok(Self::Holdem),
             "draw" | "five" | "five_card_draw" | "fivecarddraw" => Ok(Self::Draw),
             "stud" | "seven_card_stud" | "sevencardstud" => Ok(Self::Stud),
+            "rankings" | "ranks" | "hand_rankings" | "handrankings" => Ok(Self::Rankings),
             other => Err(preview_help(&format!(
                 "Unknown table preview variant '{other}'."
             ))),
@@ -39,6 +41,7 @@ impl TablePreviewVariant {
             Self::Holdem => "Texas Hold'em",
             Self::Draw => "Five Card Draw",
             Self::Stud => "Seven Card Stud",
+            Self::Rankings => "Hand Rankings Overlay",
         }
     }
 }
@@ -131,7 +134,13 @@ fn apply_table_preview(app: &mut PokerApp, variant: TablePreviewVariant) {
         TablePreviewVariant::Holdem => apply_holdem_table_preview(app),
         TablePreviewVariant::Draw => apply_draw_table_preview(app),
         TablePreviewVariant::Stud => apply_stud_table_preview(app),
+        TablePreviewVariant::Rankings => apply_rankings_preview(app),
     }
+}
+
+fn apply_rankings_preview(app: &mut PokerApp) {
+    apply_holdem_table_preview(app);
+    app.show_hand_rankings = true;
 }
 
 fn apply_holdem_table_preview(app: &mut PokerApp) {
@@ -558,7 +567,9 @@ fn card(rank: Rank, suit: Suit) -> Card {
 }
 
 fn preview_help(prefix: &str) -> String {
-    format!("{prefix} Available previews: connect, login, lobby, table <holdem|draw|stud>.")
+    format!(
+        "{prefix} Available previews: connect, login, lobby, table <holdem|draw|stud|rankings>."
+    )
 }
 
 #[cfg(test)]
@@ -576,7 +587,7 @@ mod tests {
     fn rejects_table_preview_without_variant() {
         let err = PreviewScene::parse("table", None).expect_err("missing variant should fail");
 
-        assert!(err.contains("table <holdem|draw|stud>"));
+        assert!(err.contains("table <holdem|draw|stud|rankings>"));
     }
 
     #[test]
@@ -584,5 +595,13 @@ mod tests {
         let label = PreviewScene::Table(TablePreviewVariant::Draw).label();
 
         assert_eq!(label, "Table - Five Card Draw");
+    }
+
+    #[test]
+    fn parses_rankings_table_preview() {
+        let scene =
+            PreviewScene::parse("table", Some("rankings")).expect("parse rankings table");
+
+        assert_eq!(scene, PreviewScene::Table(TablePreviewVariant::Rankings));
     }
 }
