@@ -203,7 +203,7 @@ pub fn show(app: &mut PokerApp, ctx: &egui::Context, table_id: TableId) {
     });
 
     if app.show_hand_rankings {
-        show_hand_rankings_window(ctx, &mut app.show_hand_rankings);
+        show_hand_rankings_window(ctx, &mut app.show_hand_rankings, &mut app.texture_cache);
     }
 }
 
