@@ -6,8 +6,9 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 
 use common::wire::{
-    ClientRequest, ErrorCode, ErrorPayload, RequestOp, ResponsePayload, ServerMessage,
-    ServerResponse, SessionCloseReason, SubscriptionResult, TableId, TableUpdateMessage,
+    ClientRequest, ErrorCode, ErrorPayload, LeaveTableStatus, RequestOp, ResponsePayload,
+    ServerMessage, ServerResponse, SessionCloseReason, SubscriptionResult, TableId,
+    TableUpdateMessage,
 };
 
 use crate::app::{RequestOutcome, ServerApp, TableChangeNotice};
@@ -386,7 +387,9 @@ fn apply_connection_response_state(
             registry.subscribe(connection_id, join.table_id);
         }
         Some(ResponsePayload::LeaveTable(leave)) => {
-            registry.unsubscribe(connection_id, leave.table_id);
+            if leave.status == LeaveTableStatus::Left {
+                registry.unsubscribe(connection_id, leave.table_id);
+            }
         }
         _ => {}
     }

@@ -504,6 +504,23 @@ impl PokerApp {
             }
         }
         self.event_log.extend(events);
+
+        // Detect a completed deferred leave: we were seated but the server no longer lists us
+        // in any seat after the hand finished and applied pending leave requests.
+        if self.table_view_mode == Some(TableViewMode::Seated) {
+            let my_player_id = self.account.as_ref().map(|a| a.player_id);
+            if let Some(my_id) = my_player_id {
+                let still_seated = self
+                    .table_state
+                    .as_ref()
+                    .map(|s| s.seats.iter().any(|seat| seat.player_id == my_id))
+                    .unwrap_or(true);
+                if !still_seated {
+                    self.reset_table_view_state();
+                    self.enter_lobby();
+                }
+            }
+        }
     }
 
     fn sync_account_balance(&mut self, table_state: &PublicTableState) {

@@ -141,6 +141,10 @@ impl PokerTable {
         }
     }
 
+    pub fn pending_leave_player_ids(&self) -> Vec<PlayerId> {
+        self.pending_leave_requests.clone()
+    }
+
     pub fn seated_players(&self) -> Vec<(usize, PlayerId)> {
         self.seats
             .iter()
