@@ -514,7 +514,7 @@ impl PokerApp {
                     .table_state
                     .as_ref()
                     .map(|s| s.seats.iter().any(|seat| seat.player_id == my_id))
-                    .unwrap_or(true);
+                    .unwrap_or(false);
                 if !still_seated {
                     self.reset_table_view_state();
                     self.enter_lobby();
