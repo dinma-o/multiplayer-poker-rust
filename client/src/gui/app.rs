@@ -170,6 +170,8 @@ pub struct PokerApp {
     pub small_screen_notice_dismissed: bool,
     // Tracks whether the local player has requested to sit out the next hand.
     pub sit_out_pending: bool,
+    // Tracks whether the hand rankings reference window is currently open.
+    pub show_hand_rankings: bool,
 }
 
 impl Default for PokerApp {
@@ -206,6 +208,7 @@ impl Default for PokerApp {
             last_payout: None,
             small_screen_notice_dismissed: false,
             sit_out_pending: false,
+            show_hand_rankings: false,
         }
     }
 }
@@ -901,6 +904,7 @@ impl PokerApp {
         self.selected_discards.clear();
         self.input_bet.clear();
         self.sit_out_pending = false;
+        self.show_hand_rankings = false;
     }
 }
 

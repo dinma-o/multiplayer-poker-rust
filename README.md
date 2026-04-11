@@ -120,6 +120,7 @@ cargo run -p poker-gui -- --gui-preview connect
 cargo run -p poker-gui -- --gui-preview login
 cargo run -p poker-gui -- --gui-preview lobby
 cargo run -p poker-gui -- --gui-preview table holdem
+cargo run -p poker-gui -- --gui-preview rankings
 ```
 
 ## Local Server CLI Demo
