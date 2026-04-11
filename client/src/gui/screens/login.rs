@@ -152,7 +152,7 @@ fn show_login_panel(app: &mut PokerApp, ui: &mut egui::Ui) {
                     app.send_op(PendingKind::Login, op);
                 }
                 LoginTab::CreateAccount => {
-                    let amount: i64 = app.input_amount.trim().parse().unwrap_or(0);
+                    let amount: i64 = app.input_amount.trim().parse().unwrap_or(1000);
                     let op = RequestOp::CreateAccount {
                         name: app.input_name.trim().to_string(),
                         pin: app.input_pin.clone(),
