@@ -668,9 +668,26 @@ impl GameEngine {
             return (false, vec![]);
         }
 
+        // Capture the pending leave list before apply_pending_requests drains it.
+        let leaving = self.table.pending_leave_player_ids();
         // Now that we're back to WaitingForPlayers, process queued joins/leaves.
         self.table.apply_pending_requests();
-        (true, vec![])
+
+        if leaving.is_empty() {
+            return (true, vec![]);
+        }
+
+        // Emit a PlayerLeft event for each deferred departure and a final lobby snapshot so
+        // subscribers (including the departing player) receive the updated seat list.
+        let mut events = Vec::new();
+        for pid in leaving {
+            events.push(Event::PlayerLeft {
+                player_id: pid,
+                player_name: self.account_name(pid),
+            });
+        }
+        events.push(self.emit_lobby_state());
+        (true, events)
     }
 
     pub fn is_decision_step(&self, step: HandStep) -> bool {
