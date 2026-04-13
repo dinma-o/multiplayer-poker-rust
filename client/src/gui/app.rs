@@ -531,6 +531,9 @@ impl PokerApp {
                 .find(|seat| seat.player_id == account.player_id)
         {
             account.balance = seat.balance;
+            account.games_played = seat.games_played;
+            account.pots_won = seat.pots_won;
+            account.folds = seat.folds;
         }
     }
 
@@ -946,6 +949,9 @@ mod tests {
                 player_id: 7,
                 player_name: "alice".into(),
                 balance: 495,
+                games_played: 0,
+                pots_won: 0,
+                folds: 0,
                 is_connected: true,
                 is_in_hand: hidden_card_count > 0,
                 has_folded: false,
