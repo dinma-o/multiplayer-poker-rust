@@ -142,6 +142,7 @@ mod tests {
         dealer_manager.set_dealer_position(4);
         assert_eq!(dealer_manager.get_dealer_position(), 4);
     }
+    #[test]
     fn test_advance_dealer_all_seats_empty() {
         let mut dealer_manager = DealerManager::new();
         let seats = vec![None, None, None];
@@ -149,6 +150,7 @@ mod tests {
         dealer_manager.advance_dealer(&seats);
         assert_eq!(dealer_manager.get_dealer_position(), 0);
     }
+    #[test]
     fn test_get_action_order_no_players() {
         let dealer_manager = DealerManager::new();
         let seats = vec![None, None, None];

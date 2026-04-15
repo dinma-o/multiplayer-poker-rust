@@ -25,5 +25,6 @@ pub const TEXAS_HOLDEM_STEPS: &[HandStep] = &[
 pub const SPEC: VariantSpec = VariantSpec {
     name: "Texas Hold'em",
     steps: TEXAS_HOLDEM_STEPS,
+    min_players: 2,
     max_players: 5,
 };

@@ -43,3 +43,16 @@ pub mod seven_card_stud {
 }
 
 // For Texas Hold’em
+pub mod texas_hold_em {
+    // Table start limits
+    pub const INITIAL_CHIPS: u32 = 200; // Starting stack for each player
+    pub const MIN_PLAYERS: u32 = 2; // Minimum number of players to start the game
+    pub const MAX_PLAYERS: u32 = 5; // Maximum number of players allowed at the table
+
+    // Blinds
+    pub const SMALL_BLIND: u32 = 5; // Small blind amount posted by the player left of the dealer
+    pub const BIG_BLIND: u32 = 10; // Big blind amount posted by the player two left of the dealer
+
+    // Betting limits
+    pub const MAX_RAISES_PER_ROUND: u32 = 4; // Maximum number of raises allowed per betting round
+}

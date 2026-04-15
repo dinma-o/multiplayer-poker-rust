@@ -4,5 +4,6 @@ use common::protocol::HandStep;
 pub struct VariantSpec {
     pub name: &'static str,
     pub steps: &'static [HandStep],
+    pub min_players: usize,
     pub max_players: usize,
 }

@@ -169,21 +169,11 @@ impl GameEngine {
     }
 
     fn variant_min_players(&self) -> usize {
-        match self.table.variant_spec() {
-            spec if spec == crate::variants::seven_card_stud::SPEC => {
-                seven_card_stud::MIN_PLAYERS as usize
-            }
-            _ => five_card_draw::MIN_PLAYERS as usize,
-        }
+        self.table.variant_spec().min_players
     }
 
     fn variant_max_players(&self) -> usize {
-        match self.table.variant_spec() {
-            spec if spec == crate::variants::seven_card_stud::SPEC => {
-                seven_card_stud::MAX_PLAYERS as usize
-            }
-            _ => self.table.variant_spec().max_players,
-        }
+        self.table.variant_spec().max_players
     }
 
     fn variant_ante_amount(&self) -> Option<u32> {

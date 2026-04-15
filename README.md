@@ -1,12 +1,96 @@
 # PokerDUD - ECE 421 Poker Playing System
 
-PokerDUD is a Rust workspace for the ECE 421 poker project. The project now includes both the `server` crate and the `client` crate: the server can run as a local CLI demo or as a TCP game server, and the client can run as either a TCP CLI or an `egui` desktop GUI. Shared cards, protocol, and hand-evaluation code live in `common`.
+PokerDUD is a multiplayer poker platform written entirely in Rust. It ships a **game server** that
+enforces all poker rules and persists player accounts, plus a **client** that connects to the server
+and can run as either a text-mode CLI or a desktop GUI built with [egui](https://github.com/emilk/egui).
+Shared types, deck logic, and hand-evaluation live in a third `common` crate that both sides
+depend on.
 
-The codebase currently supports:
+Supported game variants:
 
-- Five-Card Draw
-- Texas Hold'em
-- Seven-Card Stud
+| Variant | Deal | Betting |
+|---------|------|---------|
+| **Five-Card Draw** | 5 private cards + draw phase | 2 rounds |
+| **Texas Hold'em** | 2 hole cards + 5 community cards | 4 rounds (pre-flop → river) |
+| **Seven-Card Stud** | 3-street private + 4 face-up streets | 5 rounds |
+
+Communication between server and client uses a **newline-delimited JSON** protocol over TCP
+(default port **8080**).
+
+---
+
+## Quick Start
+
+> **Prerequisite:** [Rust toolchain](https://rustup.rs) (edition 2024 / Rust ≥ 1.85).
+
+### Option A — play locally in one terminal (no network)
+
+```bash
+cargo run -p poker
+```
+
+This launches the single-process CLI. Create accounts, join the table, and play:
+
+```text
+acct create alice 1234 200
+acct create bob   5678 200
+variant five
+join alice 1234
+join bob   5678
+start
+bet alice 10
+call bob
+draw alice 0 3
+draw bob
+check alice
+check bob
+```
+
+Type `help` at any time to see available commands.
+
+### Option B — networked play with the desktop GUI (two terminals)
+
+**Terminal 1 — start the server:**
+
+```bash
+cargo run -p poker -- serve
+```
+
+**Terminal 2 — start the GUI client:**
+
+```bash
+cargo run -p poker-gui -- --gui
+```
+
+The GUI will open a Connect screen. Leave the default `127.0.0.1:8080` and click **Connect**,
+then create an account and log in.
+
+### Option C — networked play with the text CLI client (two terminals)
+
+**Terminal 1 — start the server:**
+
+```bash
+cargo run -p poker -- serve
+```
+
+**Terminal 2 — start the text client:**
+
+```bash
+cargo run -p poker-gui
+```
+
+Then type commands such as:
+
+```text
+create_account alice 1234 200
+login alice 1234
+list_tables
+join_table 1
+subscribe_table 1
+submit_action 1 check
+```
+
+---
 
 ## Workspace Crates
 
@@ -29,7 +113,7 @@ The codebase currently supports:
 
 ## Build and Test
 
-Requires the Rust toolchain (edition 2024). From the workspace root:
+From the workspace root:
 
 ```bash
 cargo build
@@ -86,7 +170,7 @@ cargo run -p poker-gui -- --gui
 
 The GUI defaults to `127.0.0.1:8080` and includes connect, login, lobby, and table screens.
 
-## Sharing Windows Builds
+## Sharing Windows Builds (.exe)
 
 Your friends do not need Cargo or Rust installed. Build the release binaries on your machine:
 
@@ -96,8 +180,8 @@ cargo build --release -p poker -p poker-gui
 
 Then share these files from `target/release`:
 
-- `poker.exe` for the server
-- `poker-gui.exe` for the client
+- `poker.exe` — the server
+- `poker-gui.exe` — the client
 
 Typical setup for a friend:
 
@@ -234,3 +318,4 @@ quit
 - GUI client implementation notes: [docs/gui_client_phases.md](docs/gui_client_phases.md)
 
 The `docs/rules.md` document is specifically for the Five-Card Draw rule set. Variant-specific gameplay behavior is implemented in the server variant modules under `server/src/variants/`.
+
