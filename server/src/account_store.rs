@@ -432,7 +432,7 @@ mod tests {
         let path = dir.path().join("accounts.json");
 
         let mut store = AccountStore::load(&path).unwrap();
-        store.create_account("alice", "1234", 0).unwrap();
+        store.create_account("alice", "1234", 100).unwrap();
 
         let err = store.login("alice", "9999").unwrap_err();
         matches!(err, AccountError::InvalidPin);
@@ -444,9 +444,9 @@ mod tests {
         let path = dir.path().join("accounts.json");
 
         let mut store = AccountStore::load(&path).unwrap();
-        store.create_account("alice", "1234", 0).unwrap();
+        store.create_account("alice", "1234", 100).unwrap();
 
-        let err = store.create_account("alice", "0000", 0).unwrap_err();
+        let err = store.create_account("alice", "0000", 100).unwrap_err();
         matches!(err, AccountError::NameTaken);
     }
 

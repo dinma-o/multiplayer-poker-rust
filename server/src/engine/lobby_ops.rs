@@ -191,10 +191,12 @@ impl GameEngine {
             .filter(|pid| !self.sit_out_next.contains(pid))
             .collect();
 
-        if eligible.len() < (five_card_draw::MIN_PLAYERS as usize)
-            || eligible.len() > (five_card_draw::MAX_PLAYERS as usize)
-        {
-            return vec![self.emit_error("need 2–5 players to start")];
+        let spec = self.table.variant_spec();
+        if eligible.len() < spec.min_players || eligible.len() > spec.max_players {
+            return vec![self.emit_error(format!(
+                "need {}–{} players to start",
+                spec.min_players, spec.max_players
+            ))];
         }
 
         // Confirm that each player has enough balance to cover the initial forced bet (ante or bring-in depending on variant)

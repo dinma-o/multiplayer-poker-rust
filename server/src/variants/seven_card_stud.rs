@@ -23,5 +23,6 @@ pub const SEVEN_CARD_STUD_STEPS: &[HandStep] = &[
 pub const SPEC: VariantSpec = VariantSpec {
     name: "Seven Card Stud",
     steps: SEVEN_CARD_STUD_STEPS,
+    min_players: 2,
     max_players: 5,
 };

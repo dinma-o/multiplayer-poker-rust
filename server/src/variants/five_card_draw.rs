@@ -18,6 +18,7 @@ pub const FIVE_CARD_DRAW_STEPS: &[HandStep] = &[
 pub const SPEC: VariantSpec = VariantSpec {
     name: "Five Card Draw",
     steps: FIVE_CARD_DRAW_STEPS,
+    min_players: 2,
     max_players: 5,
 };
 
